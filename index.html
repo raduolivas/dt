@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#e4eaf7" />
+    <title>Delivery Tracker · 3D prototype</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="scene"></div>
+
+      <header class="topbar">
+        <div class="brand">
+          <span class="logo"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="17" r="3.2"/><circle cx="18" cy="17" r="3.2"/><path d="M6 17l4-8h5l3 8M10 9L8.5 6H6.5M13 13h-4"/></svg></span>
+          <span class="brand-name">Delivery Tracker</span>
+          <span class="badge">3D prototype</span>
+        </div>
+        <div class="live" id="live"><i></i><span id="live-text">Ready</span></div>
+      </header>
+
+      <section class="stats" aria-label="Live stats">
+        <div class="stat"><span class="stat-label">Arrives in</span><b id="stat-eta">--:--</b></div>
+        <div class="stat"><span class="stat-label">Distance left</span><b id="stat-dist">--</b></div>
+        <div class="stat"><span class="stat-label">Courier speed</span><b id="stat-speed">0 km/h</b></div>
+      </section>
+
+      <aside class="order" id="order">
+        <div class="order-head">
+          <div>
+            <span class="order-id" id="order-id">#DLV-00000</span>
+            <h2 id="order-title">Order requested</h2>
+            <p id="order-sub">Waiting for a courier…</p>
+          </div>
+        </div>
+        <div class="courier-row">
+          <span class="avatar">L</span>
+          <div><b>Lucas M.</b><small>Bicycle courier · 4.9 ★</small></div>
+        </div>
+        <ol class="timeline" id="timeline">
+          <li>Order confirmed</li>
+          <li>Courier assigned</li>
+          <li>Heading to the store</li>
+          <li>Waiting at the store</li>
+          <li>Order picked up</li>
+          <li>On the way</li>
+          <li>Delivered</li>
+        </ol>
+      </aside>
+
+      <nav class="toolbar" aria-label="Controls">
+        <button id="btn-run" class="primary">Request order</button>
+        <button id="btn-reset" title="Restart">Restart</button>
+        <button id="btn-follow" class="toggle on" title="Camera follows the courier">Follow</button>
+        <button id="btn-overview" title="See the whole city">Overview</button>
+        <button id="btn-params" title="Simulation parameters">Parameters</button>
+      </nav>
+
+      <footer class="stepper" aria-label="Delivery progress">
+        <div class="stepper-head"><b>Shipment tracking</b><span id="progress-text">0%</span></div>
+        <div class="steps" id="steps">
+          <div class="bar"><i id="bar-fill"></i></div>
+          <div class="step"><span class="dot"></span><small>Confirmed</small></div>
+          <div class="step"><span class="dot"></span><small>To store</small></div>
+          <div class="step"><span class="dot"></span><small>Picked up</small></div>
+          <div class="step"><span class="dot"></span><small>On the way</small></div>
+          <div class="step"><span class="dot"></span><small>Delivered</small></div>
+        </div>
+      </footer>
+
+      <section class="params" id="params" hidden>
+        <div class="params-head">
+          <b>Simulation parameters</b>
+          <button id="params-close" aria-label="Close">✕</button>
+        </div>
+        <label>
+          <span>Courier speed <em id="v-speed">18 km/h</em></span>
+          <input id="p-speed" type="range" min="8" max="40" step="1" value="18" />
+        </label>
+        <label>
+          <span>Store preparation time <em id="v-prep">25 s</em></span>
+          <input id="p-prep" type="range" min="0" max="120" step="5" value="25" />
+        </label>
+        <label>
+          <span>Simulation speed <em id="v-scale">4×</em></span>
+          <input id="p-scale" type="range" min="1" max="30" step="1" value="4" />
+        </label>
+        <div class="field">
+          <span>Delivery distance</span>
+          <div class="seg" id="p-dest">
+            <button data-v="near">Near</button>
+            <button data-v="medium" class="on">Medium</button>
+            <button data-v="far">Far</button>
+          </div>
+          <small>Changing the distance restarts the order.</small>
+        </div>
+        <details>
+          <summary>Live snapshot (the integration contract)</summary>
+          <pre id="json"></pre>
+        </details>
+      </section>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
