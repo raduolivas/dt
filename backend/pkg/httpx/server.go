@@ -27,7 +27,8 @@ type Server struct {
 
 // Listen binds addr and prepares a server for h.
 func Listen(addr string, h http.Handler, log *slog.Logger) (*Server, error) {
-	ln, err := net.Listen("tcp", addr)
+	var lc net.ListenConfig
+	ln, err := lc.Listen(context.Background(), "tcp", addr)
 	if err != nil {
 		return nil, err
 	}

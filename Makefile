@@ -43,3 +43,28 @@ gen: ## Regenerate code from contracts (Protobuf → Go, OpenAPI → TS)
 lint-contracts: ## Lint Protobuf and OpenAPI contracts
 	cd contracts/proto && buf lint
 	npx --yes @redocly/cli@2.64.1 lint contracts/openapi/dt.v1.yaml --config contracts/openapi/redocly.yaml
+
+# ---- go ---------------------------------------------------------------------
+.PHONY: build-go test-go test-go-short lint-go vuln test lint
+
+# Runs a command in every Go module: $(call each-module,<command>)
+each-module = for m in $(GO_MODULES); do echo "==> $$m"; (cd backend/$$m && $(1)); done
+
+build-go: ## Build every Go module
+	@$(call each-module,go build ./...)
+
+test-go: ## Run all Go tests with the race detector (Docker needed for integration tests)
+	@$(call each-module,go test -race ./...)
+
+test-go-short: ## Run Go unit tests only (no Docker)
+	@$(call each-module,go test -race -short ./...)
+
+lint-go: ## Lint every Go module, including the onion-architecture rules
+	@$(call each-module,golangci-lint run --config $(CURDIR)/backend/.golangci.yml ./...)
+
+vuln: ## Scan Go modules for known vulnerabilities
+	@$(call each-module,govulncheck ./...)
+
+test: test-go test-web ## Run every test
+
+lint: lint-go lint-web lint-contracts ## Run every linter

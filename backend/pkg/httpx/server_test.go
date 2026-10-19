@@ -33,7 +33,7 @@ func TestServerFinishesInFlightRequestOnShutdown(t *testing.T) {
 			got <- 0
 			return
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		got <- resp.StatusCode
 	}()
 	time.Sleep(50 * time.Millisecond)
