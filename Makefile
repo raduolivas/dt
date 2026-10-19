@@ -83,3 +83,13 @@ down: ## Stop the local stack and delete its volumes
 
 logs: ## Follow the local stack logs
 	$(COMPOSE) logs -f
+
+# ---- security and CI --------------------------------------------------------
+.PHONY: secrets ci
+
+secrets: ## Scan the repository and its history for leaked secrets
+	docker run --rm -v "$$PWD:/repo" \
+	  -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/repo \
+	  zricethezav/gitleaks:v8.30.1 detect --source /repo --redact --no-banner
+
+ci: lint test build-web secrets ## Run the CI checks locally

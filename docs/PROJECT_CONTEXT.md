@@ -1,9 +1,10 @@
 # DT (Delivery Tracker): Project Context
 
 > Portable state file. It works without any AI-specific memory. Share it with any assistant or person to pick up where we left off.
-> **Last updated:** 2026-10-18
+> **Last updated:** 2026-10-19
 > **Open questions (shareable on their own):** [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md)
-> **MVP spec:** [`superpowers/specs/2026-10-18-dt-mvp-design.md`](superpowers/specs/2026-10-18-dt-mvp-design.md) (written 2026-10-18, owner review pending)
+> **MVP spec:** [`superpowers/specs/2026-10-18-dt-mvp-design.md`](superpowers/specs/2026-10-18-dt-mvp-design.md) (approved 2026-10-19)
+> **Current plan:** [`superpowers/plans/2026-10-19-m0-foundations.md`](superpowers/plans/2026-10-19-m0-foundations.md) (M0 Foundations, built; PR to `main` pending)
 > **Architecture draft:** [`ARCHITECTURE.md`](ARCHITECTURE.md) (v0.1, under review)
 
 ## 1. What DT is
@@ -44,6 +45,7 @@ DT is a **SaaS that gives delivery apps a videogame-like 2D/3D live-tracking exp
 | D17 | **Courier web link is in the MVP** (OQ2). **Maps = option (a)**: own Three.js renderer on OpenStreetMap vector tiles + OSRM (OQ3). **Day-one services:** gateway, deliveries, tracking, webhooks, accounts-billing; messaging later (OQ5b). | 2026-10-18 |
 | D18 | **Providers:** Stripe for DT subscriptions (OQ7), Zitadel for partner console login with MFA (OQ8), partners send lat/lng in the MVP with no geocoding (OQ9). | 2026-10-18 |
 | D19 | **MVP design approved** by the owner (OQ1). Spec written: `docs/superpowers/specs/2026-10-18-dt-mvp-design.md` (adds a threat model, API v1 summary, lifecycle tables, testing strategy, milestones M0–M9). Spec choices waiting for owner review: NATS JetStream for events, gRPC via Connect for internal calls. | 2026-10-18 |
+| D20 | **MVP spec approved** by the owner. Implementation is split into **one plan per milestone (M0–M9)**. The first plan, **M0 Foundations**, is at `docs/superpowers/plans/2026-10-19-m0-foundations.md`; it covers the monorepo, onion service skeletons, schema per service, contracts, CI and security scans, plus the roadmap for M1–M9. | 2026-10-19 |
 | D12 | Build to best practices **with tests** from the start; the public docs are written together with the code and live in the website. | 2026-10-18 |
 
 ## 4. Open questions
@@ -59,13 +61,17 @@ DT is a **SaaS that gives delivery apps a videogame-like 2D/3D live-tracking exp
 
 ## 5. Current code state
 
-- Repo: `~/Documents/ai_projects/DT`, commit `48014ee` "create project prototype".
-- **Prototype:** Three.js + Vite + TypeScript. A stylized isometric city where a courier bikes to a store, picks up the order and delivers it. Simulator only, with no backend.
-- **Key design already in place:** the engine is decoupled from the view through a data contract (`src/engine/types.ts`):
-  - `TrackingSnapshot`: orderId, status, courier {position lat/lng, heading, speedKmh}, store, destination, route polylines, ETA, distance, progress, timestamps.
-  - `TrackingSource`: `subscribe(listener) → unsubscribe`. Swapping the simulator for a WebSocket source gives live data.
-- **Prototype-only limits:** fixed fake city, a router that only works on the street grid, the bike drawn about 6× real scale, and a simple ETA.
-- See `README.md` for the architecture and how to run it (`npm install && npm run dev`).
+- Repo: `~/Documents/ai_projects/DT`, branch `m0-foundations` (M0 Foundations, not merged to `main` yet).
+- **Monorepo:**
+  - `backend/`: Go 1.27.2 workspace (`go.work`). Five service skeletons (`gateway`, `deliveries`, `tracking`, `webhooks`, `accounts`), each in onion layout (`cmd/`, `internal/{domain,app,adapters}`, `migrations/`), enforced by golangci-lint `depguard`. Shared technical libraries in `pkg/`: `logx` (JSON logs with PII redaction), `httpx` (problem+json errors, `Request-Id`, panic recovery, access log, `/livez` + `/readyz`, graceful shutdown), `bootstrap` (service wiring from env), `testkit` (real Postgres in tests). Generated contract code in `gen/`.
+  - `contracts/`: OpenAPI 3.1 skeleton (`openapi/dt.v1.yaml`) and the Protobuf event envelope (`proto/dt/events/v1`), managed by buf.
+  - `web/`: pnpm + Turborepo workspace. The prototype now lives in `web/packages/renderer` (`@dt/renderer`); `@dt/contract` holds the TypeScript types generated from OpenAPI.
+  - `infra/compose/`: local stack. Postgres 18 + PostGIS with **one schema and one login role per service**; integration tests prove no role can read or write another's schema.
+  - Hardened images: distroless, non-root, read-only root filesystem, all capabilities dropped, `no-new-privileges`.
+  - CI (`.github/workflows/`): Go lint/tests/govulncheck, web lint/tests/build, contract lint + breaking check + codegen drift, gitleaks, Trivy image scan + SBOM, a `make dev` smoke test, CodeQL, Dependabot. All actions pinned to commit SHAs.
+- **Commands:** `make dev` / `make down` (local stack), `make test`, `make lint`, `make gen`, `make ci` (all checks), `make web-dev` (renderer). See `README.md`.
+- **Known local issue:** on the owner's machine, rootless Docker's bridge network has no internet access, so `make dev` cannot download Go modules during the image build. Fix Docker networking or build with host networking (see `README.md`, Troubleshooting).
+- The prototype's `TrackingSnapshot` / `TrackingSource` contract still drives the renderer. The generated v1 contract replaces it in M3–M4.
 
 ## 6. Phase 1 (MVP) design: approved 2026-10-18 (D19); full detail in the MVP spec
 
@@ -103,6 +109,7 @@ DT is a **SaaS that gives delivery apps a videogame-like 2D/3D live-tracking exp
 6. Brand and website content: name, logo, tagline, landing page copy.
 
 **Engineering:**
-1. ~~Write the spec~~ → done (2026-10-18). **Owner reviews the spec** and confirms the remaining open items in its §17.
-2. Write the step-by-step implementation plan (milestones M0–M9 from spec §16).
-3. Build with tests (TDD), milestone by milestone.
+1. ~~Write the spec~~ → approved 2026-10-19.
+2. ~~Write the M0 implementation plan~~ → done 2026-10-19.
+3. ~~**M0 Foundations**~~ → built 2026-10-19 on branch `m0-foundations`; done once CI is green on GitHub and the PR is merged.
+4. **Next: M1 accounts + gateway** (tenants, API keys, authn/scopes, rate limits, idempotency, audit log, NATS + outbox). Its plan is written once M0 is merged. Each later milestone gets its own plan the same way.
