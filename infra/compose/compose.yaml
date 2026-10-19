@@ -1,0 +1,93 @@
+# Local development stack. Ports bind to 127.0.0.1 only.
+name: dt
+
+x-service: &service
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgis/postgis:18-3.6
+    environment:
+      POSTGRES_DB: dt
+      POSTGRES_USER: dt_admin
+      POSTGRES_PASSWORD: dt_admin
+    volumes:
+      # Mounting the whole directory also replaces the image's own 10_postgis.sh.
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dt_admin -d dt"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  gateway:
+    <<: *service
+    build:
+      context: ../../backend
+      args:
+        SERVICE: gateway
+    environment:
+      PORT: "8080"
+      LOG_LEVEL: info
+      DATABASE_URL: "postgres://svc_gateway:svc_gateway@postgres:5432/dt?sslmode=disable"
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  deliveries:
+    <<: *service
+    build:
+      context: ../../backend
+      args:
+        SERVICE: deliveries
+    environment:
+      PORT: "8081"
+      LOG_LEVEL: info
+      DATABASE_URL: "postgres://svc_deliveries:svc_deliveries@postgres:5432/dt?sslmode=disable"
+    ports:
+      - "127.0.0.1:8081:8081"
+
+  tracking:
+    <<: *service
+    build:
+      context: ../../backend
+      args:
+        SERVICE: tracking
+    environment:
+      PORT: "8082"
+      LOG_LEVEL: info
+      DATABASE_URL: "postgres://svc_tracking:svc_tracking@postgres:5432/dt?sslmode=disable"
+    ports:
+      - "127.0.0.1:8082:8082"
+
+  webhooks:
+    <<: *service
+    build:
+      context: ../../backend
+      args:
+        SERVICE: webhooks
+    environment:
+      PORT: "8083"
+      LOG_LEVEL: info
+      DATABASE_URL: "postgres://svc_webhooks:svc_webhooks@postgres:5432/dt?sslmode=disable"
+    ports:
+      - "127.0.0.1:8083:8083"
+
+  accounts:
+    <<: *service
+    build:
+      context: ../../backend
+      args:
+        SERVICE: accounts
+    environment:
+      PORT: "8084"
+      LOG_LEVEL: info
+      DATABASE_URL: "postgres://svc_accounts:svc_accounts@postgres:5432/dt?sslmode=disable"
+    ports:
+      - "127.0.0.1:8084:8084"

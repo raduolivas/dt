@@ -1,104 +1,81 @@
-# Delivery Tracker — 3D tracking module (prototype)
+# DT (Delivery Tracker)
 
-A stylized isometric 3D simulation of a delivery: a courier on a bicycle rides to a store, waits for the
-order, picks it up and delivers it to the customer's home. Built with **Three.js + Vite + TypeScript**.
+DT is a SaaS that gives delivery apps a videogame-like 2D/3D live-tracking experience for their customers.
+Partners send order events and courier GPS; DT renders the delivery as a stylized city map. Full context:
+[`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md).
 
-It is designed as a **module**, not an app: the tracking engine and the 3D view are separated by one small
-data contract, so you can later replace the simulator with real GPS data from your backend.
+## Prerequisites
+
+Go 1.27.2, Node 24 LTS with pnpm (via corepack), Docker with Compose, buf, golangci-lint, govulncheck,
+actionlint and pinact. Check them all with:
 
 ```bash
-npm install
-npm run dev      # http://localhost:5173
-npm run build    # type-check + production build in dist/
+make doctor
 ```
 
-## Architecture
+## Everyday commands
+
+| Command | What it does |
+|---|---|
+| `make dev` | Build the service images, start the local stack (Postgres + PostGIS and the five services) and wait until every `/readyz` answers 200 |
+| `make down` | Stop the local stack and delete its volumes |
+| `make logs` | Follow the local stack logs |
+| `make test` | Run every Go test (race detector; integration tests need Docker) and every web test |
+| `make test-go-short` | Go unit tests only, no Docker |
+| `make lint` | Go lint (including the onion rules), web lint + typecheck, contract lint |
+| `make gen` | Regenerate code from the contracts (Protobuf → Go, OpenAPI → TypeScript) |
+| `make vuln` | Scan Go modules for known vulnerabilities |
+| `make web-dev` | Run the renderer prototype at http://localhost:5173 |
+
+Local services listen on `127.0.0.1` only: gateway 8080, deliveries 8081, tracking 8082, webhooks 8083,
+accounts 8084, Postgres 5432. Every service exposes `GET /livez` and `GET /readyz`.
+
+## Repository layout
 
 ```
-src/
-  engine/              <- "backend": no Three.js, no DOM
-    types.ts           TrackingSnapshot, TrackingSource, SimParams  (THE CONTRACT)
-    geo.ts             lat/lng <-> local meters projection
-    path.ts            walk along a polyline (position + bearing by distance)
-    router.ts          Manhattan router for the prototype city
-    world.ts           city layout, store / home places, geo ORIGIN
-    simulator.ts       order state machine + fake GPS (implements TrackingSource)
-  view/                <- 3D, consumes snapshots only
-    CityScene.ts       scene, courier, route lines, pins, camera follow
-    models.ts          bicycle + rider, store, house, buildings, trees
-    ribbon.ts          road-following route ribbon
-  ui.ts, style.css     HUD (stats, timeline, stepper, parameters)
-  main.ts              wires simulator -> scene + HUD
+backend/                Go workspace (go.work)
+  services/{gateway,deliveries,tracking,webhooks,accounts}/
+                        one module per service: cmd/, internal/{domain,app,adapters}/, migrations/
+  pkg/                  technical shared libraries only (logx, httpx, bootstrap, testkit)
+  gen/                  generated contract code (never edited by hand)
+contracts/
+  openapi/dt.v1.yaml    public REST API (OpenAPI 3.1)
+  proto/dt/.../v1/      event and internal contracts (Protobuf, managed by buf)
+web/                    pnpm workspace + Turborepo
+  packages/renderer/    the Three.js tracking renderer (former prototype)
+  packages/contract/    TypeScript types generated from the OpenAPI contract
+infra/compose/          local stack; postgres/init creates one schema and one role per service
+scripts/                helper scripts (wait-ready.sh)
+docs/                   project context, architecture, open questions, specs and plans
 ```
 
-## The contract
+## The onion rule
 
-The view and the HUD only ever receive this object. Everything is real geographic data (lat/lng, compass
-heading in degrees, meters, seconds):
+Each service is split into three layers that depend inward only. `internal/domain` holds entities, value
+objects and domain events and uses the standard library only. `internal/app` holds use cases and the ports
+(interfaces) they need, with no transport or driver imports. `internal/adapters` implements those ports
+(HTTP handlers, Postgres repositories, message publishers). golangci-lint's `depguard` enforces this in
+`make lint`, so a domain file importing `net/http` or an app file importing an adapter fails the build.
+Each service also owns its own database schema and login role, and no role can read another's schema.
 
-```ts
-interface TrackingSnapshot {
-  orderId: string;
-  status: 'requested' | 'accepted' | 'to_store' | 'at_store'
-        | 'picked_up' | 'on_the_way' | 'arriving' | 'delivered';
-  courier: { position: LatLng; heading: number /* 0 = north, clockwise */; speedKmh: number };
-  store: LatLng;
-  destination: LatLng;
-  route: { toStore: LatLng[]; toCustomer: LatLng[] };   // polylines
-  etaSeconds: number | null;
-  distanceRemainingM: number;
-  progress: number;                                      // 0..1
-  elapsedSec: number;
-  updatedAt: number;                                     // unix ms
-}
+## Renderer
 
-interface TrackingSource {
-  subscribe(listener: (s: TrackingSnapshot) => void): () => void;
-}
-```
+`web/packages/renderer` is the 3D tracking view. The engine (`src/engine/`, no Three.js) and the view
+(`src/view/`) only talk through one small data contract, `TrackingSnapshot`, delivered by a
+`TrackingSource`. The prototype feeds it from a simulator; in production the generated v1 contract replaces
+it and the snapshots come from the tracking service. Open **Parameters → Live snapshot** in `make web-dev`
+to watch the snapshot update live.
 
-Open **Parameters → Live snapshot** in the running prototype to watch this JSON update in real time.
+## Documentation
 
-## Plugging into a real app
+- [`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md): decisions and current state
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): architecture draft
+- [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md): questions waiting for an answer
+- [`docs/superpowers/specs/`](docs/superpowers/specs/): the MVP spec; [`docs/superpowers/plans/`](docs/superpowers/plans/): milestone plans
 
-1. **Backend side**: emit `TrackingSnapshot`s (WebSocket / SSE / polling / Firebase). The courier app sends GPS
-   fixes, your backend adds status, route (e.g. from OSRM, Mapbox or Google Directions) and ETA.
-2. **Client side**: write a small `TrackingSource`:
+## Troubleshooting
 
-   ```ts
-   class WebSocketSource implements TrackingSource {
-     private listeners = new Set<SnapshotListener>();
-     constructor(url: string) {
-       const ws = new WebSocket(url);
-       ws.onmessage = (e) => this.listeners.forEach((l) => l(JSON.parse(e.data)));
-     }
-     subscribe(l: SnapshotListener) { this.listeners.add(l); return () => this.listeners.delete(l); }
-   }
-
-   const source = new WebSocketSource('wss://api.example.com/orders/123/track');
-   source.subscribe((s) => { scene.onSnapshot(s); hud.update(s, true); });
-   ```
-
-3. `CityScene` already interpolates between snapshots (position and heading), so 1 GPS fix per second still
-   looks fluid. Wrap `CityScene` in a React/Vue component, or load it in a WebView for a mobile app.
-
-### What is still prototype-only
-
-- **The city is stylized and fixed.** Real coordinates are projected around `ORIGIN` in `engine/world.ts`; the
-  store and home sit on the street lattice. For real orders, the next step is to generate the scene around the
-  order (store at the origin, route from the snapshot) or to draw real building footprints from map data.
-- **`router.ts`** is a Manhattan router that only works on the lattice. A real backend provides the route.
-- **Visual scale**: the bicycle is drawn ~6x larger than real so it reads from the isometric camera.
-- Driving ETA is a simple speed-based estimate; a real ETA comes from your backend.
-
-## Simulation parameters
-
-| Parameter | Default | Effect |
-|---|---|---|
-| Courier speed | 18 km/h | Cruising speed (slows down at corners and on arrival) |
-| Store preparation time | 25 s | How long the courier waits at the store |
-| Simulation speed | 4x | Simulated seconds per real second |
-| Delivery distance | Medium | Near ≈ 770 m, Medium ≈ 1.1 km, Far ≈ 1.4 km total route |
-
-Controls: **Request order / Pause / Resume**, **Restart**, **Follow** (camera follows the courier),
-**Overview** (whole city). Space bar toggles run/pause. Drag to rotate, scroll or pinch to zoom.
+- **`make dev` fails with `lookup proxy.golang.org ... i/o timeout`:** the Docker build containers have no
+  network access. This happens with some rootless Docker setups. Fix Docker's networking (for example, the
+  rootless network driver or the daemon `dns` setting), or build once with host networking through a
+  Compose override that sets `build.network: host` for each service.

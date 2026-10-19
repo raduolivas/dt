@@ -68,3 +68,18 @@ vuln: ## Scan Go modules for known vulnerabilities
 test: test-go test-web ## Run every test
 
 lint: lint-go lint-web lint-contracts ## Run every linter
+
+# ---- local stack ------------------------------------------------------------
+.PHONY: dev down logs
+
+COMPOSE := docker compose -f infra/compose/compose.yaml
+
+dev: ## Build and start the local stack, then wait until every service is ready
+	$(COMPOSE) up --build -d
+	scripts/wait-ready.sh
+
+down: ## Stop the local stack and delete its volumes
+	$(COMPOSE) down -v
+
+logs: ## Follow the local stack logs
+	$(COMPOSE) logs -f
