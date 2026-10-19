@@ -14,6 +14,8 @@ linters:
     depguard:
       rules:
         # Onion rule (spec §8.2): the domain is pure; it knows no I/O.
+        # A trailing "$" is an exact match, so "net$" keeps the pure value
+        # packages net/url, net/netip and net/mail allowed.
         domain:
           files:
             - "**/internal/domain/**"
@@ -21,36 +23,66 @@ linters:
           allow:
             - $gostd
           deny:
-            - pkg: net
+            - pkg: "net$"
               desc: "domain layer is standard library only and does no I/O (onion rule, spec §8.2)"
-            - pkg: database/sql
+            - pkg: "net/http"
               desc: "domain layer is standard library only and does no I/O (onion rule, spec §8.2)"
-            - pkg: os/exec
+            - pkg: "net/rpc"
+              desc: "domain layer is standard library only and does no I/O (onion rule, spec §8.2)"
+            - pkg: "net/smtp"
+              desc: "domain layer is standard library only and does no I/O (onion rule, spec §8.2)"
+            - pkg: "os$"
+              desc: "domain layer is standard library only and does no I/O (onion rule, spec §8.2)"
+            - pkg: "os/exec"
+              desc: "domain layer is standard library only and does no I/O (onion rule, spec §8.2)"
+            - pkg: "os/signal"
+              desc: "domain layer is standard library only and does no I/O (onion rule, spec §8.2)"
+            - pkg: "database/sql"
+              desc: "domain layer is standard library only and does no I/O (onion rule, spec §8.2)"
+            - pkg: "io/fs"
+              desc: "domain layer is standard library only and does no I/O (onion rule, spec §8.2)"
+            - pkg: "syscall"
               desc: "domain layer is standard library only and does no I/O (onion rule, spec §8.2)"
         app:
           files:
             - "**/internal/app/**"
           list-mode: lax
           deny:
-            - pkg: net/http
+            - pkg: "net/http"
               desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
-            - pkg: github.com/jackc
+            - pkg: "database/sql"
               desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
-            - pkg: github.com/nats-io
+            - pkg: "github.com/jackc"
               desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
-            - pkg: github.com/redis
+            - pkg: "github.com/nats-io"
               desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
-            - pkg: github.com/stripe
+            - pkg: "github.com/redis"
               desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
-            - pkg: github.com/raduolivas/dt/backend/services/gateway/internal/adapters
+            - pkg: "github.com/stripe"
               desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
-            - pkg: github.com/raduolivas/dt/backend/services/deliveries/internal/adapters
+            - pkg: "connectrpc.com/connect"
               desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
-            - pkg: github.com/raduolivas/dt/backend/services/tracking/internal/adapters
+            - pkg: "google.golang.org/grpc"
               desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
-            - pkg: github.com/raduolivas/dt/backend/services/webhooks/internal/adapters
+            - pkg: "github.com/coder/websocket"
               desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
-            - pkg: github.com/raduolivas/dt/backend/services/accounts/internal/adapters
+            - pkg: "github.com/zitadel"
+              desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
+            - pkg: "github.com/golang-migrate"
+              desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
+            - pkg: "github.com/raduolivas/dt/backend/pkg/httpx"
+              desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
+            - pkg: "github.com/raduolivas/dt/backend/pkg/bootstrap"
+              desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
+            - pkg: "github.com/raduolivas/dt/backend/services/gateway/internal/adapters"
+              desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
+            - pkg: "github.com/raduolivas/dt/backend/services/deliveries/internal/adapters"
+              desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
+            - pkg: "github.com/raduolivas/dt/backend/services/tracking/internal/adapters"
+              desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
+            - pkg: "github.com/raduolivas/dt/backend/services/webhooks/internal/adapters"
+              desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
+            - pkg: "github.com/raduolivas/dt/backend/services/accounts/internal/adapters"
               desc: "app layer must depend on ports, not transports or drivers (onion rule, spec §8.2)"
   exclusions:
     generated: strict

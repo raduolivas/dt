@@ -45,7 +45,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm -C web install --frozen-lockfile
-      - run: make lint-web test-web build-web
+      - run: make lint-web test-web build-web audit-web
 
   contracts:
     runs-on: ubuntu-24.04
@@ -70,7 +70,15 @@ jobs:
       - run: make lint-contracts
       - name: Breaking-change check against main
         if: github.event_name == 'pull_request'
-        run: buf breaking contracts/proto --against '.git#branch=origin/main,subdir=contracts/proto'
+        env:
+          BASE: origin/main
+        run: |
+          # Until main has a buf module there is no baseline to compare against.
+          if git cat-file -e "${BASE}:contracts/proto/buf.yaml" 2>/dev/null; then
+            buf breaking contracts/proto --against ".git#branch=${BASE},subdir=contracts/proto"
+          else
+            echo "No contracts/proto on ${BASE} yet; skipping the breaking-change check."
+          fi
       - name: Generated code is up to date
         run: make gen && git diff --exit-code
 

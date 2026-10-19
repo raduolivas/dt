@@ -18,7 +18,7 @@ doctor: ## Check that every required tool is installed
 	done
 
 # ---- web --------------------------------------------------------------------
-.PHONY: lint-web test-web build-web web-dev
+.PHONY: lint-web test-web build-web audit-web web-dev
 
 lint-web: ## Lint and typecheck the web workspace
 	pnpm -C web lint
@@ -29,6 +29,9 @@ test-web: ## Run web unit tests
 
 build-web: ## Build all web packages
 	pnpm -C web build
+
+audit-web: ## Fail on high or critical vulnerabilities in web dependencies
+	pnpm -C web audit --audit-level high
 
 web-dev: ## Run the renderer prototype dev server
 	pnpm -C web --filter @dt/renderer dev
@@ -92,4 +95,4 @@ secrets: ## Scan the repository and its history for leaked secrets
 	  -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/repo \
 	  zricethezav/gitleaks:v8.30.1 detect --source /repo --redact --no-banner
 
-ci: lint test build-web secrets ## Run the CI checks locally
+ci: lint test build-web audit-web vuln secrets ## Run the CI checks locally

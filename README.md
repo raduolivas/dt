@@ -24,7 +24,7 @@ make doctor
 | `make test-go-short` | Go unit tests only, no Docker |
 | `make lint` | Go lint (including the onion rules), web lint + typecheck, contract lint |
 | `make gen` | Regenerate code from the contracts (Protobuf → Go, OpenAPI → TypeScript) |
-| `make vuln` | Scan Go modules for known vulnerabilities |
+| `make vuln` / `make audit-web` | Scan Go modules / web dependencies for known vulnerabilities |
 | `make web-dev` | Run the renderer prototype at http://localhost:5173 |
 
 Local services listen on `127.0.0.1` only: gateway 8080, deliveries 8081, tracking 8082, webhooks 8083,
