@@ -1,0 +1,61 @@
+package httpx_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/raduolivas/dt/backend/pkg/httpx"
+	"github.com/raduolivas/dt/backend/pkg/logx"
+)
+
+func TestRecoverReturnsProblem(t *testing.T) {
+	var logs bytes.Buffer
+	log := logx.New(&logs, slog.LevelDebug, "test")
+	h := httpx.RequestID(httpx.Recover(log)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("secret-detail")
+	})))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var p httpx.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Code != "internal_error" {
+		t.Fatalf("code = %q", p.Code)
+	}
+	if strings.Contains(rec.Body.String(), "secret-detail") {
+		t.Fatalf("panic value leaked to client: %s", rec.Body.String())
+	}
+	id := rec.Header().Get(httpx.RequestIDHeader)
+	if !strings.Contains(logs.String(), `"request_id":"`+id+`"`) || !strings.Contains(logs.String(), `"stack":`) {
+		t.Fatalf("log missing request_id or stack: %s", logs.String())
+	}
+}
+
+func TestAccessLogOmitsQuery(t *testing.T) {
+	var logs bytes.Buffer
+	log := logx.New(&logs, slog.LevelDebug, "test")
+	h := httpx.RequestID(httpx.AccessLog(log)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/x?token=abc", nil))
+
+	out := logs.String()
+	for _, want := range []string{`"path":"/v1/x"`, `"status":200`, `"duration_ms"`, `"request_id"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %s in %s", want, out)
+		}
+	}
+	if strings.Contains(out, "abc") {
+		t.Fatalf("query leaked: %s", out)
+	}
+}
