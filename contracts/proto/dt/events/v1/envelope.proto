@@ -1,0 +1,29 @@
+syntax = "proto3";
+package dt.events.v1;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
+
+enum Environment {
+  ENVIRONMENT_UNSPECIFIED = 0;
+  ENVIRONMENT_TEST = 1;
+  ENVIRONMENT_LIVE = 2;
+}
+
+message Subject {
+  string delivery_id = 1;
+  string courier_id = 2;
+}
+
+message Envelope {
+  string event_id = 1;
+  string type = 2;
+  uint32 schema_version = 3;
+  string tenant_id = 4;
+  Environment environment = 5;
+  google.protobuf.Timestamp occurred_at = 6;
+  google.protobuf.Timestamp received_at = 7;
+  string source = 8;
+  Subject subject = 9;
+  google.protobuf.Any payload = 10;
+}

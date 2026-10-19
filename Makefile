@@ -32,3 +32,14 @@ build-web: ## Build all web packages
 
 web-dev: ## Run the renderer prototype dev server
 	pnpm -C web --filter @dt/renderer dev
+
+# ---- contracts --------------------------------------------------------------
+.PHONY: gen lint-contracts
+
+gen: ## Regenerate code from contracts (Protobuf → Go, OpenAPI → TS)
+	cd contracts/proto && buf generate
+	pnpm -C web --filter @dt/contract gen
+
+lint-contracts: ## Lint Protobuf and OpenAPI contracts
+	cd contracts/proto && buf lint
+	npx --yes @redocly/cli@2.64.1 lint contracts/openapi/dt.v1.yaml --config contracts/openapi/redocly.yaml
