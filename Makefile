@@ -18,3 +18,17 @@ doctor: ## Check that every required tool is installed
 	done
 
 # ---- web --------------------------------------------------------------------
+.PHONY: lint-web test-web build-web web-dev
+
+lint-web: ## Lint and typecheck the web workspace
+	pnpm -C web lint
+	pnpm -C web typecheck
+
+test-web: ## Run web unit tests
+	pnpm -C web test
+
+build-web: ## Build all web packages
+	pnpm -C web build
+
+web-dev: ## Run the renderer prototype dev server
+	pnpm -C web --filter @dt/renderer dev
