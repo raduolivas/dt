@@ -47,10 +47,13 @@ func TestAccessLogOmitsQuery(t *testing.T) {
 	h := httpx.RequestID(httpx.AccessLog(log)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})))
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/x?token=abc", nil))
+	req := httptest.NewRequest(http.MethodGet, "/v1/x?token=abc", nil)
+	// Fixed ID: a random one could itself contain "abc".
+	req.Header.Set(httpx.RequestIDHeader, "fixed-id")
+	h.ServeHTTP(httptest.NewRecorder(), req)
 
 	out := logs.String()
-	for _, want := range []string{`"path":"/v1/x"`, `"status":200`, `"duration_ms"`, `"request_id"`} {
+	for _, want := range []string{`"path":"/v1/x"`, `"status":200`, `"duration_ms"`, `"request_id":"fixed-id"`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %s in %s", want, out)
 		}
