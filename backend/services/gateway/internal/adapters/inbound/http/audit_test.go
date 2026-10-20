@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -63,12 +64,15 @@ components:
 
 // auditRoutes are GET /v1/me, POST /v1/things (201, or a panic when the body
 // is {"name":"panic"}) and POST /v1/things/{thing_id}/cancel (200).
-func auditRoutes() []httpapi.Route {
+func auditRoutes() []httpapi.Route { return auditRoutesScoped("") }
+
+// auditRoutesScoped is auditRoutes with things.create requiring scope.
+func auditRoutesScoped(scope domain.Scope) []httpapi.Route {
 	creds := []domain.CredentialType{domain.CredentialSecretKey}
 	return []httpapi.Route{
 		httpapi.Routes(httpapi.Deps{})[0],
 		{
-			Name: "things.create", Method: http.MethodPost, Pattern: "/v1/things", Credentials: creds,
+			Name: "things.create", Method: http.MethodPost, Pattern: "/v1/things", Credentials: creds, Scope: scope,
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				b, _ := io.ReadAll(r.Body)
 				if strings.Contains(string(b), "panic") {
@@ -86,9 +90,19 @@ func auditRoutes() []httpapi.Route {
 
 func auditEdge(t *testing.T, s app.AuditStore, keys ...testKey) *edge {
 	t.Helper()
-	return newEdge(t, keys, withRoutes(auditRoutes()...), withSpec(auditSpec),
+	return auditEdgeWith(t, s, auditRoutes(), nil, keys...)
+}
+
+// auditEdgeWith mounts routes with the Audit hook over s; extra sets more
+// hooks.
+func auditEdgeWith(t *testing.T, s app.AuditStore, routes []httpapi.Route, extra func(*httpapi.Middleware), keys ...testKey) *edge {
+	t.Helper()
+	return newEdge(t, keys, withRoutes(routes...), withSpec(auditSpec),
 		withMiddleware(func(m *httpapi.Middleware) {
 			m.Audit = httpapi.Audit(s, fixedClock{}, m.Log)
+			if extra != nil {
+				extra(m)
+			}
 		}))
 }
 
@@ -284,5 +298,75 @@ func TestAuditFailureDoesNotChangeResponse(t *testing.T) {
 		if strings.Contains(logs, leak) {
 			t.Fatalf("logs contain %q: %s", leak, logs)
 		}
+	}
+}
+
+func statuses(es []app.AuditEntry) []int {
+	out := make([]int, len(es))
+	for i, e := range es {
+		out[i] = e.Status
+	}
+	return out
+}
+
+func TestAuditRecordsForbiddenWrites(t *testing.T) {
+	t.Parallel()
+	k := mint(t, apikey.Test, ids.New(ids.APIKey)) // no scopes
+	m := &memAudit{}
+	e := auditEdgeWith(t, m, auditRoutesScoped(domain.ScopeDeliveriesWrite), nil, k)
+
+	wantProblem(t, e.do(post("/v1/things", "Bearer "+k.raw, `{"name":"x"}`)), http.StatusForbidden, "insufficient_scope")
+	got := m.all()
+	if len(got) != 1 || got[0].Status != http.StatusForbidden || got[0].Action != "things.create" || got[0].ActorID != k.rec.ID {
+		t.Fatalf("entries = %+v, want one things.create entry with status 403", got)
+	}
+}
+
+func TestAuditRecordsIdempotentReplaysAndConflicts(t *testing.T) {
+	t.Parallel()
+	idem := idemStore(t)
+	k := mint(t, apikey.Test, ids.New(ids.APIKey))
+	m := &memAudit{}
+	e := auditEdgeWith(t, m, auditRoutes(), func(mw *httpapi.Middleware) {
+		mw.Idempotency = httpapi.Idempotency(idem, fixedClock{}, mw.Log)
+	}, k)
+
+	first := e.do(postThing(k, `{"name":"x"}`, "idem-1"))
+	replay := e.do(postThing(k, `{"name":"x"}`, "idem-1"))
+	if first.Code != http.StatusCreated || replay.Code != http.StatusCreated || replay.Header().Get(httpapi.IdempotentReplayedHeader) != "true" {
+		t.Fatalf("first %d, replay %d (replayed %q), want 201 twice with a replay", first.Code, replay.Code,
+			replay.Header().Get(httpapi.IdempotentReplayedHeader))
+	}
+	wantProblem(t, e.do(postThing(k, `{"name":"other"}`, "idem-1")), http.StatusUnprocessableEntity, "idempotency_mismatch")
+	wantProblem(t, e.do(postThing(k, `{"name":"x"}`)), http.StatusBadRequest, "idempotency_key_required")
+
+	got := m.all()
+	want := []int{http.StatusCreated, http.StatusCreated, http.StatusUnprocessableEntity, http.StatusBadRequest}
+	if s := statuses(got); !slices.Equal(s, want) {
+		t.Fatalf("audit statuses = %v, want %v (first run, replay, mismatch, missing key)", s, want)
+	}
+	if got[1].RequestID != replay.Header().Get(httpx.RequestIDHeader) {
+		t.Fatalf("replay entry request id = %q, want the replay's %q", got[1].RequestID, replay.Header().Get(httpx.RequestIDHeader))
+	}
+}
+
+// denyLimiter denies every request.
+type denyLimiter struct{}
+
+func (denyLimiter) Allow(context.Context, string, app.Limit) (app.Decision, error) {
+	return app.Decision{Allowed: false, Limit: 100, RetryAfter: time.Second, ResetAfter: time.Second}, nil
+}
+
+func TestAuditSkipsRateLimited(t *testing.T) {
+	t.Parallel()
+	k := mint(t, apikey.Test, ids.New(ids.APIKey))
+	m := &memAudit{}
+	e := auditEdgeWith(t, m, auditRoutes(), func(mw *httpapi.Middleware) {
+		mw.RateLimit = httpapi.PartnerRateLimit(denyLimiter{}, mw.Log)
+	}, k)
+
+	wantProblem(t, e.do(post("/v1/things", "Bearer "+k.raw, `{"name":"x"}`)), http.StatusTooManyRequests, "rate_limited")
+	if got := m.all(); len(got) != 0 {
+		t.Fatalf("entries = %+v, want none for a 429 (no audit amplification)", got)
 	}
 }

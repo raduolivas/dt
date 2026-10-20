@@ -62,9 +62,10 @@ CREATE TABLE audit_log (
 CREATE INDEX audit_log_tenant_env_occurred_at ON audit_log (tenant_id, environment, occurred_at DESC);
 -- Retention deletes the oldest rows across tenants.
 CREATE INDEX audit_log_occurred_at ON audit_log (occurred_at);
--- Append-only for the service role, which owns the table: it keeps INSERT,
--- SELECT and DELETE (retention) but loses UPDATE. An owner may revoke its own
--- privileges, and PostgreSQL enforces that, but it could also grant them back,
--- so this guards against bugs, not a compromised role. True immutability
--- comes when migrations run as a separate role (M3 staging).
-REVOKE UPDATE ON audit_log FROM svc_gateway;
+-- Append-only for the role running the migrations, which owns the table: it
+-- keeps INSERT, SELECT and DELETE (retention) but loses UPDATE and TRUNCATE.
+-- An owner may revoke its own privileges, and PostgreSQL enforces that, but
+-- it could also grant them back, so this guards against bugs, not a
+-- compromised role. True immutability comes when migrations run as a
+-- separate role (M3 staging).
+REVOKE UPDATE, TRUNCATE ON audit_log FROM CURRENT_USER;

@@ -14,9 +14,9 @@ import (
 	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
 )
 
-// AuditStore appends to audit_log. The migration revokes UPDATE on the table
-// from the service role, so entries can be inserted, read and deleted (for
-// retention) but never changed.
+// AuditStore appends to audit_log. The migration revokes UPDATE and TRUNCATE
+// on the table from the service role, so entries can be inserted, read and
+// deleted (for retention) but never changed.
 type AuditStore struct {
 	q *db.Queries
 }

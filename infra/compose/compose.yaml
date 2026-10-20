@@ -20,7 +20,7 @@ services:
       # Mounting the whole directory also replaces the image's own 10_postgis.sh.
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dt_admin -d dt"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U dt_admin -d dt"]
       interval: 2s
       timeout: 3s
       retries: 30

@@ -618,9 +618,9 @@ func TestMiddlewareHookOrder(t *testing.T) {
 	}
 	want := []string{
 		"failed_auth:echo.create:anon:ip",
+		"audit:echo.create:authed:ip",
 		"rate_limit:echo.create:authed:ip",
 		"idempotency:echo.create:authed:ip",
-		"audit:echo.create:authed:ip",
 	}
 	if got := reset(); !slices.Equal(got, want) {
 		t.Fatalf("POST hooks = %v, want %v", got, want)

@@ -93,10 +93,15 @@ func TestAuditLogIsAppendOnly(t *testing.T) {
 	if err := s.Record(ctx, auditEntry(t0)); err != nil {
 		t.Fatal(err)
 	}
-	_, err := pool.Exec(ctx, "UPDATE audit_log SET status = 200")
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
-		t.Fatalf("UPDATE audit_log = %v, want permission denied (42501)", err)
+	for _, stmt := range []string{"UPDATE audit_log SET status = 200", "TRUNCATE audit_log"} {
+		_, err := pool.Exec(ctx, stmt)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+			t.Fatalf("%s = %v, want permission denied (42501)", stmt, err)
+		}
+	}
+	if got := auditCount(t, pool, "true"); got != 1 {
+		t.Fatalf("rows = %d after the refused statements, want 1", got)
 	}
 	// INSERT, SELECT and DELETE stay with the role (DELETE for retention).
 	if _, err := pool.Exec(ctx, "DELETE FROM audit_log WHERE actor_id = 'nobody'"); err != nil {

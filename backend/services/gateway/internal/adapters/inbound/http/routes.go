@@ -83,7 +83,9 @@ type Middleware struct {
 	RateLimit Hook
 	// Idempotency (Task 11) runs on POST routes only, after RateLimit.
 	Idempotency Hook
-	// Audit (Task 12) runs on non-GET routes only, after Idempotency.
+	// Audit (Task 12) runs on non-GET routes only, right after
+	// Authenticate and before Authorize, so it sees every authenticated
+	// write's final status.
 	Audit Hook
 }
 
@@ -94,8 +96,12 @@ const MaxBodyBytes = 64 << 10
 // wrapped in this chain, outermost first:
 //
 //	MaxBytes(64 KiB) → ClientIP(trusted) → [FailedAuth] → Authenticate →
-//	Authorize(route) → [RateLimit] → [Idempotency, POST only] →
-//	[Audit, non-GET only] → Validate (OpenAPI, security off) → handler
+//	[Audit, non-GET only] → Authorize(route) → [RateLimit] →
+//	[Idempotency, POST only] → Validate (OpenAPI, security off) → handler
+//
+// Audit sits right inside Authenticate so every authenticated write is
+// recorded with its final status, including 403s, idempotency conflicts and
+// replays (spec §11.1).
 //
 // Bracketed steps are Middleware hooks and are skipped when nil. Mount also
 // registers the /v1/ fallbacks: OPTIONS answers 403 cors_not_allowed (the
@@ -118,9 +124,6 @@ func Mount(mux *http.ServeMux, routes []Route, mw Middleware) {
 
 	for _, rt := range routes {
 		h := validate(rt.Handler)
-		if mw.Audit != nil && rt.Method != http.MethodGet {
-			h = mw.Audit(h, rt)
-		}
 		if mw.Idempotency != nil && rt.Method == http.MethodPost {
 			h = mw.Idempotency(h, rt)
 		}
@@ -128,6 +131,9 @@ func Mount(mux *http.ServeMux, routes []Route, mw Middleware) {
 			h = mw.RateLimit(h, rt)
 		}
 		h = Authorize(rt)(h)
+		if mw.Audit != nil && rt.Method != http.MethodGet {
+			h = mw.Audit(h, rt)
+		}
 		h = Authenticate(mw.Auth, log)(h)
 		if mw.FailedAuth != nil {
 			h = mw.FailedAuth(h, rt)
