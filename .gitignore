@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.turbo/
+coverage/
+*.local
+.env
+backend/**/bin/
+*.test
+*.out
+# executor scratch (plan ledgers, review packages)
+.superpowers/

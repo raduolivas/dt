@@ -1,0 +1,11 @@
+go 1.27.2
+
+use (
+	./gen
+	./pkg
+	./services/accounts
+	./services/deliveries
+	./services/gateway
+	./services/tracking
+	./services/webhooks
+)

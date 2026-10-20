@@ -1,0 +1,15 @@
+{
+  "name": "@dt/contract",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "gen": "openapi-typescript ../../../contracts/openapi/dt.v1.yaml -o src/openapi.d.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0"
+  }
+}
