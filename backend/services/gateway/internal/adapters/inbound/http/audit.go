@@ -1,0 +1,145 @@
+package httpapi
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/raduolivas/dt/backend/pkg/httpx"
+	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
+)
+
+// maxAuditText caps the user agent and target stored per entry, in bytes.
+const maxAuditText = 512
+
+// auditTimeout bounds one audit write. It runs detached from the request
+// context, so a client hanging up does not drop the entry.
+const auditTimeout = 5 * time.Second
+
+// Audit is the Middleware.Audit hook (non-GET routes). After the handler it
+// records one app.AuditEntry for every request with a principal whose method
+// is not GET or HEAD: the credential as actor, the route name as action, the
+// route's path value as target, and the status the client received (a panic
+// is recorded as the 500 the outer Recover answers, then re-raised).
+//
+// Requests stopped earlier in the chain (authentication, authorization, rate
+// limit, idempotency replays and conflicts) never reach this hook, so they
+// are not recorded.
+//
+// Trade-off: the entry is written after the handler has run, so a failed
+// write cannot undo the request. It is logged at error (without the client
+// IP or any credential) and the response is left unchanged.
+func Audit(store app.AuditStore, clock app.Clock, log *slog.Logger) Hook {
+	if log == nil {
+		log = slog.Default()
+	}
+	return func(next http.Handler, rt Route) http.Handler {
+		wildcard := patternWildcard(rt.Pattern)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p, ok := PrincipalFrom(r.Context())
+			if !ok || r.Method == http.MethodGet || r.Method == http.MethodHead {
+				next.ServeHTTP(w, r)
+				return
+			}
+			start := clock.Now()
+			sw := &statusWriter{ResponseWriter: w}
+			record := func(status int) {
+				ip, _ := ClientIPFrom(r.Context())
+				e := app.AuditEntry{
+					TenantID: p.TenantID, Env: p.Env, ActorType: string(p.Credential), ActorID: p.CredentialID,
+					Action: rt.Name, Status: status, IP: ip,
+					UserAgent: auditText(r.UserAgent()), RequestID: httpx.RequestIDFrom(r.Context()), At: start,
+				}
+				if wildcard != "" {
+					e.Target = auditText(r.PathValue(wildcard))
+				}
+				ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), auditTimeout)
+				defer cancel()
+				if err := store.Record(ctx, e); err != nil {
+					log.ErrorContext(r.Context(), "audit_write_failed",
+						"error", err.Error(),
+						"action", rt.Name,
+						"status", status,
+						"tenant_id", p.TenantID,
+						"credential_id", p.CredentialID,
+						"request_id", e.RequestID)
+				}
+			}
+			finished := false
+			defer func() {
+				if finished {
+					return
+				}
+				v := recover()
+				status := sw.status
+				if !sw.wrote {
+					status = http.StatusInternalServerError
+				}
+				record(status)
+				if v != nil { // nil: runtime.Goexit, which keeps unwinding
+					panic(v)
+				}
+			}()
+			next.ServeHTTP(sw, r)
+			finished = true
+			if !sw.wrote {
+				sw.status = http.StatusOK
+			}
+			record(sw.status)
+		})
+	}
+}
+
+// patternWildcard returns the name of the first {wildcard} in a mux pattern,
+// or "" if it has none.
+func patternWildcard(pattern string) string {
+	_, rest, ok := strings.Cut(pattern, "{")
+	if !ok {
+		return ""
+	}
+	name, _, ok := strings.Cut(rest, "}")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSuffix(name, "...")
+}
+
+// auditText makes s valid UTF-8 (PostgreSQL text rejects anything else) and
+// cuts it to at most maxAuditText bytes on a rune boundary.
+func auditText(s string) string {
+	s = strings.ToValidUTF8(s, "�")
+	if len(s) <= maxAuditText {
+		return s
+	}
+	cut := maxAuditText
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
+}
+
+// statusWriter remembers the status the handler wrote.
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+	wrote  bool
+}
+
+func (s *statusWriter) WriteHeader(code int) {
+	if !s.wrote && code >= 200 {
+		s.status, s.wrote = code, true
+	}
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusWriter) Write(b []byte) (int, error) {
+	if !s.wrote {
+		s.status, s.wrote = http.StatusOK, true
+	}
+	return s.ResponseWriter.Write(b)
+}
+
+func (s *statusWriter) Unwrap() http.ResponseWriter { return s.ResponseWriter }

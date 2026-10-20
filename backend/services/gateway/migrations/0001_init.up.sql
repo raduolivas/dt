@@ -40,3 +40,31 @@ CREATE TABLE idempotency_records (
   PRIMARY KEY (tenant_id, environment, idem_key)
 );
 CREATE INDEX idempotency_records_expires_at ON idempotency_records (expires_at);
+
+-- Audit log of authenticated non-GET partner requests (spec §11.1), kept
+-- 365 days (AuditRetention deletes older rows). actor_* is the credential,
+-- action the route name, target the route's path value, status the one the
+-- client received.
+CREATE TABLE audit_log (
+  id text PRIMARY KEY, -- aud_
+  tenant_id text NOT NULL,
+  environment text NOT NULL,
+  actor_type text NOT NULL,
+  actor_id text NOT NULL,
+  action text NOT NULL,
+  target text,
+  status int NOT NULL,
+  ip inet,
+  user_agent text,
+  request_id text NOT NULL,
+  occurred_at timestamptz NOT NULL
+);
+CREATE INDEX audit_log_tenant_env_occurred_at ON audit_log (tenant_id, environment, occurred_at DESC);
+-- Retention deletes the oldest rows across tenants.
+CREATE INDEX audit_log_occurred_at ON audit_log (occurred_at);
+-- Append-only for the service role, which owns the table: it keeps INSERT,
+-- SELECT and DELETE (retention) but loses UPDATE. An owner may revoke its own
+-- privileges, and PostgreSQL enforces that, but it could also grant them back,
+-- so this guards against bugs, not a compromised role. True immutability
+-- comes when migrations run as a separate role (M3 staging).
+REVOKE UPDATE ON audit_log FROM svc_gateway;

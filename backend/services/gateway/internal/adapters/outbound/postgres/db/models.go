@@ -24,6 +24,21 @@ type ApiKey struct {
 	UpdatedAt   time.Time
 }
 
+type AuditLog struct {
+	ID          string
+	TenantID    string
+	Environment string
+	ActorType   string
+	ActorID     string
+	Action      string
+	Target      pgtype.Text
+	Status      int32
+	Ip          *netip.Addr
+	UserAgent   pgtype.Text
+	RequestID   string
+	OccurredAt  time.Time
+}
+
 type IdempotencyRecord struct {
 	TenantID        string
 	Environment     string

@@ -73,6 +73,30 @@ func (q *Queries) CompleteIdempotencyRecord(ctx context.Context, arg CompleteIde
 	return result.RowsAffected(), nil
 }
 
+const deleteAuditEntriesBefore = `-- name: DeleteAuditEntriesBefore :execrows
+DELETE FROM audit_log
+WHERE id IN (
+  SELECT x.id FROM audit_log x
+  WHERE x.occurred_at < $1
+  ORDER BY x.occurred_at
+  LIMIT $2
+)
+`
+
+type DeleteAuditEntriesBeforeParams struct {
+	Before time.Time
+	Batch  int32
+}
+
+// One retention batch, oldest first.
+func (q *Queries) DeleteAuditEntriesBefore(ctx context.Context, arg DeleteAuditEntriesBeforeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAuditEntriesBefore, arg.Before, arg.Batch)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteExpiredIdempotencyRecords = `-- name: DeleteExpiredIdempotencyRecords :execrows
 DELETE FROM idempotency_records
 WHERE (tenant_id, environment, idem_key) IN (
@@ -129,6 +153,44 @@ func (q *Queries) GetKeyByLookup(ctx context.Context, lookup string) (GetKeyByLo
 		&i.RevokedAt,
 	)
 	return i, err
+}
+
+const insertAuditEntry = `-- name: InsertAuditEntry :exec
+INSERT INTO audit_log (id, tenant_id, environment, actor_type, actor_id, action, target, status, ip, user_agent, request_id, occurred_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+`
+
+type InsertAuditEntryParams struct {
+	ID          string
+	TenantID    string
+	Environment string
+	ActorType   string
+	ActorID     string
+	Action      string
+	Target      pgtype.Text
+	Status      int32
+	Ip          *netip.Addr
+	UserAgent   pgtype.Text
+	RequestID   string
+	OccurredAt  time.Time
+}
+
+func (q *Queries) InsertAuditEntry(ctx context.Context, arg InsertAuditEntryParams) error {
+	_, err := q.db.Exec(ctx, insertAuditEntry,
+		arg.ID,
+		arg.TenantID,
+		arg.Environment,
+		arg.ActorType,
+		arg.ActorID,
+		arg.Action,
+		arg.Target,
+		arg.Status,
+		arg.Ip,
+		arg.UserAgent,
+		arg.RequestID,
+		arg.OccurredAt,
+	)
+	return err
 }
 
 const insertIdempotencyRecord = `-- name: InsertIdempotencyRecord :one

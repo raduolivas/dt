@@ -1,3 +1,4 @@
+DROP TABLE audit_log;
 DROP TABLE idempotency_records;
 DROP TABLE inbox;
 DROP TABLE outbox;

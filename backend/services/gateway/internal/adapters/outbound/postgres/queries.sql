@@ -57,3 +57,17 @@ WHERE (tenant_id, environment, idem_key) IN (
   ORDER BY x.expires_at
   LIMIT @batch
 );
+
+-- name: InsertAuditEntry :exec
+INSERT INTO audit_log (id, tenant_id, environment, actor_type, actor_id, action, target, status, ip, user_agent, request_id, occurred_at)
+VALUES (@id, @tenant_id, @environment, @actor_type, @actor_id, @action, sqlc.narg(target), @status, sqlc.narg(ip), sqlc.narg(user_agent), @request_id, @occurred_at);
+
+-- name: DeleteAuditEntriesBefore :execrows
+-- One retention batch, oldest first.
+DELETE FROM audit_log
+WHERE id IN (
+  SELECT x.id FROM audit_log x
+  WHERE x.occurred_at < @before
+  ORDER BY x.occurred_at
+  LIMIT @batch
+);

@@ -75,6 +75,12 @@ services:
       PORT: "8080"
       LOG_LEVEL: info
       DATABASE_URL: "postgres://svc_gateway:svc_gateway@postgres:5432/dt?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      NATS_URL: "nats://nats:4222"
+      # Dev-only placeholder, never a real secret: the same value as accounts'.
+      APIKEY_PEPPER: "ZGV2LW9ubHktbm90LWEtc2VjcmV0LXBlcHBlci0wMDAwMDAwMDAwMDA=" # gitleaks:allow (dev-only placeholder)
+      # CIDRs of proxies whose X-Forwarded-For hops count; empty: none.
+      TRUSTED_PROXIES: ""
     ports:
       - "127.0.0.1:8080:8080"
 
