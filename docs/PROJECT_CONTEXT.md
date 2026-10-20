@@ -1,10 +1,10 @@
 # DT (Delivery Tracker): Project Context
 
 > Portable state file. It works without any AI-specific memory. Share it with any assistant or person to pick up where we left off.
-> **Last updated:** 2026-10-19
+> **Last updated:** 2026-10-20
 > **Open questions (shareable on their own):** [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md)
 > **MVP spec:** [`superpowers/specs/2026-10-18-dt-mvp-design.md`](superpowers/specs/2026-10-18-dt-mvp-design.md) (approved 2026-10-19)
-> **Current plan:** [`superpowers/plans/2026-10-19-m0-foundations.md`](superpowers/plans/2026-10-19-m0-foundations.md) (M0 Foundations, built; PR to `main` pending)
+> **Current plan:** M1 accounts + gateway: [`superpowers/plans/2026-10-20-m1-accounts-gateway.md`](superpowers/plans/2026-10-20-m1-accounts-gateway.md) (written, awaiting owner review; branch `m1-accounts-gateway`). Previous: [`superpowers/plans/2026-10-19-m0-foundations.md`](superpowers/plans/2026-10-19-m0-foundations.md) (M0, merged 2026-10-20)
 > **Architecture draft:** [`ARCHITECTURE.md`](ARCHITECTURE.md) (v0.1, under review)
 
 ## 1. What DT is
@@ -61,7 +61,7 @@ DT is a **SaaS that gives delivery apps a videogame-like 2D/3D live-tracking exp
 
 ## 5. Current code state
 
-- Repo: `~/Documents/ai_projects/DT`, branch `m0-foundations` (M0 Foundations, not merged to `main` yet).
+- Repo: `~/Documents/ai_projects/DT`. M0 Foundations merged to `main` 2026-10-20 (PR #1, all CI checks green). Current work branch: `m1-accounts-gateway`.
 - **Monorepo:**
   - `backend/`: Go 1.27.2 workspace (`go.work`). Five service skeletons (`gateway`, `deliveries`, `tracking`, `webhooks`, `accounts`), each in onion layout (`cmd/`, `internal/{domain,app,adapters}`, `migrations/`), enforced by golangci-lint `depguard`. Shared technical libraries in `pkg/`: `logx` (JSON logs with PII redaction), `httpx` (problem+json errors, `Request-Id`, panic recovery, access log, `/livez` + `/readyz`, graceful shutdown), `bootstrap` (service wiring from env), `testkit` (real Postgres in tests). Generated contract code in `gen/`.
   - `contracts/`: OpenAPI 3.1 skeleton (`openapi/dt.v1.yaml`) and the Protobuf event envelope (`proto/dt/events/v1`), managed by buf.
@@ -111,5 +111,5 @@ DT is a **SaaS that gives delivery apps a videogame-like 2D/3D live-tracking exp
 **Engineering:**
 1. ~~Write the spec~~ → approved 2026-10-19.
 2. ~~Write the M0 implementation plan~~ → done 2026-10-19.
-3. ~~**M0 Foundations**~~ → built 2026-10-19 on branch `m0-foundations`; done once CI is green on GitHub and the PR is merged.
-4. **Next: M1 accounts + gateway** (tenants, API keys, authn/scopes, rate limits, idempotency, audit log, NATS + outbox). Its plan is written once M0 is merged. Each later milestone gets its own plan the same way.
+3. ~~**M0 Foundations**~~ → merged to `main` 2026-10-20 (PR #1, CI green on GitHub).
+4. **Next: M1 accounts + gateway** (tenants, API keys, authn/scopes, rate limits, idempotency, audit log, NATS + outbox). Plan written 2026-10-20: `docs/superpowers/plans/2026-10-20-m1-accounts-gateway.md` (14 tasks), awaiting owner review. Each later milestone gets its own plan the same way.
