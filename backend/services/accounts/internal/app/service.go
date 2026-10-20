@@ -119,6 +119,15 @@ func (s *Service) RollKey(ctx context.Context, actor domain.Actor, tenantID, key
 		if err != nil {
 			return err
 		}
+		if k.Env == domain.EnvLive {
+			t, err := tx.GetTenant(ctx, tenantID)
+			if err != nil {
+				return err
+			}
+			if !t.LiveEnabled {
+				return domain.ErrLiveNotEnabled
+			}
+		}
 		newKey, plain, err = s.insertKey(ctx, tx, tenantID, k.Name, k.Env, slices.Clone(k.Scopes), slices.Clone(k.AllowedIPs), actor)
 		if err != nil {
 			return err

@@ -422,3 +422,26 @@ func TestListKeys(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestRollLiveKeyNeedsLiveEnabledButRevokeStillWorks(t *testing.T) {
+	e := setup(t, true)
+	live, _ := e.create(t, owner, domain.EnvLive)
+	if err := e.svc.SetLiveEnabled(context.Background(), e.ten.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	e.repo.events = nil
+	nKeys := len(e.repo.keys)
+	_, _, _, err := e.svc.RollKey(context.Background(), owner, e.ten.ID, live.ID)
+	if !errors.Is(err, domain.ErrLiveNotEnabled) {
+		t.Fatalf("err=%v", err)
+	}
+	if len(e.repo.keys) != nKeys || len(e.repo.events) != 0 || e.repo.keys[live.ID].ExpiresAt != nil {
+		t.Fatal("roll left side effects")
+	}
+	if _, err := e.svc.RevokeKey(context.Background(), owner, e.ten.ID, live.ID); err != nil {
+		t.Fatalf("revoke should still work: %v", err)
+	}
+	if e.repo.keys[live.ID].RevokedAt == nil {
+		t.Fatal("not revoked")
+	}
+}
