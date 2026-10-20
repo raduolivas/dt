@@ -1,0 +1,31 @@
+CREATE TABLE tenants (
+  id text PRIMARY KEY,
+  name text NOT NULL,
+  live_enabled bool NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL
+);
+
+-- hash is HMAC-SHA256(pepper, full key); plaintext keys are never stored.
+CREATE TABLE api_keys (
+  id text PRIMARY KEY,
+  tenant_id text NOT NULL REFERENCES tenants,
+  environment text NOT NULL CHECK (environment IN ('test', 'live')),
+  name text NOT NULL,
+  lookup text NOT NULL UNIQUE,
+  display_prefix text NOT NULL,
+  hash bytea NOT NULL,
+  scopes text[] NOT NULL,
+  allowed_ips cidr[] NOT NULL DEFAULT '{}',
+  created_by jsonb NOT NULL,
+  created_at timestamptz NOT NULL,
+  expires_at timestamptz,
+  revoked_at timestamptz
+);
+CREATE INDEX api_keys_tenant_environment ON api_keys (tenant_id, environment);
+
+-- Transactional outbox and idempotent inbox (pkg/outbox SchemaSQL, verbatim).
+CREATE TABLE outbox (event_id text PRIMARY KEY, subject text NOT NULL, payload bytea NOT NULL,
+  headers jsonb NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT now(), published_at timestamptz);
+CREATE INDEX outbox_unpublished ON outbox (created_at) WHERE published_at IS NULL;
+CREATE TABLE inbox (consumer text NOT NULL, event_id text NOT NULL,
+  processed_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (consumer, event_id));

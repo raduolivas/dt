@@ -39,8 +39,12 @@ web-dev: ## Run the renderer prototype dev server
 # ---- contracts --------------------------------------------------------------
 .PHONY: gen lint-contracts
 
-gen: ## Regenerate code from contracts (Protobuf → Go, OpenAPI → TS)
+# Every sqlc config under backend/services (one per service with a Postgres adapter).
+SQLC_CONFIGS := $(shell find backend/services -name sqlc.yaml -not -path '*/node_modules/*' | sort)
+
+gen: ## Regenerate code from contracts (Protobuf → Go + Connect, SQL → Go via sqlc, OpenAPI → TS)
 	cd contracts/proto && buf generate
+	@for c in $(SQLC_CONFIGS); do echo "==> sqlc $$c"; sqlc generate -f $$c; done
 	pnpm -C web --filter @dt/contract gen
 
 lint-contracts: ## Lint Protobuf and OpenAPI contracts

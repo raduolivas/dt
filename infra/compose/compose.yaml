@@ -122,8 +122,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
       nats:
         condition: service_healthy
     build:
@@ -134,6 +132,11 @@ services:
       PORT: "8084"
       LOG_LEVEL: info
       DATABASE_URL: "postgres://svc_accounts:svc_accounts@postgres:5432/dt?sslmode=disable"
+      NATS_URL: "nats://nats:4222"
+      # Dev-only placeholders, never real secrets. APIKEY_PEPPER is base64 of
+      # "dev-only-not-a-secret-pepper-000000000000" and must match the gateway's.
+      APIKEY_PEPPER: "ZGV2LW9ubHktbm90LWEtc2VjcmV0LXBlcHBlci0wMDAwMDAwMDAwMDA=" # gitleaks:allow (dev-only placeholder)
+      INTERNAL_RPC_TOKEN: "dev-only-not-a-secret-internal-token-0000"
     ports:
       - "127.0.0.1:8084:8084"
 
