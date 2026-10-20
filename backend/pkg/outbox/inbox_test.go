@@ -3,6 +3,8 @@ package outbox_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -224,6 +226,45 @@ func TestConsumeTermsGarbage(t *testing.T) {
 	}
 	if n := e.count(t, `SELECT count(*) FROM inbox`); n != 1 {
 		t.Fatalf("inbox has %d rows, want 1", n)
+	}
+}
+
+func TestConsumeTermsPermanentHandlerErrors(t *testing.T) {
+	t.Parallel()
+	e := setup(t)
+	poison := newEnvelope(t)
+	e.publish(t, marshal(t, poison), poison.GetEventId())
+	ev := newEnvelope(t)
+	e.publish(t, marshal(t, ev), ev.GetEventId())
+	r := &recorder{fail: func(call int) error {
+		if call == 1 {
+			return fmt.Errorf("unpack payload: %w", outbox.ErrPermanent)
+		}
+		return nil
+	}}
+	e.consume(t, r.handle)
+
+	// MaxAckPending is 1: the next event only arrives once the poison one is
+	// settled, and a nak would bring it back first.
+	waitFor(t, 5*time.Second, "the next event", func() bool { return r.count() == 2 })
+	time.Sleep(1500 * time.Millisecond) // longer than AckWait
+	info := e.consumerInfo(t)
+	if info.NumRedelivered != 0 || info.NumAckPending != 0 || info.AckFloor.Stream != 2 {
+		t.Fatalf("consumer state = redelivered %d, ack pending %d, ack floor %d; want 0, 0, 2",
+			info.NumRedelivered, info.NumAckPending, info.AckFloor.Stream)
+	}
+	r.mu.Lock()
+	calls := slices.Clone(r.calls)
+	r.mu.Unlock()
+	if !slices.Equal(calls, []string{poison.GetEventId(), ev.GetEventId()}) {
+		t.Fatalf("handler calls = %v, want the poison event once, then the next", calls)
+	}
+	// The poison event's writes and inbox row were rolled back.
+	if n := e.count(t, `SELECT count(*) FROM inbox`); n != 1 {
+		t.Fatalf("inbox has %d rows, want 1", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM applied`); n != 1 {
+		t.Fatalf("applied has %d rows, want 1", n)
 	}
 }
 

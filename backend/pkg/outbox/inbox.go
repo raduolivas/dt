@@ -25,9 +25,17 @@ const RetryDelay = 2 * time.Second
 
 const tracerName = "github.com/raduolivas/dt/backend/pkg/outbox"
 
+// ErrPermanent marks a handler error that retrying cannot fix, such as a
+// payload that does not unpack. Consume rolls the transaction back, logs the
+// event and terminates the message instead of redelivering it, so one poison
+// event cannot stall an ordered (MaxAckPending 1) consumer. Wrap it:
+// fmt.Errorf("unpack: %w", outbox.ErrPermanent).
+var ErrPermanent = errors.New("outbox: permanent handler error")
+
 // Handler applies one event. Its writes must go through tx: they commit
 // together with the event's inbox row, or not at all. Returning an error
-// rolls both back and redelivers the event after RetryDelay.
+// rolls both back and redelivers the event after RetryDelay, unless it wraps
+// ErrPermanent: then the event is terminated (never redelivered).
 type Handler func(ctx context.Context, tx pgx.Tx, env *eventsv1.Envelope) error
 
 // Consume creates or updates the consumer cfg on stream and handles its
@@ -44,7 +52,8 @@ type Handler func(ctx context.Context, tx pgx.Tx, env *eventsv1.Envelope) error
 // redelivered) and logged; a known event id is acked without running h;
 // otherwise h runs in the transaction that records the event id, and the
 // message is acked after commit. If h or the database fails, the message is
-// nacked with RetryDelay. An ack lost after commit only causes a redelivery,
+// nacked with RetryDelay; if h's error wraps ErrPermanent, the transaction is
+// rolled back and the message is terminated and logged at error. An ack lost after commit only causes a redelivery,
 // which the inbox absorbs.
 func Consume(ctx context.Context, js jetstream.JetStream, pool *pgxpool.Pool, log *slog.Logger,
 	stream string, cfg jetstream.ConsumerConfig, h Handler,
@@ -122,7 +131,16 @@ func (c *consumer) handle(ctx context.Context, msg jetstream.Msg) {
 		))
 	defer span.End()
 
-	if err := c.apply(ctx, env); err != nil {
+	if err := c.apply(ctx, env); errors.Is(err, ErrPermanent) {
+		span.SetStatus(codes.Error, "permanent handler error")
+		// Only the subject and event id: the error may quote the payload.
+		c.log.ErrorContext(ctx, "outbox_event_rejected", slog.String("consumer", c.name),
+			slog.String("subject", msg.Subject()), slog.String("event_id", env.GetEventId()))
+		if err := msg.Term(); err != nil {
+			c.log.WarnContext(ctx, "outbox_term_failed", append(attrs, slog.Any("error", err))...)
+		}
+		return
+	} else if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "handler failed")
 		c.log.WarnContext(ctx, "outbox_handler_failed", append(attrs, slog.Any("error", err))...)
