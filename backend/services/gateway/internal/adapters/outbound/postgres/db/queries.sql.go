@@ -9,7 +9,93 @@ import (
 	"context"
 	"net/netip"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const abandonIdempotencyRecord = `-- name: AbandonIdempotencyRecord :execrows
+DELETE FROM idempotency_records
+WHERE tenant_id = $1 AND environment = $2 AND idem_key = $3
+  AND state = 'in_progress' AND locked_until = $4
+`
+
+type AbandonIdempotencyRecordParams struct {
+	TenantID    string
+	Environment string
+	IdemKey     string
+	Lease       *time.Time
+}
+
+func (q *Queries) AbandonIdempotencyRecord(ctx context.Context, arg AbandonIdempotencyRecordParams) (int64, error) {
+	result, err := q.db.Exec(ctx, abandonIdempotencyRecord,
+		arg.TenantID,
+		arg.Environment,
+		arg.IdemKey,
+		arg.Lease,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const completeIdempotencyRecord = `-- name: CompleteIdempotencyRecord :execrows
+UPDATE idempotency_records
+SET state = 'completed', locked_until = NULL,
+    response_status = $1, response_headers = $2, response_body = $3
+WHERE tenant_id = $4 AND environment = $5 AND idem_key = $6
+  AND state = 'in_progress' AND locked_until = $7
+`
+
+type CompleteIdempotencyRecordParams struct {
+	ResponseStatus  pgtype.Int4
+	ResponseHeaders []byte
+	ResponseBody    []byte
+	TenantID        string
+	Environment     string
+	IdemKey         string
+	Lease           *time.Time
+}
+
+func (q *Queries) CompleteIdempotencyRecord(ctx context.Context, arg CompleteIdempotencyRecordParams) (int64, error) {
+	result, err := q.db.Exec(ctx, completeIdempotencyRecord,
+		arg.ResponseStatus,
+		arg.ResponseHeaders,
+		arg.ResponseBody,
+		arg.TenantID,
+		arg.Environment,
+		arg.IdemKey,
+		arg.Lease,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteExpiredIdempotencyRecords = `-- name: DeleteExpiredIdempotencyRecords :execrows
+DELETE FROM idempotency_records
+WHERE (tenant_id, environment, idem_key) IN (
+  SELECT x.tenant_id, x.environment, x.idem_key FROM idempotency_records x
+  WHERE x.expires_at < $1
+  ORDER BY x.expires_at
+  LIMIT $2
+)
+`
+
+type DeleteExpiredIdempotencyRecordsParams struct {
+	Before time.Time
+	Batch  int32
+}
+
+// One sweeper batch, oldest first; key-based so concurrent updates are safe.
+func (q *Queries) DeleteExpiredIdempotencyRecords(ctx context.Context, arg DeleteExpiredIdempotencyRecordsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredIdempotencyRecords, arg.Before, arg.Batch)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
 
 const getKeyByLookup = `-- name: GetKeyByLookup :one
 SELECT id, tenant_id, environment, lookup, hash, scopes, allowed_ips, expires_at, revoked_at
@@ -45,6 +131,39 @@ func (q *Queries) GetKeyByLookup(ctx context.Context, lookup string) (GetKeyByLo
 	return i, err
 }
 
+const insertIdempotencyRecord = `-- name: InsertIdempotencyRecord :one
+INSERT INTO idempotency_records (tenant_id, environment, idem_key, request_hash, state, locked_until, created_at, expires_at)
+VALUES ($1, $2, $3, $4, 'in_progress', $5, $6, $7)
+ON CONFLICT (tenant_id, environment, idem_key) DO NOTHING
+RETURNING idem_key
+`
+
+type InsertIdempotencyRecordParams struct {
+	TenantID    string
+	Environment string
+	IdemKey     string
+	RequestHash []byte
+	LockedUntil *time.Time
+	CreatedAt   time.Time
+	ExpiresAt   time.Time
+}
+
+// Claims a new key; no row comes back when the key already has a record.
+func (q *Queries) InsertIdempotencyRecord(ctx context.Context, arg InsertIdempotencyRecordParams) (string, error) {
+	row := q.db.QueryRow(ctx, insertIdempotencyRecord,
+		arg.TenantID,
+		arg.Environment,
+		arg.IdemKey,
+		arg.RequestHash,
+		arg.LockedUntil,
+		arg.CreatedAt,
+		arg.ExpiresAt,
+	)
+	var idem_key string
+	err := row.Scan(&idem_key)
+	return idem_key, err
+}
+
 const insertKey = `-- name: InsertKey :exec
 INSERT INTO api_keys (id, tenant_id, environment, lookup, hash, scopes, allowed_ips, expires_at, revoked_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -75,6 +194,76 @@ func (q *Queries) InsertKey(ctx context.Context, arg InsertKeyParams) error {
 		arg.AllowedIps,
 		arg.ExpiresAt,
 		arg.RevokedAt,
+	)
+	return err
+}
+
+const lockIdempotencyRecord = `-- name: LockIdempotencyRecord :one
+SELECT request_hash, state, locked_until, response_status, response_headers, response_body, expires_at
+FROM idempotency_records
+WHERE tenant_id = $1 AND environment = $2 AND idem_key = $3
+FOR UPDATE
+`
+
+type LockIdempotencyRecordParams struct {
+	TenantID    string
+	Environment string
+	IdemKey     string
+}
+
+type LockIdempotencyRecordRow struct {
+	RequestHash     []byte
+	State           string
+	LockedUntil     *time.Time
+	ResponseStatus  pgtype.Int4
+	ResponseHeaders []byte
+	ResponseBody    []byte
+	ExpiresAt       time.Time
+}
+
+func (q *Queries) LockIdempotencyRecord(ctx context.Context, arg LockIdempotencyRecordParams) (LockIdempotencyRecordRow, error) {
+	row := q.db.QueryRow(ctx, lockIdempotencyRecord, arg.TenantID, arg.Environment, arg.IdemKey)
+	var i LockIdempotencyRecordRow
+	err := row.Scan(
+		&i.RequestHash,
+		&i.State,
+		&i.LockedUntil,
+		&i.ResponseStatus,
+		&i.ResponseHeaders,
+		&i.ResponseBody,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const reclaimIdempotencyRecord = `-- name: ReclaimIdempotencyRecord :exec
+UPDATE idempotency_records
+SET request_hash = $1, state = 'in_progress', locked_until = $2,
+    response_status = NULL, response_headers = NULL, response_body = NULL,
+    created_at = $3, expires_at = $4
+WHERE tenant_id = $5 AND environment = $6 AND idem_key = $7
+`
+
+type ReclaimIdempotencyRecordParams struct {
+	RequestHash []byte
+	LockedUntil *time.Time
+	CreatedAt   time.Time
+	ExpiresAt   time.Time
+	TenantID    string
+	Environment string
+	IdemKey     string
+}
+
+// Restarts an expired record or a stale in-progress one as a new claim.
+func (q *Queries) ReclaimIdempotencyRecord(ctx context.Context, arg ReclaimIdempotencyRecordParams) error {
+	_, err := q.db.Exec(ctx, reclaimIdempotencyRecord,
+		arg.RequestHash,
+		arg.LockedUntil,
+		arg.CreatedAt,
+		arg.ExpiresAt,
+		arg.TenantID,
+		arg.Environment,
+		arg.IdemKey,
 	)
 	return err
 }

@@ -7,6 +7,8 @@ package db
 import (
 	"net/netip"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type ApiKey struct {
@@ -20,6 +22,20 @@ type ApiKey struct {
 	ExpiresAt   *time.Time
 	RevokedAt   *time.Time
 	UpdatedAt   time.Time
+}
+
+type IdempotencyRecord struct {
+	TenantID        string
+	Environment     string
+	IdemKey         string
+	RequestHash     []byte
+	State           string
+	LockedUntil     *time.Time
+	ResponseStatus  pgtype.Int4
+	ResponseHeaders []byte
+	ResponseBody    []byte
+	CreatedAt       time.Time
+	ExpiresAt       time.Time
 }
 
 type Inbox struct {
