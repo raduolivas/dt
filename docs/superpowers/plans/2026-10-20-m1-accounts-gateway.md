@@ -498,7 +498,7 @@ func (k KeyRecord) AllowsIP(ip netip.Addr) bool // empty list = any
 
 **Interfaces:**
 - OpenAPI additions:
-  - `GET /me`, `operationId: getMe`, `security: [SecretKey: []]`, response `Me {tenant_id, environment (enum test|live), credential: {type: secret_key, id}, scopes[]}`. It lets a partner check a key and powers the quickstart's first call (see OQ15).
+  - `GET /me`, `operationId: getMe`, `security: [SecretKey: []]`, response `Me {tenant_id, environment (enum test|live), credential: {type: secret_key, id}, scopes[]}`. It lets a partner check a key and powers the quickstart's first call (confirmed, R21).
   - Reusable responses `Unauthenticated`, `Forbidden`, `TooManyRequests` (with the `RateLimit-*` and `Retry-After` headers), `PayloadTooLarge`, all `application/problem+json` → `Problem`.
   - A reusable parameter `IdempotencyKey` (header, required, 1–255).
   - `info.version` stays `1.0.0`, and the change is additive.
@@ -693,8 +693,8 @@ Plus `TestEveryRouteIsInTheMatrix`: it fails if a route has no `Credentials` or 
   - **README:** new services in the stack (redis, nats), `make seed`, `make smoke`, dtctl usage, and the env vars `APIKEY_PEPPER`, `INTERNAL_RPC_TOKEN`, `TRUSTED_PROXIES`.
   - **PROJECT_CONTEXT §5:** what M1 added.
   - **PROJECT_CONTEXT §7:** M1 done (pending CI + merge), M2 next.
-  - **PROJECT_CONTEXT decisions table:** add a D21 row for the M1 choices: key format, `GET /v1/me`, internal RPC + dtctl until the console, rate limiter fails open, RLS deferred to M2.
-  - **OPEN_QUESTIONS:** add **OQ15** (confirm `GET /v1/me` as a public endpoint, and that a rate-limit outage fails open), and keep OQ14 and OQ12.
+  - **PROJECT_CONTEXT decisions table:** D21 already records the M1 choices; amend it only if implementation changed one of them.
+  - **OPEN_QUESTIONS:** OQ15 and the OQ14 tech part were answered on 2026-10-20 (R20, R21), so only refresh the date; OQ14 (cloud, name) and OQ12 stay open.
 - [ ] **Step 5: Final verification.** `make ci && make dev && make smoke && make down` → everything passes.
 - [ ] **Step 6: Commit** — `feat: add dtctl, seed and M1 smoke test; document M1`
 - [ ] **Step 7: Owner actions (ask first; outward-facing):** push the branch, open a PR to `main`, confirm CI is green, and the owner merges.
