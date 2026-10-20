@@ -2,7 +2,11 @@ module github.com/raduolivas/dt/backend/services/accounts
 
 go 1.27.2
 
-require github.com/raduolivas/dt/backend/pkg v0.0.0
+require (
+	github.com/raduolivas/dt/backend/gen v0.0.0
+	github.com/raduolivas/dt/backend/pkg v0.0.0
+	google.golang.org/protobuf v1.36.12
+)
 
 require (
 	github.com/caarlos0/env/v11 v11.4.1 // indirect
@@ -23,6 +27,7 @@ require (
 	github.com/nats-io/nats.go v1.54.0 // indirect
 	github.com/nats-io/nkeys v0.4.16 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
+	github.com/oklog/ulid/v2 v2.1.2 // indirect
 	github.com/redis/go-redis/v9 v9.23.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0 // indirect
@@ -42,7 +47,8 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20260630182238-925bb5da69e7 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260630182238-925bb5da69e7 // indirect
 	google.golang.org/grpc v1.82.0 // indirect
-	google.golang.org/protobuf v1.36.12 // indirect
 )
+
+replace github.com/raduolivas/dt/backend/gen => ../../gen
 
 replace github.com/raduolivas/dt/backend/pkg => ../../pkg
