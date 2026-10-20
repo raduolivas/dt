@@ -6,8 +6,9 @@ import "google/protobuf/timestamp.proto";
 
 // AccountsService is the internal accounts API, used by dtctl and later the
 // console BFF. It is never routed publicly and requires
-// "Authorization: Bearer <INTERNAL_RPC_TOKEN>". Errors carry the metadata
-// "dt-code" (snake_case, e.g. forbidden_role, live_not_enabled).
+// "Authorization: Bearer <INTERNAL_RPC_TOKEN>". Errors carry a "dt-code"
+// response trailer (snake_case, e.g. forbidden_role, live_not_enabled); over
+// the Connect protocol it arrives as the HTTP header "Trailer-Dt-Code".
 service AccountsService {
   // CreateTenant creates a tenant (system use; no actor).
   rpc CreateTenant(CreateTenantRequest) returns (CreateTenantResponse);

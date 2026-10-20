@@ -195,7 +195,7 @@ func TestCreateKeyReturnsSecretOnce(t *testing.T) {
 	}
 
 	list, err := c.ListApiKeys(ctx, &accountsv1.ListApiKeysRequest{
-		Actor: &accountsv1.Actor{Type: "console_user", Id: "usr_2", Role: "support"},
+		Actor:    &accountsv1.Actor{Type: "console_user", Id: "usr_2", Role: "support"},
 		TenantId: tid, Environment: eventsv1.Environment_ENVIRONMENT_TEST,
 	})
 	if err != nil {

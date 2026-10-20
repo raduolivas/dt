@@ -10,7 +10,9 @@ import (
 	"github.com/raduolivas/dt/backend/services/accounts/internal/domain"
 )
 
-// DTCodeKey is the response metadata key carrying the snake_case error code.
+// DTCodeKey is the response trailer carrying the snake_case error code. Over
+// the Connect protocol it arrives as the HTTP header "Trailer-Dt-Code";
+// clients read it with connect.NewClientContext and info.ResponseTrailer().
 const DTCodeKey = "dt-code"
 
 var errorCodes = []struct {
@@ -27,7 +29,7 @@ var errorCodes = []struct {
 }
 
 // ToConnect maps a use-case error to a Connect error and sets the dt-code
-// response metadata. Domain errors keep their message, which never holds a
+// response trailer (HTTP header Trailer-Dt-Code over the Connect protocol). Domain errors keep their message, which never holds a
 // secret; anything else is logged and becomes CodeInternal with no detail.
 func ToConnect(ctx context.Context, log *slog.Logger, err error) error {
 	if err == nil {
