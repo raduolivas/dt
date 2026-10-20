@@ -2,6 +2,8 @@ package logx_test
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/raduolivas/dt/backend/pkg/logx"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 func logTo(buf *bytes.Buffer) *slog.Logger { return logx.New(buf, slog.LevelDebug, "test") }
@@ -128,5 +131,31 @@ func TestRedactsInsideStructAndMapValues(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %s in %s", want, out)
 		}
+	}
+}
+
+func TestLogIncludesTraceID(t *testing.T) {
+	tp := sdktrace.NewTracerProvider()
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+	ctx, span := tp.Tracer("test").Start(context.Background(), "op")
+	defer span.End()
+
+	var buf bytes.Buffer
+	logTo(&buf).InfoContext(ctx, "x", slog.Group("g", "a", 1))
+	var rec map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec["trace_id"] != span.SpanContext().TraceID().String() {
+		t.Fatalf("trace_id = %v in %s", rec["trace_id"], buf.String())
+	}
+	if rec["span_id"] != span.SpanContext().SpanID().String() {
+		t.Fatalf("span_id = %v in %s", rec["span_id"], buf.String())
+	}
+
+	buf.Reset()
+	logTo(&buf).InfoContext(context.Background(), "x")
+	if strings.Contains(buf.String(), "trace_id") || strings.Contains(buf.String(), "span_id") {
+		t.Fatalf("unexpected trace keys without span: %s", buf.String())
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"reflect"
 	"strings"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Redacted replaces the value of every sensitive attribute.
@@ -143,6 +145,11 @@ func (h *redactingHandler) Handle(ctx context.Context, r slog.Record) error {
 		out.AddAttrs(h.redact(a))
 		return true
 	})
+	// Added last and unredacted: trace ids are not sensitive. (Added to the
+	// record, so they sit inside any group opened with WithGroup.)
+	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
+		out.AddAttrs(slog.String("trace_id", sc.TraceID().String()), slog.String("span_id", sc.SpanID().String()))
+	}
 	return h.next.Handle(ctx, out)
 }
 
