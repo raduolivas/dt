@@ -1,0 +1,10 @@
+title = "DT gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "dt-secret-key"
+description = "DT partner secret API key"
+regex = '''dt_sk_(test|live)_[0-9A-Za-z]{55}'''
+keywords = ["dt_sk_"]
