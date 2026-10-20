@@ -1,0 +1,9 @@
+# oapi-codegen config: models only. `make gen` copies contracts/openapi/dt.v1.yaml
+# to api/openapi.yaml, then runs this from backend/services/gateway.
+package: api
+output: api/models.gen.go
+generate:
+  models: true
+output-options:
+  # Keep every schema, not only those an operation references.
+  skip-prune: true

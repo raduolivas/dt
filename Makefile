@@ -42,9 +42,11 @@ web-dev: ## Run the renderer prototype dev server
 # Every sqlc config under backend/services (one per service with a Postgres adapter).
 SQLC_CONFIGS := $(shell find backend/services -name sqlc.yaml -not -path '*/node_modules/*' | sort)
 
-gen: ## Regenerate code from contracts (Protobuf → Go + Connect, SQL → Go via sqlc, OpenAPI → TS)
+gen: ## Regenerate code from contracts (Protobuf → Go + Connect, SQL → Go via sqlc, OpenAPI → Go models + TS)
 	cd contracts/proto && buf generate
 	@for c in $(SQLC_CONFIGS); do echo "==> sqlc $$c"; sqlc generate -f $$c; done
+	cp contracts/openapi/dt.v1.yaml backend/services/gateway/api/openapi.yaml
+	cd backend/services/gateway && go tool oapi-codegen -config api/oapi.cfg.yaml api/openapi.yaml
 	pnpm -C web --filter @dt/contract gen
 
 lint-contracts: ## Lint Protobuf and OpenAPI contracts

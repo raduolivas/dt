@@ -1,0 +1,202 @@
+openapi: 3.1.0
+info:
+  title: DT API
+  version: 1.0.0
+  description: Public API for DT live delivery tracking. See the docs for guides.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  # Placeholder until the product domain is chosen (OPEN_QUESTIONS OQ14).
+  - url: https://api.example.invalid/v1
+tags:
+  - name: Account
+    description: The credential a request authenticates with.
+paths:
+  /me:
+    get:
+      operationId: getMe
+      summary: Get the authenticated credential
+      description: >-
+        Returns the tenant, environment and scopes of the secret key the request
+        authenticates with. Use it to check that a key works.
+      tags: [Account]
+      security:
+        - SecretKey: []
+      responses:
+        '200':
+          description: The credential the request authenticated with.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+webhooks: {}
+components:
+  securitySchemes:
+    SecretKey:
+      type: http
+      scheme: bearer
+      description: Partner secret API key (`dt_sk_test_…` / `dt_sk_live_…`). Server-to-server only.
+    CourierToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived courier access token, bound to one courier and shift.
+    ViewerToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived viewer token for one delivery, exchanged from a tracking link token.
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: >-
+        Client-chosen key that makes a POST safe to retry (1 to 255 printable
+        ASCII characters). A retry with the same key and body replays the first
+        response for 24 hours; a different body is refused.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+        pattern: '^[ -~]+$'
+  responses:
+    Unauthenticated:
+      description: >-
+        The credential is missing, malformed, unknown, expired or revoked, or was
+        sent other than as a bearer token (`unauthenticated`).
+      headers:
+        WWW-Authenticate:
+          description: Always `Bearer`.
+          schema:
+            type: string
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Forbidden:
+      description: >-
+        The credential is valid but may not make this request
+        (`secret_key_in_browser`, `ip_not_allowed`, `insufficient_scope`,
+        `environment_not_allowed` or `cors_not_allowed`).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    TooManyRequests:
+      description: The rate limit was exceeded (`rate_limited`). Retry after `Retry-After` seconds.
+      headers:
+        RateLimit-Limit:
+          description: Requests allowed in the current window.
+          schema:
+            type: integer
+        RateLimit-Remaining:
+          description: Requests left in the current window.
+          schema:
+            type: integer
+        RateLimit-Reset:
+          description: Seconds until the window resets.
+          schema:
+            type: integer
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: integer
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    PayloadTooLarge:
+      description: The request body is larger than 64 KiB (`payload_too_large`).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Environment:
+      type: string
+      description: Test and live data are fully separate.
+      enum: [test, live]
+    Scope:
+      type: string
+      description: A permission a secret key carries.
+      enum: ['deliveries:read', 'deliveries:write', 'couriers:write', 'webhooks:write']
+    Me:
+      type: object
+      description: The credential a request authenticated with.
+      required: [tenant_id, environment, credential, scopes]
+      properties:
+        tenant_id:
+          type: string
+          pattern: '^ten_[0-9a-z]{26}$'
+          examples: [ten_01j9z3k8m2q4r6s8t0v2w4x6y8]
+        environment:
+          $ref: '#/components/schemas/Environment'
+        credential:
+          type: object
+          required: [type, id]
+          properties:
+            type:
+              type: string
+              enum: [secret_key]
+            id:
+              type: string
+              pattern: '^ak_[0-9a-z]{26}$'
+              examples: [ak_01j9z3k8m2q4r6s8t0v2w4x6y8]
+        scopes:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/Scope'
+    LatLng:
+      type: object
+      description: WGS84 coordinate.
+      required: [lat, lng]
+      properties:
+        lat:
+          type: number
+          minimum: -90
+          maximum: 90
+        lng:
+          type: number
+          minimum: -180
+          maximum: 180
+    FieldError:
+      type: object
+      required: [field, code, message]
+      properties:
+        field:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+    Problem:
+      type: object
+      description: RFC 9457 problem details.
+      required: [type, title, status, code, request_id]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        code:
+          type: string
+        detail:
+          type: string
+        request_id:
+          type: string
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldError'
