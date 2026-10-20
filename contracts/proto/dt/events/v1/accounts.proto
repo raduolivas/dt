@@ -1,0 +1,32 @@
+syntax = "proto3";
+package dt.events.v1;
+
+import "dt/events/v1/envelope.proto";
+import "google/protobuf/timestamp.proto";
+
+// Payloads of the apikey.* events on the ACCOUNTS stream. Plaintext keys are
+// never published; hash is HMAC-SHA256(pepper, full key).
+
+// apikey.created
+message ApiKeyCreated {
+  string key_id = 1;
+  string tenant_id = 2;
+  Environment environment = 3;
+  string lookup = 4;
+  bytes hash = 5;
+  repeated string scopes = 6;
+  repeated string allowed_ips = 7; // CIDR strings; empty = any
+  google.protobuf.Timestamp created_at = 8;
+}
+
+// apikey.expiry_set
+message ApiKeyExpirySet {
+  string key_id = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+// apikey.revoked
+message ApiKeyRevoked {
+  string key_id = 1;
+  google.protobuf.Timestamp revoked_at = 2;
+}
