@@ -1,6 +1,6 @@
 module github.com/raduolivas/dt/backend/services/webhooks
 
-go 1.27.2
+go 1.27.3
 
 require github.com/raduolivas/dt/backend/pkg v0.0.0
 

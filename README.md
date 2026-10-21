@@ -6,7 +6,7 @@ Partners send order events and courier GPS; DT renders the delivery as a stylize
 
 ## Prerequisites
 
-Go 1.27.2, Node 24 LTS with pnpm (via corepack), Docker with Compose, buf, golangci-lint, govulncheck,
+Go 1.27.3, Node 24 LTS with pnpm (via corepack), Docker with Compose, buf, golangci-lint, govulncheck,
 actionlint, pinact and sqlc (v1.31.1, `go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1`). Check them all with:
 
 ```bash

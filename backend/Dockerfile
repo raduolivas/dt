@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Build context: backend/. One image per service: --build-arg SERVICE=<name>.
-FROM golang:1.27.2-trixie AS build
+FROM golang:1.27.3-trixie AS build
 ARG SERVICE
 WORKDIR /src
 COPY go.work* ./
