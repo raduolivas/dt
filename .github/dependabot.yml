@@ -17,6 +17,11 @@ updates:
     groups:
       web:
         patterns: ["*"]
+    ignore:
+      # typescript-eslint supports TypeScript < 6.1; bump the major by hand
+      # together with typescript-eslint.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
