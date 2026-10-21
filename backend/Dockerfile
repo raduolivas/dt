@@ -7,6 +7,7 @@ COPY go.work* ./
 COPY pkg ./pkg
 COPY gen ./gen
 COPY services ./services
+COPY tools ./tools
 RUN test -n "${SERVICE}" && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/app ./services/${SERVICE}/cmd/${SERVICE}
 
