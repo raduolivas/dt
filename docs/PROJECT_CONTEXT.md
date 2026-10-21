@@ -124,3 +124,8 @@ DT is a **SaaS that gives delivery apps a videogame-like 2D/3D live-tracking exp
 3. ~~**M0 Foundations**~~ → merged to `main` 2026-10-20 (PR #1, CI green on GitHub).
 4. ~~**M1 accounts + gateway**~~ (tenants, API keys, authn/scopes, rate limits, idempotency, audit log, NATS + outbox) → all 14 tasks done 2026-10-21 on branch `m1-accounts-gateway` (`make ci` + `make smoke` pass locally); **pending: push, PR to `main`, CI green, owner merge.** Plan: `docs/superpowers/plans/2026-10-20-m1-accounts-gateway.md`.
 5. **Next: M2 deliveries** (spec §16: models, state machine, pickup policy, couriers, outbox events; plus row-level security on `tenant_id` + `environment`, deferred from M1). Each milestone gets its own plan the same way.
+6. **Follow-ups from the M1 reviews** (not blocking; pick up in the milestone named):
+   - **M2:** extend the authz matrix (per-route success status, request bodies, audit rows) with the first real POST routes; decide whether idempotency should store validation `400`s and hash the query string; clear the unused OpenAPI components; add `gofmt` to golangci.
+   - **Before M3 staging:** accept `ip:port` hops in `X-Forwarded-For`; `otelhttp.WithPublicEndpoint()` on the gateway before any trace exporter; a consumer-lag signal for `gateway-apikeys` (a NATS/relay outage silently pauses the ≤ 5 s revocation guarantee); bounded `nats` drain timeout; mTLS for the internal accounts RPC.
+   - **M7:** what a lapsed subscription (`live_enabled = false`) does to existing live keys.
+   - **M9:** alert when an `apikey.revoked` event is rejected as poison; make the failed-auth limiter block before the DB lookup and count `ip_not_allowed`; pepper rotation; new-IP/volume anomaly alerts.
