@@ -1,7 +1,7 @@
 # DT: Open Questions
 
 > Standalone file for sharing with another AI or a person. It's self-contained, so it can be read without the other files.
-> **Last updated:** 2026-10-20 (OQ14 tech part and OQ15 answered) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+> **Last updated:** 2026-10-21 (no change since 2026-10-20, when the OQ14 tech part and OQ15 were answered) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
 ## Context in 30 seconds
 
