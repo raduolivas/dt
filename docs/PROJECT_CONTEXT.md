@@ -1,10 +1,10 @@
 # DT (Delivery Tracker): Project Context
 
 > Portable state file. It works without any AI-specific memory. Share it with any assistant or person to pick up where we left off.
-> **Last updated:** 2026-10-19
+> **Last updated:** 2026-10-21
 > **Open questions (shareable on their own):** [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md)
 > **MVP spec:** [`superpowers/specs/2026-10-18-dt-mvp-design.md`](superpowers/specs/2026-10-18-dt-mvp-design.md) (approved 2026-10-19)
-> **Current plan:** [`superpowers/plans/2026-10-19-m0-foundations.md`](superpowers/plans/2026-10-19-m0-foundations.md) (M0 Foundations, built; PR to `main` pending)
+> **Current plan:** M1 accounts + gateway: [`superpowers/plans/2026-10-20-m1-accounts-gateway.md`](superpowers/plans/2026-10-20-m1-accounts-gateway.md) (all 14 tasks implemented on branch `m1-accounts-gateway`; awaiting CI + merge). Previous: [`superpowers/plans/2026-10-19-m0-foundations.md`](superpowers/plans/2026-10-19-m0-foundations.md) (M0, merged 2026-10-20)
 > **Architecture draft:** [`ARCHITECTURE.md`](ARCHITECTURE.md) (v0.1, under review)
 
 ## 1. What DT is
@@ -46,6 +46,7 @@ DT is a **SaaS that gives delivery apps a videogame-like 2D/3D live-tracking exp
 | D18 | **Providers:** Stripe for DT subscriptions (OQ7), Zitadel for partner console login with MFA (OQ8), partners send lat/lng in the MVP with no geocoding (OQ9). | 2026-10-18 |
 | D19 | **MVP design approved** by the owner (OQ1). Spec written: `docs/superpowers/specs/2026-10-18-dt-mvp-design.md` (adds a threat model, API v1 summary, lifecycle tables, testing strategy, milestones M0–M9). Spec choices waiting for owner review: NATS JetStream for events, gRPC via Connect for internal calls. | 2026-10-18 |
 | D20 | **MVP spec approved** by the owner. Implementation is split into **one plan per milestone (M0–M9)**. The first plan, **M0 Foundations**, is at `docs/superpowers/plans/2026-10-19-m0-foundations.md`; it covers the monorepo, onion service skeletons, schema per service, contracts, CI and security scans, plus the roadmap for M1–M9. | 2026-10-19 |
+| D21 | **M1 choices confirmed** by the owner: NATS JetStream for events and gRPC via Connect for internal calls (spec A5, part of OQ14); public `GET /v1/me` endpoint to check a key (OQ15); the rate limiter **fails open** when Redis is down, while authentication keeps running (OQ15). Plus the plan's defaults: key format `dt_sk_<env>_<lookup><secret>` with a peppered HMAC, internal accounts RPC + `dtctl` until the console (M7), RLS deferred to M2. Execution: subagent-driven. *Amended by implementation:* Connect is **v2** (`connectrpc.com/connect/v2` v2.0.1, buf plugins pinned), and the audit log records **every authenticated write except a `429`** (also failed writes, e.g. 4xx), not only successful ones. | 2026-10-20 |
 | D12 | Build to best practices **with tests** from the start; the public docs are written together with the code and live in the website. | 2026-10-18 |
 
 ## 4. Open questions
@@ -61,15 +62,24 @@ DT is a **SaaS that gives delivery apps a videogame-like 2D/3D live-tracking exp
 
 ## 5. Current code state
 
-- Repo: `~/Documents/ai_projects/DT`, branch `m0-foundations` (M0 Foundations, not merged to `main` yet).
+- Repo: `~/Documents/ai_projects/DT`. M0 Foundations merged to `main` 2026-10-20 (PR #1, all CI checks green). Current work branch: `m1-accounts-gateway`.
 - **Monorepo:**
-  - `backend/`: Go 1.27.2 workspace (`go.work`). Five service skeletons (`gateway`, `deliveries`, `tracking`, `webhooks`, `accounts`), each in onion layout (`cmd/`, `internal/{domain,app,adapters}`, `migrations/`), enforced by golangci-lint `depguard`. Shared technical libraries in `pkg/`: `logx` (JSON logs with PII redaction), `httpx` (problem+json errors, `Request-Id`, panic recovery, access log, `/livez` + `/readyz`, graceful shutdown), `bootstrap` (service wiring from env), `testkit` (real Postgres in tests). Generated contract code in `gen/`.
+  - `backend/`: Go 1.27.3 workspace (`go.work`). Five service skeletons (`gateway`, `deliveries`, `tracking`, `webhooks`, `accounts`), each in onion layout (`cmd/`, `internal/{domain,app,adapters}`, `migrations/`), enforced by golangci-lint `depguard`. Shared technical libraries in `pkg/`: `logx` (JSON logs with PII redaction), `httpx` (problem+json errors, `Request-Id`, panic recovery, access log, `/livez` + `/readyz`, graceful shutdown), `bootstrap` (service wiring from env), `testkit` (real Postgres in tests). Generated contract code in `gen/`.
   - `contracts/`: OpenAPI 3.1 skeleton (`openapi/dt.v1.yaml`) and the Protobuf event envelope (`proto/dt/events/v1`), managed by buf.
   - `web/`: pnpm + Turborepo workspace. The prototype now lives in `web/packages/renderer` (`@dt/renderer`); `@dt/contract` holds the TypeScript types generated from OpenAPI.
   - `infra/compose/`: local stack. Postgres 18 + PostGIS with **one schema and one login role per service**; integration tests prove no role can read or write another's schema.
   - Hardened images: distroless, non-root, read-only root filesystem, all capabilities dropped, `no-new-privileges`.
   - CI (`.github/workflows/`): Go lint/tests/govulncheck, web lint/tests/build, contract lint + breaking check + codegen drift, gitleaks, Trivy image scan + SBOM, a `make dev` smoke test, CodeQL, Dependabot. All actions pinned to commit SHAs.
-- **Commands:** `make dev` / `make down` (local stack), `make test`, `make lint`, `make gen`, `make ci` (all checks), `make web-dev` (renderer). See `README.md`.
+- **M1 accounts + gateway** (branch `m1-accounts-gateway`, awaiting CI + merge):
+  - `accounts`: tenants (`ten_…`, `live_enabled`) and partner API keys (`dt_sk_<env>_<lookup><secret>`, HMAC-SHA256 with the shared `APIKEY_PEPPER`, plaintext shown once). Create, roll (24 h overlap) and revoke with role rules (live keys need owner/admin and `live_enabled`). Exposed as an **internal Connect v2 RPC** (`dt.accounts.v1.AccountsService`, port 8084, `Authorization: Bearer <INTERNAL_RPC_TOKEN>`, never routed publicly; error codes in a `dt-code` trailer).
+  - Events: `accounts.apikey.*` through a transactional **outbox** (`pkg/outbox`) to **NATS JetStream** (file storage, 2 min dedup window, `Nats-Msg-Id = event_id`); the gateway keeps a key read model with an **inbox** (each event applied once, in stream order). A revoked key is rejected in well under 5 s (smoke: ~0.3 s).
+  - `gateway` (public `/v1` edge, port 8080): secret-key authn (Bearer only; query-string or Basic keys are 401), scopes, environment rule, per-key IP allowlist with `TRUSTED_PROXIES` for `X-Forwarded-For`, `403 secret_key_in_browser` when a secret key comes with an `Origin`, 64 KiB body limit, `GET /v1/me`.
+  - Rate limits in **Redis** (GCRA, 50 req/s + 100 burst per key with `RateLimit-*` headers; 20 failed auths/min per IP), **failing open** when Redis is down.
+  - **Idempotency** (`Idempotency-Key` on every POST, Postgres, 24 h, replay / `422` mismatch / `409` in-flight).
+  - **Audit log** (append-only Postgres table, 365 days): every authenticated write except a `429`.
+  - **OpenTelemetry** traces (`pkg/otelx`), and the compose stack gains Redis and NATS.
+  - Dev tooling: `dtctl` (`backend/tools/dtctl`, dev CLI over the accounts RPC), `make seed` (a "Dev Tenant" and a test key), `make smoke` (`scripts/smoke-m1.sh`, end-to-end, also in CI). The CI codegen drift check now also covers sqlc and oapi-codegen output.
+- **Commands:** `make dev` / `make down` (local stack), `make seed` / `make smoke` (after `make dev`), `make test`, `make lint`, `make gen`, `make ci` (all checks), `make web-dev` (renderer). See `README.md`.
 - **Known local issue:** on the owner's machine, rootless Docker's bridge network has no internet access, so `make dev` cannot download Go modules during the image build. Fix Docker networking or build with host networking (see `README.md`, Troubleshooting).
 - The prototype's `TrackingSnapshot` / `TrackingSource` contract still drives the renderer. The generated v1 contract replaces it in M3–M4.
 
@@ -111,5 +121,11 @@ DT is a **SaaS that gives delivery apps a videogame-like 2D/3D live-tracking exp
 **Engineering:**
 1. ~~Write the spec~~ → approved 2026-10-19.
 2. ~~Write the M0 implementation plan~~ → done 2026-10-19.
-3. ~~**M0 Foundations**~~ → built 2026-10-19 on branch `m0-foundations`; done once CI is green on GitHub and the PR is merged.
-4. **Next: M1 accounts + gateway** (tenants, API keys, authn/scopes, rate limits, idempotency, audit log, NATS + outbox). Its plan is written once M0 is merged. Each later milestone gets its own plan the same way.
+3. ~~**M0 Foundations**~~ → merged to `main` 2026-10-20 (PR #1, CI green on GitHub).
+4. ~~**M1 accounts + gateway**~~ (tenants, API keys, authn/scopes, rate limits, idempotency, audit log, NATS + outbox) → all 14 tasks done 2026-10-21 on branch `m1-accounts-gateway` (`make ci` + `make smoke` pass locally); PR #8 open with all 13 CI checks green (also bumped Go to 1.27.3 and grpc to v1.83.2 for new advisories, fixed a rate-limit test flake); **pending: owner merge + branch protection on `main`.** Plan: `docs/superpowers/plans/2026-10-20-m1-accounts-gateway.md`.
+5. **Next: M2 deliveries** (spec §16: models, state machine, pickup policy, couriers, outbox events; plus row-level security on `tenant_id` + `environment`, deferred from M1). Each milestone gets its own plan the same way.
+6. **Follow-ups from the M1 reviews** (not blocking; pick up in the milestone named):
+   - **M2:** extend the authz matrix (per-route success status, request bodies, audit rows) with the first real POST routes; decide whether idempotency should store validation `400`s and hash the query string; clear the unused OpenAPI components; add `gofmt` to golangci.
+   - **Before M3 staging:** accept `ip:port` hops in `X-Forwarded-For`; `otelhttp.WithPublicEndpoint()` on the gateway before any trace exporter; a consumer-lag signal for `gateway-apikeys` (a NATS/relay outage silently pauses the ≤ 5 s revocation guarantee); bounded `nats` drain timeout; mTLS for the internal accounts RPC.
+   - **M7:** what a lapsed subscription (`live_enabled = false`) does to existing live keys.
+   - **M9:** alert when an `apikey.revoked` event is rejected as poison; make the failed-auth limiter block before the DB lookup and count `ip_not_allowed`; pepper rotation; new-IP/volume anomaly alerts.

@@ -1,0 +1,22 @@
+title = "DT gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "dt-secret-key"
+description = "DT partner secret API key"
+regex = '''dt_sk_(test|live)_[0-9A-Za-z]{55}'''
+keywords = ["dt_sk_"]
+
+# API key ids (ak_ + 26 lowercase ULID chars) are public identifiers, not
+# secrets; test fixtures that pass one next to apikey.Test trip the generic
+# rule. Allowed only in _test.go files, only for the generic rule, and only
+# when the whole matched secret is such an id. dt_sk_ keys are never allowed.
+[[allowlists]]
+description = "fixture API key ids in Go tests"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''_test\.go$''']
+regexTarget = "secret"
+regexes = ['''^ak_[0-9a-z]{26}$''']

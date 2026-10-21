@@ -3,7 +3,7 @@ SHELL := bash
 .DEFAULT_GOAL := help
 
 # Go modules, relative to backend/.
-GO_MODULES := pkg gen $(patsubst backend/%,%,$(wildcard backend/services/*))
+GO_MODULES := pkg gen $(patsubst backend/%,%,$(wildcard backend/services/*) $(wildcard backend/tools/*))
 
 .PHONY: help doctor
 
@@ -12,7 +12,7 @@ help:
 
 doctor: ## Check that every required tool is installed
 	@for cmd in "go version" "pnpm --version" "docker compose version" "golangci-lint version" \
-	            "buf --version" "govulncheck -version" "actionlint -version" "pinact --version"; do \
+	            "buf --version" "govulncheck -version" "actionlint -version" "pinact version" "sqlc version"; do \
 	  out=$$($$cmd 2>&1 | head -1) || { echo "MISSING: $$cmd"; exit 1; }; \
 	  printf "%-24s %s\n" "$${cmd%% *}" "$$out"; \
 	done
@@ -39,8 +39,14 @@ web-dev: ## Run the renderer prototype dev server
 # ---- contracts --------------------------------------------------------------
 .PHONY: gen lint-contracts
 
-gen: ## Regenerate code from contracts (Protobuf → Go, OpenAPI → TS)
+# Every sqlc config under backend/services (one per service with a Postgres adapter).
+SQLC_CONFIGS := $(shell find backend/services -name sqlc.yaml -not -path '*/node_modules/*' | sort)
+
+gen: ## Regenerate code from contracts (Protobuf → Go + Connect, SQL → Go via sqlc, OpenAPI → Go models + TS)
 	cd contracts/proto && buf generate
+	@for c in $(SQLC_CONFIGS); do echo "==> sqlc $$c"; sqlc generate -f $$c; done
+	cp contracts/openapi/dt.v1.yaml backend/services/gateway/api/openapi.yaml
+	cd backend/services/gateway && go tool oapi-codegen -config api/oapi.cfg.yaml api/openapi.yaml
 	pnpm -C web --filter @dt/contract gen
 
 lint-contracts: ## Lint Protobuf and OpenAPI contracts
@@ -73,9 +79,15 @@ test: test-go test-web ## Run every test
 lint: lint-go lint-web lint-contracts ## Run every linter
 
 # ---- local stack ------------------------------------------------------------
-.PHONY: dev down logs
+.PHONY: dev down logs dtctl seed smoke
 
 COMPOSE := docker compose -f infra/compose/compose.yaml
+
+# dtctl talks to the local accounts service with the dev-only token from
+# infra/compose/compose.yaml.
+DTCTL := backend/bin/dtctl
+export DT_ACCOUNTS_URL ?= http://127.0.0.1:8084
+export DT_INTERNAL_RPC_TOKEN ?= dev-only-not-a-secret-internal-token-0000
 
 dev: ## Build and start the local stack, then wait until every service is ready
 	$(COMPOSE) up --build -d
@@ -86,6 +98,19 @@ down: ## Stop the local stack and delete its volumes
 
 logs: ## Follow the local stack logs
 	$(COMPOSE) logs -f
+
+dtctl: ## Build the dev CLI for the accounts API into backend/bin/dtctl
+	cd backend && go build -o bin/dtctl ./tools/dtctl
+
+seed: dtctl ## Create the tenant "Dev Tenant" and a test key in the running stack
+	@tenant=$$($(DTCTL) tenant create --name "Dev Tenant"); \
+	secret=$$($(DTCTL) key create --tenant "$$tenant" --env test --name "dev seed"); \
+	echo "tenant: $$tenant" >&2; \
+	echo "Call the API with:" >&2; \
+	echo "curl -sS -H 'Authorization: Bearer $$secret' http://127.0.0.1:8080/v1/me"
+
+smoke: dtctl ## Run the M1 end-to-end smoke test against the running stack (after make dev)
+	DTCTL=$(DTCTL) scripts/smoke-m1.sh
 
 # ---- security and CI --------------------------------------------------------
 .PHONY: secrets ci

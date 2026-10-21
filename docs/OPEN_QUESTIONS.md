@@ -1,7 +1,7 @@
 # DT: Open Questions
 
 > Standalone file for sharing with another AI or a person. It's self-contained, so it can be read without the other files.
-> **Last updated:** 2026-10-18 (OQ4a–e, OQ10, OQ11, OQ13, OQ2, OQ3, OQ5b, OQ7, OQ8, OQ9, OQ1 answered) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+> **Last updated:** 2026-10-21 (no change since 2026-10-20, when the OQ14 tech part and OQ15 were answered) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
 ## Context in 30 seconds
 
@@ -11,17 +11,16 @@
 
 ## Suggested order to answer
 
-1. **OQ14**: spec review items (cloud provider, name/domain, internal tech confirmation)
+1. **OQ14**: cloud provider (needed before M3) and product name/domain
 2. **OQ12**: business (plans and pricing), can be answered later
 
 ---
 
 ## Open
 
-### OQ14. Spec review items *(new, from the MVP spec §17)*
+### OQ14. Spec review items *(from the MVP spec §17; tech part answered 2026-10-20, see R20)*
 - **Cloud provider (EU region)** for staging/production, needed before milestone M3. Candidates: GCP `europe-west4` (Netherlands), AWS `eu-central-1`/`eu-west-1`, Scaleway/OVH (EU-owned).
 - **Product name and domain.**
-- **Confirm internal tech choices:** NATS JetStream for events, gRPC via Connect for service-to-service calls.
 
 ### OQ12. Plans and pricing *(new, business)*
 Two plans exist: **Direct** and **End-to-end**. Still to define:
@@ -55,3 +54,5 @@ Two plans exist: **Direct** and **End-to-end**. Still to define:
 | R17 | Console login for partners (OQ8)? | **Zitadel** (OIDC, EU data residency, MFA required, enterprise SSO later, open source so it can be self-hosted later). API keys and courier/tracking tokens remain DT's own system. | 2026-10-18 |
 | R18 | Geocoding (OQ9)? | **Partners send latitude/longitude in the MVP**; address → coordinates comes later. | 2026-10-18 |
 | R19 | Approve the MVP design (OQ1)? | **Yes.** Spec written: `superpowers/specs/2026-10-18-dt-mvp-design.md`. | 2026-10-18 |
+| R20 | Internal tech (OQ14 part)? | **Confirmed:** NATS JetStream for events, gRPC via Connect for service-to-service calls. | 2026-10-20 |
+| R21 | `GET /v1/me` and rate-limiter outage behavior (OQ15)? | **Yes** to a public `GET /v1/me` (check a key, first quickstart call). When Redis is down the rate limiter **fails open** (requests are still authenticated, a warning is logged). | 2026-10-20 |

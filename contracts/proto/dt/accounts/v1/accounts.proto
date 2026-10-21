@@ -1,0 +1,116 @@
+syntax = "proto3";
+package dt.accounts.v1;
+
+import "dt/events/v1/envelope.proto";
+import "google/protobuf/timestamp.proto";
+
+// AccountsService is the internal accounts API, used by dtctl and later the
+// console BFF. It is never routed publicly and requires
+// "Authorization: Bearer <INTERNAL_RPC_TOKEN>". Errors carry a "dt-code"
+// response trailer (snake_case, e.g. forbidden_role, live_not_enabled); over
+// the Connect protocol it arrives as the HTTP header "Trailer-Dt-Code".
+service AccountsService {
+  // CreateTenant creates a tenant (system use; no actor).
+  rpc CreateTenant(CreateTenantRequest) returns (CreateTenantResponse);
+  // SetLiveEnabled flips a tenant's live-mode flag (system use; no actor).
+  rpc SetLiveEnabled(SetLiveEnabledRequest) returns (SetLiveEnabledResponse);
+  // CreateApiKey mints a secret key; its plaintext is returned once.
+  rpc CreateApiKey(CreateApiKeyRequest) returns (CreateApiKeyResponse);
+  // RollApiKey mints a replacement key and lets the old one expire in 24 h.
+  rpc RollApiKey(RollApiKeyRequest) returns (RollApiKeyResponse);
+  // RevokeApiKey revokes a key immediately; repeated calls are no-ops.
+  rpc RevokeApiKey(RevokeApiKeyRequest) returns (RevokeApiKeyResponse);
+  // ListApiKeys lists a tenant's keys in one environment.
+  rpc ListApiKeys(ListApiKeysRequest) returns (ListApiKeysResponse);
+}
+
+// Actor is who performs a key action.
+message Actor {
+  string type = 1; // "console_user" | "system"
+  string id = 2;
+  string role = 3; // "owner" | "admin" | "developer" | "support"
+}
+
+message Tenant {
+  string id = 1;
+  string name = 2;
+  bool live_enabled = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+// ApiKey is a key's metadata. It never carries the hash or the plaintext.
+message ApiKey {
+  string id = 1;
+  string tenant_id = 2;
+  dt.events.v1.Environment environment = 3;
+  string name = 4;
+  string display_prefix = 5;
+  repeated string scopes = 6;
+  repeated string allowed_ips = 7; // CIDR strings; empty = any
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp expires_at = 9; // unset = never
+  google.protobuf.Timestamp revoked_at = 10; // unset = active
+}
+
+message CreateTenantRequest {
+  string name = 1;
+}
+
+message CreateTenantResponse {
+  Tenant tenant = 1;
+}
+
+message SetLiveEnabledRequest {
+  string tenant_id = 1;
+  bool enabled = 2;
+}
+
+message SetLiveEnabledResponse {}
+
+message CreateApiKeyRequest {
+  Actor actor = 1;
+  string tenant_id = 2;
+  dt.events.v1.Environment environment = 3;
+  string name = 4;
+  repeated string scopes = 5; // empty = every scope
+  repeated string allowed_ips = 6; // CIDRs or single addresses; empty = any
+}
+
+message CreateApiKeyResponse {
+  ApiKey api_key = 1;
+  // secret is the plaintext key, returned only here. It is never stored.
+  string secret = 2;
+}
+
+message RollApiKeyRequest {
+  Actor actor = 1;
+  string tenant_id = 2;
+  string key_id = 3;
+}
+
+message RollApiKeyResponse {
+  ApiKey api_key = 1; // the new key
+  // secret is the new key's plaintext, returned only here.
+  string secret = 2;
+  ApiKey previous = 3; // the rolled key, with its new expires_at
+}
+
+message RevokeApiKeyRequest {
+  Actor actor = 1;
+  string tenant_id = 2;
+  string key_id = 3;
+}
+
+message RevokeApiKeyResponse {
+  ApiKey api_key = 1;
+}
+
+message ListApiKeysRequest {
+  Actor actor = 1;
+  string tenant_id = 2;
+  dt.events.v1.Environment environment = 3;
+}
+
+message ListApiKeysResponse {
+  repeated ApiKey api_keys = 1;
+}

@@ -3,10 +3,54 @@
  * Do not make direct changes to the file.
  */
 
-export type paths = Record<string, never>;
+export interface paths {
+    "/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the authenticated credential
+         * @description Returns the tenant, environment and scopes of the secret key the request authenticates with. Use it to check that a key works.
+         */
+        get: operations["getMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+}
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description Test and live data are fully separate.
+         * @enum {string}
+         */
+        Environment: "test" | "live";
+        /**
+         * @description A permission a secret key carries.
+         * @enum {string}
+         */
+        Scope: "deliveries:read" | "deliveries:write" | "couriers:write" | "webhooks:write";
+        /** @description The credential a request authenticated with. */
+        Me: {
+            /** @example ten_01j9z3k8m2q4r6s8t0v2w4x6y8 */
+            tenant_id: string;
+            environment: components["schemas"]["Environment"];
+            credential: {
+                /** @enum {string} */
+                type: "secret_key";
+                /** @example ak_01j9z3k8m2q4r6s8t0v2w4x6y8 */
+                id: string;
+            };
+            scopes: components["schemas"]["Scope"][];
+        };
         /** @description WGS84 coordinate. */
         LatLng: {
             lat: number;
@@ -29,11 +73,85 @@ export interface components {
             errors?: components["schemas"]["FieldError"][];
         };
     };
-    responses: never;
-    parameters: never;
+    responses: {
+        /** @description The credential is missing, malformed, unknown, expired or revoked, or was sent other than as a bearer token (`unauthenticated`). */
+        Unauthenticated: {
+            headers: {
+                /** @description Always `Bearer`. */
+                "WWW-Authenticate"?: string;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The credential is valid but may not make this request (`secret_key_in_browser`, `ip_not_allowed`, `insufficient_scope`, `environment_not_allowed` or `cors_not_allowed`). */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The rate limit was exceeded (`rate_limited`). Retry after `Retry-After` seconds. */
+        TooManyRequests: {
+            headers: {
+                /** @description Requests allowed in the current window. */
+                "RateLimit-Limit"?: number;
+                /** @description Requests left in the current window. */
+                "RateLimit-Remaining"?: number;
+                /** @description Seconds until the window resets. */
+                "RateLimit-Reset"?: number;
+                /** @description Seconds to wait before retrying. */
+                "Retry-After"?: number;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The request body is larger than 64 KiB (`payload_too_large`). */
+        PayloadTooLarge: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+    };
+    parameters: {
+        /** @description Client-chosen key that makes a POST safe to retry (1 to 255 printable ASCII characters). A retry with the same key and body replays the first response for 24 hours; a different body is refused. */
+        IdempotencyKey: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
 }
 export type $defs = Record<string, never>;
-export type operations = Record<string, never>;
+export interface operations {
+    getMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The credential the request authenticated with. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+}
