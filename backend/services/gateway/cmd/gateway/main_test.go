@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -47,9 +48,12 @@ func TestRunRefusesBadConfigBeforeIO(t *testing.T) {
 	}
 }
 
-func TestGatewayStartsAndServesMe(t *testing.T) {
+// startGateway runs the gateway via run() against real Postgres and NATS and
+// the given Redis until the test ends. It returns the base URL, the NATS URL
+// and a context cancelled at cleanup.
+func startGateway(t *testing.T, redisURL string) (string, string, context.Context) {
+	t.Helper()
 	pg := testkit.StartPostgres(t)
-	redisURL := testkit.StartRedis(t)
 	natsURL := testkit.StartNATS(t)
 
 	t.Setenv("PORT", "0")
@@ -84,8 +88,13 @@ func TestGatewayStartsAndServesMe(t *testing.T) {
 			t.Error("run did not return after cancel")
 		}
 	})
+	return base, natsURL, ctx
+}
 
-	// accounts' side: an apikey.created event for a freshly minted key.
+// publishKey plays accounts' side: it publishes an apikey.created event for
+// a freshly minted test key and returns the key, its tenant and its id.
+func publishKey(t *testing.T, ctx context.Context, natsURL string) (apikey.Key, string, string) {
+	t.Helper()
 	nc, err := nats.Connect(natsURL)
 	if err != nil {
 		t.Fatal(err)
@@ -122,33 +131,58 @@ func TestGatewayStartsAndServesMe(t *testing.T) {
 	if _, err := js.PublishMsg(ctx, msg); err != nil {
 		t.Fatal(err)
 	}
+	return key, tenant, keyID
+}
 
-	me := func() (int, []byte) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/me", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		req.Header.Set("Authorization", "Bearer "+key.Plaintext)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return resp.StatusCode, body
+// getTimed sends GET base+path (with a bearer key unless empty) and returns
+// the status, body and how long the round trip took.
+func getTimed(t *testing.T, ctx context.Context, url, bearer string) (int, []byte, time.Duration) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	start := time.Now()
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, body, time.Since(start)
+}
+
+// waitForMe polls GET /v1/me until the key from the event authenticates
+// (200) or 2 s pass, failing if any single request takes maxLatency or more.
+func waitForMe(t *testing.T, ctx context.Context, base, key string, maxLatency time.Duration) []byte {
+	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
-	status, body := me()
-	for status != http.StatusOK && time.Now().Before(deadline) {
+	for {
+		status, body, took := getTimed(t, ctx, base+"/v1/me", key)
+		if took >= maxLatency {
+			t.Fatalf("GET /v1/me took %v (status %d), want < %v", took, status, maxLatency)
+		}
+		if status == http.StatusOK {
+			return body
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("GET /v1/me = %d %s, want 200 within 2 s of the event", status, body)
+		}
 		time.Sleep(50 * time.Millisecond)
-		status, body = me()
 	}
-	if status != http.StatusOK {
-		t.Fatalf("GET /v1/me = %d %s, want 200 within 2 s of the event", status, body)
-	}
+}
+
+func TestGatewayStartsAndServesMe(t *testing.T) {
+	base, natsURL, ctx := startGateway(t, testkit.StartRedis(t))
+	key, tenant, keyID := publishKey(t, ctx, natsURL)
+
+	body := waitForMe(t, ctx, base, key.Plaintext, 30*time.Second)
 	var got struct {
 		TenantID    string `json:"tenant_id"`
 		Environment string `json:"environment"`
@@ -161,16 +195,51 @@ func TestGatewayStartsAndServesMe(t *testing.T) {
 		t.Fatalf("me = %s, want tenant %s key %s", body, tenant, keyID)
 	}
 
-	ready, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/readyz", nil)
+	if status, body, _ := getTimed(t, ctx, base+"/readyz", ""); status != http.StatusOK {
+		t.Fatalf("readyz = %d %s, want 200 with db, redis and nats", status, body)
+	}
+}
+
+// hangingRedis accepts connections and never answers (a hung Redis: no
+// reset, no reply). It returns a redis:// URL for it.
+func hangingRedis(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := http.DefaultClient.Do(ready)
-	if err != nil {
-		t.Fatal(err)
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { _ = c.Close() })
+			go func() { _, _ = io.Copy(io.Discard, c) }()
+		}
+	}()
+	return "redis://" + ln.Addr().String() + "/0"
+}
+
+// TestGatewayServesWhenRedisHangs is R21 end to end: with a Redis that
+// accepts and never replies, the limiter fails open within its budget, the
+// API keeps answering and /readyz stays 200 (Redis is non-fatal for the
+// gateway), so an outage does not drain the replicas.
+func TestGatewayServesWhenRedisHangs(t *testing.T) {
+	base, natsURL, ctx := startGateway(t, hangingRedis(t))
+	key, _, _ := publishKey(t, ctx, natsURL)
+
+	waitForMe(t, ctx, base, key.Plaintext, time.Second)
+	status, body, took := getTimed(t, ctx, base+"/v1/me", key.Plaintext)
+	t.Logf("GET /v1/me with a hung redis: %d after %v", status, took)
+	if status != http.StatusOK || took >= time.Second {
+		t.Fatalf("GET /v1/me = %d %s after %v, want 200 in < 1s", status, body, took)
 	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("readyz = %d, want 200 with db, redis and nats", resp.StatusCode)
+
+	status, body, took = getTimed(t, ctx, base+"/readyz", "")
+	t.Logf("GET /readyz with a hung redis: %d after %v", status, took)
+	if status != http.StatusOK {
+		t.Fatalf("readyz = %d %s, want 200 (redis is non-fatal for the gateway)", status, body)
 	}
 }

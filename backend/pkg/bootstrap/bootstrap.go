@@ -31,6 +31,11 @@ import (
 // readyTimeout bounds /readyz so a hung dependency cannot hang the probe.
 const readyTimeout = 2 * time.Second
 
+// nonFatalCheckTimeout bounds a non-fatal readiness check. It is shorter than
+// readyTimeout so the check reports (and is ignored) before the probe gives
+// up on it and counts it as failing.
+const nonFatalCheckTimeout = 500 * time.Millisecond
+
 // Config is read from the environment.
 type Config struct {
 	Port        int    `env:"PORT" envDefault:"8080"`
@@ -42,7 +47,15 @@ type Config struct {
 
 // Needs names the optional dependencies a service uses. Each one needs its
 // URL in the environment and adds a /readyz check.
-type Needs struct{ Redis, NATS bool }
+type Needs struct {
+	Redis, NATS bool
+	// RedisNonFatal keeps a failing Redis out of /readyz: the redis check
+	// still runs (bounded to 500 ms) and logs a warn when it fails, but it
+	// never makes /readyz answer 503. For services that degrade without
+	// Redis instead of failing (the gateway's limiter fails open), so a
+	// Redis outage does not drain every replica. Ignored unless Redis.
+	RedisNonFatal bool
+}
 
 // Deps are handed to a service's Setup function.
 type Deps struct {
@@ -67,6 +80,33 @@ type Options struct {
 	Setup func(ctx context.Context, d Deps, mux *http.ServeMux) ([]Worker, error)
 	// Ready is a test hook called with the bound address once listening.
 	Ready func(addr string)
+}
+
+// RedisOptions parses a REDIS_URL into the client options Run uses. It turns
+// on ContextTimeoutEnabled: without it go-redis ignores context deadlines for
+// socket I/O and a hung Redis holds every call for its read timeout and
+// retries (seconds), whatever deadline the caller set.
+func RedisOptions(url string) (*redis.Options, error) {
+	o, err := redis.ParseURL(url)
+	if err != nil {
+		return nil, err
+	}
+	o.ContextTimeoutEnabled = true
+	return o, nil
+}
+
+// nonFatal runs check within nonFatalCheckTimeout and reports success
+// whatever happens, logging a warn (without the error, which may hold the
+// URL) when it fails.
+func nonFatal(log *slog.Logger, name string, check httpx.Check) httpx.Check {
+	return func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, nonFatalCheckTimeout)
+		defer cancel()
+		if err := check(ctx); err != nil {
+			log.WarnContext(ctx, "readiness check failing (non-fatal)", "check", name)
+		}
+		return nil
+	}
 }
 
 // Run starts the service and blocks until ctx is done or a worker fails.
@@ -116,14 +156,18 @@ func Run(ctx context.Context, opts Options) (err error) {
 	checks := map[string]httpx.Check{"db": pool.Ping}
 
 	if opts.Needs.Redis {
-		ropts, err := redis.ParseURL(cfg.RedisURL)
+		ropts, err := RedisOptions(cfg.RedisURL)
 		if err != nil {
 			return fmt.Errorf("%s: redis: invalid REDIS_URL", opts.Name)
 		}
 		// go-redis connects lazily, so an unreachable Redis shows in /readyz.
 		deps.Redis = redis.NewClient(ropts)
 		defer func() { _ = deps.Redis.Close() }()
-		checks["redis"] = func(ctx context.Context) error { return deps.Redis.Ping(ctx).Err() }
+		ping := func(ctx context.Context) error { return deps.Redis.Ping(ctx).Err() }
+		if opts.Needs.RedisNonFatal {
+			ping = nonFatal(log, "redis", ping)
+		}
+		checks["redis"] = ping
 	}
 	if opts.Needs.NATS {
 		nc, err := nats.Connect(cfg.NATSURL, nats.Name(opts.Name), nats.Timeout(5*time.Second))

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/raduolivas/dt/backend/pkg/bootstrap"
 	"github.com/raduolivas/dt/backend/pkg/httpx"
@@ -208,5 +210,105 @@ func TestReadyzFailsWhenRedisUnreachable(t *testing.T) {
 	}
 	if resp.status != http.StatusServiceUnavailable || !strings.Contains(p.Detail, "failing: redis") {
 		t.Fatalf("readyz: %d %+v", resp.status, p)
+	}
+}
+
+// hangingRedis listens on a free port, accepts connections and never answers
+// (a hung Redis: no reset, no reply). It returns a redis:// URL for it.
+func hangingRedis(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { _ = c.Close() })
+			go func() { _, _ = io.Copy(io.Discard, c) }()
+		}
+	}()
+	return "redis://" + ln.Addr().String() + "/0"
+}
+
+func TestRedisOptionsHonorContextDeadline(t *testing.T) {
+	opts, err := bootstrap.RedisOptions(hangingRedis(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.ContextTimeoutEnabled {
+		t.Fatal("ContextTimeoutEnabled = false")
+	}
+	c := redis.NewClient(opts)
+	t.Cleanup(func() { _ = c.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err = c.Ping(ctx).Err()
+	elapsed := time.Since(start)
+	t.Logf("ping against a hung redis returned after %v", elapsed)
+	if err == nil || elapsed > 200*time.Millisecond {
+		t.Fatalf("ping = %v after %v, want an error within 200ms", err, elapsed)
+	}
+}
+
+func TestReadyzFailsWithinBudgetWhenRedisHangs(t *testing.T) {
+	t.Setenv("DATABASE_URL", testkit.StartPostgres(t).URL("gateway"))
+	t.Setenv("REDIS_URL", hangingRedis(t))
+	base, _, _ := startWith(t, bootstrap.Options{Name: "test", Needs: bootstrap.Needs{Redis: true}})
+	start := time.Now()
+	resp := httpGet(t, base+"/readyz")
+	elapsed := time.Since(start)
+	var p httpx.Problem
+	if err := json.Unmarshal(resp.body, &p); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("readyz with hung redis: %d after %v", resp.status, elapsed)
+	if resp.status != http.StatusServiceUnavailable || p.Detail != "failing: redis" {
+		t.Fatalf("readyz: %d %+v", resp.status, p)
+	}
+	if elapsed > 2500*time.Millisecond {
+		t.Fatalf("readyz took %v, want within its 2 s budget", elapsed)
+	}
+}
+
+func TestReadyzIgnoresNonFatalRedis(t *testing.T) {
+	for _, tc := range []struct{ name, url string }{
+		{"refused", "redis://127.0.0.1:1/0"},
+		{"hung", hangingRedis(t)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", testkit.StartPostgres(t).URL("gateway"))
+			t.Setenv("REDIS_URL", tc.url)
+			base, _, _ := startWith(t, bootstrap.Options{Name: "test", Needs: bootstrap.Needs{Redis: true, RedisNonFatal: true}})
+			start := time.Now()
+			resp := httpGet(t, base+"/readyz")
+			elapsed := time.Since(start)
+			t.Logf("readyz with %s redis: %d after %v", tc.name, resp.status, elapsed)
+			if resp.status != http.StatusOK {
+				t.Fatalf("readyz: %d %s, want 200 (redis is non-fatal)", resp.status, resp.body)
+			}
+			if elapsed > time.Second {
+				t.Fatalf("readyz took %v, want < 1s", elapsed)
+			}
+		})
+	}
+}
+
+func TestNonFatalRedisDoesNotHideDatabase(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://u:p@127.0.0.1:1/dt?connect_timeout=1")
+	t.Setenv("REDIS_URL", "redis://127.0.0.1:1/0")
+	base, _, _ := startWith(t, bootstrap.Options{Name: "test", Needs: bootstrap.Needs{Redis: true, RedisNonFatal: true}})
+	resp := httpGet(t, base+"/readyz")
+	var p httpx.Problem
+	if err := json.Unmarshal(resp.body, &p); err != nil {
+		t.Fatal(err)
+	}
+	if resp.status != http.StatusServiceUnavailable || p.Detail != "failing: db" {
+		t.Fatalf("readyz: %d %+v, want 503 failing: db only", resp.status, p)
 	}
 }

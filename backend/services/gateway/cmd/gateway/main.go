@@ -48,8 +48,10 @@ func run(ctx context.Context, ready func(addr string)) error {
 	}
 
 	return bootstrap.Run(ctx, bootstrap.Options{
-		Name:       "gateway",
-		Needs:      bootstrap.Needs{Redis: true, NATS: true},
+		Name: "gateway",
+		// Redis is non-fatal for /readyz: the limiter fails open without it
+		// (R21), so an outage must not drain the replicas.
+		Needs:      bootstrap.Needs{Redis: true, RedisNonFatal: true, NATS: true},
 		Migrations: migrations.FS,
 		Ready:      ready,
 		Setup: func(ctx context.Context, d bootstrap.Deps, mux *http.ServeMux) ([]bootstrap.Worker, error) {
