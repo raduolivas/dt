@@ -370,3 +370,56 @@ func TestAuditSkipsRateLimited(t *testing.T) {
 		t.Fatalf("entries = %+v, want none for a 429 (no audit amplification)", got)
 	}
 }
+
+// burstLimiter is an in-memory limiter that allows l.Burst calls per key and
+// then denies (no refill).
+type burstLimiter struct {
+	mu   sync.Mutex
+	used map[string]int
+}
+
+func (b *burstLimiter) Allow(_ context.Context, key string, l app.Limit) (app.Decision, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.used == nil {
+		b.used = map[string]int{}
+	}
+	if b.used[key] >= l.Burst {
+		return app.Decision{Allowed: false, Limit: l.Burst, RetryAfter: time.Second, ResetAfter: time.Second}, nil
+	}
+	b.used[key]++
+	return app.Decision{Allowed: true, Limit: l.Burst, Remaining: l.Burst - b.used[key], ResetAfter: time.Second}, nil
+}
+
+// TestForbiddenRequestsAreRateLimited checks RateLimit runs before Authorize:
+// a key lacking the route's scope is counted on every request, so past its
+// burst it gets 429 (not 403), and those 429s are not audited while the 403s
+// before them are.
+func TestForbiddenRequestsAreRateLimited(t *testing.T) {
+	t.Parallel()
+	k := mint(t, apikey.Test, ids.New(ids.APIKey)) // no scopes
+	m := &memAudit{}
+	e := auditEdgeWith(t, m, auditRoutesScoped(domain.ScopeDeliveriesWrite), func(mw *httpapi.Middleware) {
+		mw.RateLimit = httpapi.PartnerRateLimit(&burstLimiter{}, mw.Log)
+	}, k)
+
+	for i := range app.PartnerKey.Burst {
+		rec := e.do(post("/v1/things", "Bearer "+k.raw, `{"name":"x"}`))
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("request %d: status = %d, want 403: %s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+	if n := len(m.all()); n != app.PartnerKey.Burst {
+		t.Fatalf("audit entries = %d, want %d (one per 403)", n, app.PartnerKey.Burst)
+	}
+	wantProblem(t, e.do(post("/v1/things", "Bearer "+k.raw, `{"name":"x"}`)), http.StatusTooManyRequests, "rate_limited")
+	got := m.all()
+	if n := len(got); n != app.PartnerKey.Burst {
+		t.Fatalf("audit entries = %d after the 429, want %d (a 429 is never audited)", n, app.PartnerKey.Burst)
+	}
+	for _, e := range got {
+		if e.Status != http.StatusForbidden {
+			t.Fatalf("audit entry status = %d, want only 403s", e.Status)
+		}
+	}
+}

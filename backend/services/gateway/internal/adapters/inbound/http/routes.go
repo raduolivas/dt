@@ -79,13 +79,15 @@ type Middleware struct {
 	// FailedAuth (Task 10) wraps Authenticate: it sees the client IP but no
 	// principal, and observes the 401s Authenticate writes.
 	FailedAuth Hook
-	// RateLimit (Task 10) runs after Authorize, with the principal set.
+	// RateLimit (Task 10) runs right after Authenticate, with the
+	// principal set and before Audit and Authorize, so every authenticated
+	// request is counted, including those Authorize refuses.
 	RateLimit Hook
-	// Idempotency (Task 11) runs on POST routes only, after RateLimit.
+	// Idempotency (Task 11) runs on POST routes only, after Authorize.
 	Idempotency Hook
-	// Audit (Task 12) runs on non-GET routes only, right after
-	// Authenticate and before Authorize, so it sees every authenticated
-	// write's final status.
+	// Audit (Task 12) runs on non-GET routes only, after RateLimit and
+	// before Authorize, so it sees every authenticated write's final status
+	// except a 429.
 	Audit Hook
 }
 
@@ -96,12 +98,16 @@ const MaxBodyBytes = 64 << 10
 // wrapped in this chain, outermost first:
 //
 //	MaxBytes(64 KiB) → ClientIP(trusted) → [FailedAuth] → Authenticate →
-//	[Audit, non-GET only] → Authorize(route) → [RateLimit] →
+//	[RateLimit] → [Audit, non-GET only] → Authorize(route) →
 //	[Idempotency, POST only] → Validate (OpenAPI, security off) → handler
 //
-// Audit sits right inside Authenticate so every authenticated write is
-// recorded with its final status, including 403s, idempotency conflicts and
-// replays (spec §11.1).
+// FailedAuth wraps Authenticate so it can count the 401s Authenticate writes.
+// RateLimit sits right inside Authenticate, so every authenticated request
+// is counted, including those Authorize refuses with 403, and a 429 never
+// reaches Audit (a key hammering the API cannot multiply audit writes). Audit
+// sits outside Authorize, so every other authenticated write is recorded with
+// its final status, including 403s, idempotency conflicts and replays (spec
+// §11.1).
 //
 // Bracketed steps are Middleware hooks and are skipped when nil. Mount also
 // registers the /v1/ fallbacks: OPTIONS answers 403 cors_not_allowed (the
@@ -127,12 +133,12 @@ func Mount(mux *http.ServeMux, routes []Route, mw Middleware) {
 		if mw.Idempotency != nil && rt.Method == http.MethodPost {
 			h = mw.Idempotency(h, rt)
 		}
-		if mw.RateLimit != nil {
-			h = mw.RateLimit(h, rt)
-		}
 		h = Authorize(rt)(h)
 		if mw.Audit != nil && rt.Method != http.MethodGet {
 			h = mw.Audit(h, rt)
+		}
+		if mw.RateLimit != nil {
+			h = mw.RateLimit(h, rt)
 		}
 		h = Authenticate(mw.Auth, log)(h)
 		if mw.FailedAuth != nil {

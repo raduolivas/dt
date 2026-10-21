@@ -20,15 +20,17 @@ const maxAuditText = 512
 const auditTimeout = 5 * time.Second
 
 // Audit is the Middleware.Audit hook (non-GET routes). Mount places it right
-// inside Authenticate, so it wraps Authorize, RateLimit, Idempotency and the
-// handler. After them it records one app.AuditEntry for every request with a
+// inside RateLimit, so it wraps Authorize, Idempotency and the handler. After
+// them it records one app.AuditEntry for every request with a
 // principal whose method is not GET or HEAD: the credential as actor, the
 // route name as action, the route's path value as target, and the status the
 // client received. That includes 403s, idempotency conflicts and replays. A
 // panic is recorded as the 500 the outer Recover answers, then re-raised.
 //
 // A 429 is not recorded, so a key hammering the API cannot multiply audit
-// writes; the rate limiter already accounts for those requests.
+// writes; the rate limiter already accounts for those requests. Mount puts
+// RateLimit outside Audit, so its 429s never get here; the status check is a
+// guard for any other 429 below.
 //
 // Trade-off: the entry is written after the handler has run, so a failed
 // write cannot undo the request. It is logged at error (without the client
