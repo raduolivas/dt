@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-redis/redis_rate/v10"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/raduolivas/dt/backend/pkg/bootstrap"
@@ -23,6 +24,12 @@ func TestLimiterAllowsBurstThenDenies(t *testing.T) {
 	}
 	c := redis.NewClient(opts)
 	t.Cleanup(func() { _ = c.Close() })
+	// Warm the client without the limiter's 50 ms budget: the first call
+	// dials and loads the Lua script, which under parallel test load takes
+	// longer than 50 ms.
+	if _, err := redis_rate.NewLimiter(c).Allow(context.Background(), "warmup", redis_rate.PerHour(1)); err != nil {
+		t.Fatal(err)
+	}
 	l := redislimit.NewLimiter(c)
 
 	// Slow refill so the test is not racing the clock.

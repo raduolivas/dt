@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-redis/redis_rate/v10"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/raduolivas/dt/backend/pkg/apikey"
@@ -28,6 +29,12 @@ func redisClient(t *testing.T) *redis.Client {
 	}
 	c := redis.NewClient(opts)
 	t.Cleanup(func() { _ = c.Close() })
+	// Warm the client without the limiter's 50 ms budget: the first call
+	// dials and loads the Lua script, which under parallel test load takes
+	// longer than 50 ms and would make the limiter fail open.
+	if _, err := redis_rate.NewLimiter(c).Allow(context.Background(), "warmup", redis_rate.PerHour(1)); err != nil {
+		t.Fatal(err)
+	}
 	return c
 }
 
