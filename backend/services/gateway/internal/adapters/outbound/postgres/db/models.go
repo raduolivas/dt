@@ -51,6 +51,7 @@ type IdempotencyRecord struct {
 	ResponseBody    []byte
 	CreatedAt       time.Time
 	ExpiresAt       time.Time
+	ResourceID      pgtype.Text
 }
 
 type Inbox struct {

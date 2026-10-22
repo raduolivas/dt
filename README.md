@@ -86,7 +86,9 @@ backend/bin/dtctl tenant settings --tenant "$T" --models end_to_end --default en
 Until a tenant's settings reach `deliveries` (through NATS), the defaults apply: both models, `direct`, `any`.
 The `deliveries` service also needs `DATA_KEYS` (`id:base64,...`, 32-byte keys) and `DATA_KEY_CURRENT` to
 seal personal data, plus `INTERNAL_RPC_TOKEN`; it refuses to start without them. The gateway needs
-`DELIVERIES_RPC_URL`. `scripts/smoke-m2.sh` walks through the whole flow.
+`DELIVERIES_RPC_URL` and its own `DATA_KEYS` / `DATA_KEY_CURRENT` (same format, a separate key ring):
+stored idempotency responses can carry customer data, so the gateway seals them and deletes a delivery's
+stored responses when its personal data is erased. `scripts/smoke-m2.sh` walks through the whole flow.
 
 ## Service configuration
 
@@ -99,6 +101,7 @@ Besides `PORT`, `LOG_LEVEL` and `DATABASE_URL`, M1 adds:
 | `TRUSTED_PROXIES` | gateway | comma-separated CIDRs of proxies whose `X-Forwarded-For` hops count; empty means the TCP peer is the client |
 | `REDIS_URL` | gateway | rate limits (the limiter fails open if Redis is down) |
 | `NATS_URL` | accounts, gateway | JetStream for the `accounts.*` events |
+| `DATA_KEYS`, `DATA_KEY_CURRENT` | deliveries, gateway (M2) | `id:base64,...` of 32-byte AES keys and the id that seals new values; each service has its own keys. It refuses to start without them |
 
 The values in `infra/compose/compose.yaml` are dev-only placeholders; never reuse them anywhere else.
 

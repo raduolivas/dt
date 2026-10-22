@@ -17,6 +17,7 @@ import (
 	"github.com/raduolivas/dt/backend/gen/dt/deliveries/v1/deliveriesv1connect"
 	eventsv1 "github.com/raduolivas/dt/backend/gen/dt/events/v1"
 	"github.com/raduolivas/dt/backend/pkg/httpx"
+	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/domain"
 )
 
@@ -24,8 +25,9 @@ import (
 // deliveries internal RPC. The scope of every call (tenant, environment, actor)
 // comes from the authenticated principal, never from the request.
 type deliveriesAPI struct {
-	c   deliveriesv1connect.DeliveriesServiceClient
-	log *slog.Logger
+	c      deliveriesv1connect.DeliveriesServiceClient
+	purger app.IdempotencyPurger // nil: no purge on erasure
+	log    *slog.Logger
 }
 
 // The wire shapes are local rather than the generated models because those
@@ -390,7 +392,36 @@ func (a *deliveriesAPI) erasePersonalData(w http.ResponseWriter, r *http.Request
 	res, err := callRPC(r.Context(), func(ctx context.Context) (*deliveriesv1.ErasePersonalDataResponse, error) {
 		return a.c.ErasePersonalData(ctx, &deliveriesv1.ErasePersonalDataRequest{Scope: sc, Id: r.PathValue("id")})
 	})
+	if err == nil {
+		a.purgeStoredResponses(r, r.PathValue("id"))
+	}
 	a.reply(w, r, res.GetDelivery(), err)
+}
+
+// purgeTimeout bounds the idempotency purge after an erasure.
+const purgeTimeout = 5 * time.Second
+
+// purgeStoredResponses deletes the idempotency records of delivery id: their
+// stored responses carry the personal data just erased. A failure is logged
+// (no personal data) and does not fail the erasure; the records expire within
+// 24 h anyway.
+func (a *deliveriesAPI) purgeStoredResponses(r *http.Request, id string) {
+	if a.purger == nil {
+		return
+	}
+	p, ok := PrincipalFrom(r.Context())
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), purgeTimeout)
+	defer cancel()
+	if _, err := a.purger.PurgeResource(ctx, p.TenantID, p.Env, id); err != nil {
+		a.log.ErrorContext(r.Context(), "idempotency_purge_failed",
+			"error", err.Error(),
+			"tenant_id", p.TenantID,
+			"delivery_id", id,
+			"request_id", httpx.RequestIDFrom(r.Context()))
+	}
 }
 
 // reply answers 200 with the delivery, or the mapped problem.

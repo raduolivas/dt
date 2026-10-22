@@ -11,6 +11,7 @@ import (
 	"github.com/raduolivas/dt/backend/gen/dt/deliveries/v1/deliveriesv1connect"
 	"github.com/raduolivas/dt/backend/pkg/httpx"
 	"github.com/raduolivas/dt/backend/services/gateway/api"
+	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/domain"
 )
 
@@ -44,6 +45,9 @@ type Route struct {
 type Deps struct {
 	// Deliveries is the deliveries internal RPC client.
 	Deliveries deliveriesv1connect.DeliveriesServiceClient
+	// Idempotency deletes a delivery's stored idempotency responses once its
+	// personal data is erased. Nil skips the purge.
+	Idempotency app.IdempotencyPurger
 	// Log receives failures of the deliveries calls. Nil means slog.Default().
 	Log *slog.Logger
 }
@@ -54,7 +58,7 @@ func Routes(deps Deps) []Route {
 	if log == nil {
 		log = slog.Default()
 	}
-	d := &deliveriesAPI{c: deps.Deliveries, log: log}
+	d := &deliveriesAPI{c: deps.Deliveries, purger: deps.Idempotency, log: log}
 	secret := []domain.CredentialType{domain.CredentialSecretKey}
 	route := func(name, method, pattern string, scope domain.Scope, status int, h http.HandlerFunc) Route {
 		return Route{Name: name, Method: method, Pattern: pattern, Credentials: secret, Scope: scope,

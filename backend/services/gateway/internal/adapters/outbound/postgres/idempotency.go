@@ -12,24 +12,37 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/raduolivas/dt/backend/pkg/sealbox"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/adapters/outbound/postgres/db"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
+	"github.com/raduolivas/dt/backend/services/gateway/internal/domain"
 )
 
 // IdempotencyStore keeps Idempotency-Key records in idempotency_records.
+// Response bodies are sealed with box, bound to their record by the
+// additional data "<tenant_id>|<environment>|<idem_key>".
 type IdempotencyStore struct {
 	pool *pgxpool.Pool
 	q    *db.Queries
+	box  *sealbox.Box
 }
 
 var (
 	_ app.IdempotencyStore          = (*IdempotencyStore)(nil)
 	_ app.ExpiredIdempotencyDeleter = (*IdempotencyStore)(nil)
+	_ app.IdempotencyPurger         = (*IdempotencyStore)(nil)
 )
 
-// NewIdempotencyStore returns an IdempotencyStore over pool.
-func NewIdempotencyStore(pool *pgxpool.Pool) *IdempotencyStore {
-	return &IdempotencyStore{pool: pool, q: db.New(pool)}
+// NewIdempotencyStore returns an IdempotencyStore over pool that seals
+// response bodies with box.
+func NewIdempotencyStore(pool *pgxpool.Pool, box *sealbox.Box) *IdempotencyStore {
+	return &IdempotencyStore{pool: pool, q: db.New(pool), box: box}
+}
+
+// bodyAAD binds a sealed body to its record, so a body copied to another
+// record (tenant, environment or key) does not open.
+func bodyAAD(sc app.IdempotencyScope) []byte {
+	return []byte(sc.TenantID + "|" + string(sc.Env) + "|" + sc.Key)
 }
 
 // beginAttempts bounds the insert/lock loop: a conflicting row can vanish
@@ -84,7 +97,7 @@ func (s *IdempotencyStore) Begin(ctx context.Context, sc app.IdempotencyScope, h
 				}
 				out = app.IdempotencyOutcome{Kind: kind, Lease: lease}
 			case app.OutcomeReplay:
-				stored, err := storedFrom(row)
+				stored, err := s.storedFrom(sc, row)
 				if err != nil {
 					return err
 				}
@@ -127,7 +140,10 @@ func decide(row db.LockIdempotencyRecordRow, hash []byte, now time.Time) (app.Ou
 	return 0, fmt.Errorf("idempotency record in unknown state %q", row.State)
 }
 
-func storedFrom(row db.LockIdempotencyRecordRow) (app.StoredResponse, error) {
+// storedFrom decodes a completed row. A body that does not open (another
+// record's, or a retired key) is an error: replaying it is impossible and
+// running the request again could repeat its effect.
+func (s *IdempotencyStore) storedFrom(sc app.IdempotencyScope, row db.LockIdempotencyRecordRow) (app.StoredResponse, error) {
 	if !row.ResponseStatus.Valid {
 		return app.StoredResponse{}, errors.New("completed idempotency record without a status")
 	}
@@ -140,8 +156,15 @@ func storedFrom(row db.LockIdempotencyRecordRow) (app.StoredResponse, error) {
 	if len(st.Header) == 0 {
 		st.Header = nil
 	}
-	if len(row.ResponseBody) > 0 {
-		st.Body = row.ResponseBody
+	body, err := s.box.Open(row.ResponseBody, bodyAAD(sc))
+	if err != nil {
+		return app.StoredResponse{}, fmt.Errorf("open stored body: %w", err)
+	}
+	if len(body) > 0 {
+		st.Body = body
+	}
+	if row.ResourceID.Valid {
+		st.ResourceID = row.ResourceID.String
 	}
 	return st, nil
 }
@@ -156,15 +179,16 @@ func (s *IdempotencyStore) Complete(ctx context.Context, sc app.IdempotencyScope
 	if err != nil {
 		return fmt.Errorf("encode stored headers: %w", err)
 	}
-	body := resp.Body
-	if body == nil {
-		body = []byte{}
+	body, err := s.box.Seal(resp.Body, bodyAAD(sc))
+	if err != nil {
+		return fmt.Errorf("seal stored body: %w", err)
 	}
 	lease = lease.UTC()
 	n, err := s.q.CompleteIdempotencyRecord(ctx, db.CompleteIdempotencyRecordParams{
 		ResponseStatus:  pgtype.Int4{Int32: int32(resp.Status), Valid: true}, //nolint:gosec // HTTP status, 100–599
 		ResponseHeaders: h, ResponseBody: body,
-		TenantID: sc.TenantID, Environment: string(sc.Env), IdemKey: sc.Key, Lease: &lease,
+		ResourceID: pgtype.Text{String: resp.ResourceID, Valid: resp.ResourceID != ""},
+		TenantID:   sc.TenantID, Environment: string(sc.Env), IdemKey: sc.Key, Lease: &lease,
 	})
 	if err != nil {
 		return fmt.Errorf("complete idempotency record: %w", err)
@@ -188,6 +212,19 @@ func (s *IdempotencyStore) Abandon(ctx context.Context, sc app.IdempotencyScope,
 		return app.ErrIdempotencyLeaseLost
 	}
 	return nil
+}
+
+// PurgeResource deletes the records of tenantID and env that belong to
+// resourceID.
+func (s *IdempotencyStore) PurgeResource(ctx context.Context, tenantID string, env domain.Environment, resourceID string) (int64, error) {
+	n, err := s.q.DeleteIdempotencyRecordsForResource(ctx, db.DeleteIdempotencyRecordsForResourceParams{
+		TenantID: tenantID, Environment: string(env),
+		ResourceID: pgtype.Text{String: resourceID, Valid: true},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("purge idempotency records: %w", err)
+	}
+	return n, nil
 }
 
 // DeleteExpired deletes up to limit records whose expires_at is before before.

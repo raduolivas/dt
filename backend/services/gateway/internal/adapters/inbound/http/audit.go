@@ -132,11 +132,20 @@ func (a *auditTarget) get() string {
 	return a.target
 }
 
+// resourceKey holds the *auditTarget the Idempotency hook reads to name the
+// resource a stored response belongs to.
+type resourceKey struct{}
+
 // SetAuditTarget makes the audit entry of r name target instead of the
-// route's path value. Create routes use it to record the id they just made.
-// It does nothing when r is not audited (a GET, or no Audit hook mounted).
+// route's path value, and names target as the resource of r's idempotency
+// record (so erasing it purges the record). Create routes use it to record
+// the id they just made. It does nothing when r is neither audited nor
+// idempotent (a GET, or no hook mounted).
 func SetAuditTarget(r *http.Request, target string) {
 	if h, ok := r.Context().Value(auditTargetKey{}).(*auditTarget); ok {
+		h.put(target)
+	}
+	if h, ok := r.Context().Value(resourceKey{}).(*auditTarget); ok {
 		h.put(target)
 	}
 }

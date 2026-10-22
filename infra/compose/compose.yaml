@@ -86,6 +86,11 @@ services:
       DELIVERIES_RPC_URL: "http://deliveries:8081"
       # Dev-only placeholder, never a real secret: the same value as deliveries'.
       INTERNAL_RPC_TOKEN: "dev-only-not-a-secret-internal-token-0000"
+      # Dev-only placeholder, never a real secret: seals stored idempotency
+      # responses. The gateway's own key (id "gw1"), base64 of
+      # "dev-only-not-a-secret-gateway-k0"; not shared with deliveries.
+      DATA_KEYS: "gw1:ZGV2LW9ubHktbm90LWEtc2VjcmV0LWdhdGV3YXktazA=" # gitleaks:allow (dev-only placeholder)
+      DATA_KEY_CURRENT: "gw1"
     ports:
       - "127.0.0.1:8080:8080"
 

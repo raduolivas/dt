@@ -22,6 +22,7 @@ import (
 	"github.com/raduolivas/dt/backend/pkg/bootstrap"
 	"github.com/raduolivas/dt/backend/pkg/outbox"
 	"github.com/raduolivas/dt/backend/pkg/rpcauth"
+	"github.com/raduolivas/dt/backend/pkg/sealbox"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/adapters/inbound/consumer"
 	httpapi "github.com/raduolivas/dt/backend/services/gateway/internal/adapters/inbound/http"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/adapters/outbound/keyhash"
@@ -54,6 +55,12 @@ func run(ctx context.Context, ready func(addr string)) error {
 		return fmt.Errorf("gateway: config: %w", err)
 	}
 
+	// Seals stored idempotency responses, which can carry personal data.
+	box, err := sealbox.ParseKeys(os.Getenv("DATA_KEYS"), os.Getenv("DATA_KEY_CURRENT"))
+	if err != nil {
+		return fmt.Errorf("gateway: config: DATA_KEYS/DATA_KEY_CURRENT: %w", err)
+	}
+
 	deliveries, err := newDeliveriesClient(os.Getenv("DELIVERIES_RPC_URL"), os.Getenv("INTERNAL_RPC_TOKEN"))
 	if err != nil {
 		return fmt.Errorf("gateway: config: %w", err)
@@ -73,10 +80,10 @@ func run(ctx context.Context, ready func(addr string)) error {
 			clock := systemClock{}
 			keys := postgres.New(d.DB)
 			limiter := redislimit.NewLimiter(d.Redis)
-			idem := postgres.NewIdempotencyStore(d.DB)
+			idem := postgres.NewIdempotencyStore(d.DB, box)
 			audit := postgres.NewAuditStore(d.DB)
 
-			httpapi.Mount(mux, httpapi.Routes(httpapi.Deps{Deliveries: deliveries, Log: d.Log}), httpapi.Middleware{
+			httpapi.Mount(mux, httpapi.Routes(httpapi.Deps{Deliveries: deliveries, Idempotency: idem, Log: d.Log}), httpapi.Middleware{
 				Auth:           &app.Authenticator{Keys: keys, Hasher: keyhash.New(pepper), Clock: clock},
 				TrustedProxies: trusted,
 				Log:            d.Log,
