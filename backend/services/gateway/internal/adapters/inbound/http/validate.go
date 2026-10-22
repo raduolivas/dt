@@ -46,6 +46,9 @@ func Validate(spec *openapi3.T, log *slog.Logger) func(http.Handler) http.Handle
 		Options: openapi3filter.Options{
 			AuthenticationFunc: openapi3filter.NoopAuthenticationFunc,
 			MultiError:         true,
+			// JSON Schema 2020-12 keywords such as propertyNames (the
+			// metadata key rule) are enforced, not ignored.
+			SchemaValidationOptions: []openapi3.SchemaValidationOption{openapi3.EnableJSONSchema2020()},
 		},
 		ErrorHandlerWithOpts: func(ctx context.Context, err error, w http.ResponseWriter, r *http.Request, opts nethttpmiddleware.ErrorHandlerOpts) {
 			if opts.MatchedRoute == nil || opts.StatusCode >= http.StatusInternalServerError {

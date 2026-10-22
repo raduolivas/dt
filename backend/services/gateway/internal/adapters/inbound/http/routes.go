@@ -8,6 +8,7 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 
+	"github.com/raduolivas/dt/backend/gen/dt/deliveries/v1/deliveriesv1connect"
 	"github.com/raduolivas/dt/backend/pkg/httpx"
 	"github.com/raduolivas/dt/backend/services/gateway/api"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/domain"
@@ -32,24 +33,50 @@ type Route struct {
 	Credentials []domain.CredentialType
 	Scope       domain.Scope // "" = any valid credential
 	Env         EnvRule
-	Handler     http.Handler
+	// SuccessStatus is the status a fully authorized, valid request gets (the
+	// authorization matrix expects it). Upsert routes that can answer two
+	// statuses name the usual one.
+	SuccessStatus int
+	Handler       http.Handler
 }
 
-// Deps are what the route handlers need. M1's only route needs nothing; M2
-// adds the deliveries client.
-type Deps struct{}
+// Deps are what the route handlers need.
+type Deps struct {
+	// Deliveries is the deliveries internal RPC client.
+	Deliveries deliveriesv1connect.DeliveriesServiceClient
+	// Log receives failures of the deliveries calls. Nil means slog.Default().
+	Log *slog.Logger
+}
 
 // Routes is the public route table.
-func Routes(_ Deps) []Route {
-	return []Route{{
-		Name:        "me.get",
-		Method:      http.MethodGet,
-		Pattern:     "/v1/me",
-		Credentials: []domain.CredentialType{domain.CredentialSecretKey},
-		Scope:       "",
-		Env:         AnyEnv,
-		Handler:     http.HandlerFunc(getMe),
-	}}
+func Routes(deps Deps) []Route {
+	log := deps.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	d := &deliveriesAPI{c: deps.Deliveries, log: log}
+	secret := []domain.CredentialType{domain.CredentialSecretKey}
+	route := func(name, method, pattern string, scope domain.Scope, status int, h http.HandlerFunc) Route {
+		return Route{Name: name, Method: method, Pattern: pattern, Credentials: secret, Scope: scope,
+			Env: AnyEnv, SuccessStatus: status, Handler: h}
+	}
+	const (
+		read     = domain.ScopeDeliveriesRead
+		write    = domain.ScopeDeliveriesWrite
+		couriers = domain.ScopeCouriersWrite
+	)
+	return []Route{
+		route("me.get", http.MethodGet, "/v1/me", "", http.StatusOK, getMe),
+		route("deliveries.create", http.MethodPost, "/v1/deliveries", write, http.StatusCreated, d.create),
+		route("deliveries.list", http.MethodGet, "/v1/deliveries", read, http.StatusOK, d.list),
+		route("deliveries.get", http.MethodGet, "/v1/deliveries/{id}", read, http.StatusOK, d.get),
+		route("deliveries.update", http.MethodPatch, "/v1/deliveries/{id}", write, http.StatusOK, d.update),
+		route("deliveries.assign", http.MethodPost, "/v1/deliveries/{id}/assignment", write, http.StatusOK, d.assign),
+		route("deliveries.report_event", http.MethodPost, "/v1/deliveries/{id}/events", write, http.StatusOK, d.reportEvent),
+		route("deliveries.cancel", http.MethodPost, "/v1/deliveries/{id}/cancel", write, http.StatusOK, d.cancel),
+		route("deliveries.erase_personal_data", http.MethodDelete, "/v1/deliveries/{id}/personal-data", write, http.StatusOK, d.erasePersonalData),
+		route("couriers.upsert", http.MethodPut, "/v1/couriers/{external_id}", couriers, http.StatusOK, d.upsertCourier),
+	}
 }
 
 // Authenticator resolves a raw secret key used from ip to a principal; it is

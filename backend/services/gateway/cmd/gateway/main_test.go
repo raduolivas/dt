@@ -23,6 +23,8 @@ import (
 	"github.com/raduolivas/dt/backend/pkg/testkit"
 )
 
+const testRPCToken = "test-only-internal-rpc-token-0123456789"
+
 var testPepper = []byte("test-only-pepper-0123456789abcdef")
 
 func TestRunRefusesBadConfigBeforeIO(t *testing.T) {
@@ -32,8 +34,18 @@ func TestRunRefusesBadConfigBeforeIO(t *testing.T) {
 		{"missing pepper", "", "", "APIKEY_PEPPER"},
 		{"short pepper", base64.StdEncoding.EncodeToString([]byte("short-pepper-value")), "", "APIKEY_PEPPER"},
 		{"bad proxies", base64.StdEncoding.EncodeToString(testPepper), "10.0.0.7", "TRUSTED_PROXIES"},
+		{"missing rpc url", base64.StdEncoding.EncodeToString(testPepper), "", "DELIVERIES_RPC_URL"},
+		{"short rpc token", base64.StdEncoding.EncodeToString(testPepper), "", "INTERNAL_RPC_TOKEN"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("DELIVERIES_RPC_URL", "http://deliveries:8081")
+			t.Setenv("INTERNAL_RPC_TOKEN", testRPCToken)
+			switch tc.name {
+			case "missing rpc url":
+				t.Setenv("DELIVERIES_RPC_URL", "")
+			case "short rpc token":
+				t.Setenv("INTERNAL_RPC_TOKEN", "short")
+			}
 			t.Setenv("APIKEY_PEPPER", tc.pepper)
 			t.Setenv("TRUSTED_PROXIES", tc.proxies)
 			t.Setenv("DATABASE_URL", "")
@@ -63,6 +75,8 @@ func startGateway(t *testing.T, redisURL string) (string, string, context.Contex
 	t.Setenv("NATS_URL", natsURL)
 	t.Setenv("APIKEY_PEPPER", base64.StdEncoding.EncodeToString(testPepper))
 	t.Setenv("TRUSTED_PROXIES", "")
+	t.Setenv("DELIVERIES_RPC_URL", "http://127.0.0.1:1") // never called here
+	t.Setenv("INTERNAL_RPC_TOKEN", testRPCToken)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	addr := make(chan string, 1)

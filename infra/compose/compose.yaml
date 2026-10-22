@@ -67,6 +67,8 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
+      deliveries:
+        condition: service_started
     build:
       context: ../../backend
       args:
@@ -81,6 +83,9 @@ services:
       APIKEY_PEPPER: "ZGV2LW9ubHktbm90LWEtc2VjcmV0LXBlcHBlci0wMDAwMDAwMDAwMDA=" # gitleaks:allow (dev-only placeholder)
       # CIDRs of proxies whose X-Forwarded-For hops count; empty: none.
       TRUSTED_PROXIES: ""
+      DELIVERIES_RPC_URL: "http://deliveries:8081"
+      # Dev-only placeholder, never a real secret: the same value as deliveries'.
+      INTERNAL_RPC_TOKEN: "dev-only-not-a-secret-internal-token-0000"
     ports:
       - "127.0.0.1:8080:8080"
 
