@@ -3,7 +3,6 @@ package app_test
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"testing"
 	"time"
@@ -15,7 +14,7 @@ func TestSweeperWarnsOnceWhenDue(t *testing.T) {
 	r := newFakeRepo()
 	r.due = []app.PickupWatch{{DeliveryID: "del_1"}, {DeliveryID: "del_2"}, {DeliveryID: "del_3"}}
 	r.warnErrs["del_2"] = errors.New("boom")
-	sw := &app.PickupSweeper{Repo: r, Clock: &fakeClock{now: t0}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	sw := &app.PickupSweeper{Repo: r, Clock: &fakeClock{now: t0}, Log: slog.New(slog.DiscardHandler)}
 
 	sw.Sweep(context.Background())
 
