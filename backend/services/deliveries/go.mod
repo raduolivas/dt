@@ -2,7 +2,10 @@ module github.com/raduolivas/dt/backend/services/deliveries
 
 go 1.27.3
 
-require github.com/raduolivas/dt/backend/pkg v0.0.0
+require (
+	github.com/raduolivas/dt/backend/pkg v0.0.0
+	pgregory.net/rapid v1.3.0
+)
 
 require (
 	github.com/caarlos0/env/v11 v11.4.1 // indirect
