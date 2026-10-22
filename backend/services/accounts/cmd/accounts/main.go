@@ -16,6 +16,7 @@ import (
 	"github.com/raduolivas/dt/backend/pkg/apikey"
 	"github.com/raduolivas/dt/backend/pkg/bootstrap"
 	"github.com/raduolivas/dt/backend/pkg/outbox"
+	"github.com/raduolivas/dt/backend/pkg/rpcauth"
 	"github.com/raduolivas/dt/backend/services/accounts/internal/adapters/inbound/rpc"
 	"github.com/raduolivas/dt/backend/services/accounts/internal/adapters/outbound/keygen"
 	"github.com/raduolivas/dt/backend/services/accounts/internal/adapters/outbound/postgres"
@@ -39,7 +40,7 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("accounts: config: APIKEY_PEPPER: %w", err)
 	}
 	token := os.Getenv("INTERNAL_RPC_TOKEN")
-	if len(token) < rpc.MinTokenLen {
+	if len(token) < rpcauth.MinTokenLen {
 		return errors.New("accounts: config: INTERNAL_RPC_TOKEN must be at least 32 bytes")
 	}
 

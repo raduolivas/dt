@@ -120,11 +120,12 @@ func ValidIdempotencyKey(k string) bool {
 	return true
 }
 
-// IdempotencyRequestHash is SHA-256(method + "\n" + path + "\n" + body): the
-// fingerprint that tells a replay from a key reused for another request.
-func IdempotencyRequestHash(method, path string, body []byte) []byte {
+// IdempotencyRequestHash is SHA-256(method + "\n" + path + "\n" + rawQuery +
+// "\n" + body): the fingerprint that tells a replay from a key reused for
+// another request.
+func IdempotencyRequestHash(method, path, rawQuery string, body []byte) []byte {
 	h := sha256.New()
-	h.Write([]byte(method + "\n" + path + "\n"))
+	h.Write([]byte(method + "\n" + path + "\n" + rawQuery + "\n"))
 	h.Write(body)
 	return h.Sum(nil)
 }

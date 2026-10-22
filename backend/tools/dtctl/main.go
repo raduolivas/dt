@@ -30,6 +30,7 @@ import (
 	accountsv1 "github.com/raduolivas/dt/backend/gen/dt/accounts/v1"
 	"github.com/raduolivas/dt/backend/gen/dt/accounts/v1/accountsv1connect"
 	eventsv1 "github.com/raduolivas/dt/backend/gen/dt/events/v1"
+	"github.com/raduolivas/dt/backend/pkg/rpcauth"
 )
 
 const usage = `usage:
@@ -140,7 +141,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	ctx, info := connect.NewClientContext(ctx)
 	err = call(ctx, c, cmd, stdout, stderr, name, tenant, key, environment, enabled, scopes, allowIPs)
 	if err != nil {
-		return rpcError{err: err, dtCode: info.ResponseTrailer().Get("dt-code")}
+		return rpcError{err: err, dtCode: rpcauth.CodeFrom(info)}
 	}
 	return nil
 }

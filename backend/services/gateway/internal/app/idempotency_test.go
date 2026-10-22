@@ -44,19 +44,33 @@ func TestValidIdempotencyKey(t *testing.T) {
 func TestIdempotencyRequestHash(t *testing.T) {
 	t.Parallel()
 	body := []byte(`{"a":1}`)
-	want := sha256.Sum256([]byte("POST\n/v1/things\n" + `{"a":1}`))
-	got := app.IdempotencyRequestHash("POST", "/v1/things", body)
+	want := sha256.Sum256([]byte("POST\n/v1/things\n\n" + `{"a":1}`))
+	got := app.IdempotencyRequestHash("POST", "/v1/things", "", body)
 	if !bytes.Equal(got, want[:]) {
 		t.Fatalf("hash = %x, want %x", got, want)
 	}
 	for name, other := range map[string][]byte{
-		"method": app.IdempotencyRequestHash("PUT", "/v1/things", body),
-		"path":   app.IdempotencyRequestHash("POST", "/v1/other", body),
-		"body":   app.IdempotencyRequestHash("POST", "/v1/things", []byte(`{"a":2}`)),
+		"method": app.IdempotencyRequestHash("PUT", "/v1/things", "", body),
+		"path":   app.IdempotencyRequestHash("POST", "/v1/other", "", body),
+		"body":   app.IdempotencyRequestHash("POST", "/v1/things", "", []byte(`{"a":2}`)),
 	} {
 		if bytes.Equal(got, other) {
 			t.Errorf("hash ignores the %s", name)
 		}
+	}
+}
+
+func TestRequestHashIncludesQuery(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"a":1}`)
+	a1 := app.IdempotencyRequestHash("POST", "/v1/things", "a=1", body)
+	a2 := app.IdempotencyRequestHash("POST", "/v1/things", "a=2", body)
+	if bytes.Equal(a1, a2) {
+		t.Error("hash ignores the query")
+	}
+	if !bytes.Equal(app.IdempotencyRequestHash("POST", "/v1/things", "", body),
+		app.IdempotencyRequestHash("POST", "/v1/things", "", body)) {
+		t.Error("equal requests hash differently")
 	}
 }
 

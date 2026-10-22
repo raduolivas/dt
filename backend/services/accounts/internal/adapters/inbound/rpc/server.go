@@ -17,6 +17,7 @@ import (
 	accountsv1 "github.com/raduolivas/dt/backend/gen/dt/accounts/v1"
 	"github.com/raduolivas/dt/backend/gen/dt/accounts/v1/accountsv1connect"
 	eventsv1 "github.com/raduolivas/dt/backend/gen/dt/events/v1"
+	"github.com/raduolivas/dt/backend/pkg/rpcauth"
 	"github.com/raduolivas/dt/backend/services/accounts/internal/app"
 	"github.com/raduolivas/dt/backend/services/accounts/internal/domain"
 )
@@ -29,7 +30,7 @@ func Mount(mux *http.ServeMux, svc *app.Service, token string, log *slog.Logger)
 	if svc == nil || log == nil {
 		return errors.New("rpc: service and logger are required")
 	}
-	auth, err := NewAuthInterceptor(token)
+	auth, err := rpcauth.NewServerInterceptor(token)
 	if err != nil {
 		return err
 	}

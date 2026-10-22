@@ -80,7 +80,7 @@ func Idempotency(store app.IdempotencyStore, clock app.Clock, log *slog.Logger) 
 			r.Body = io.NopCloser(bytes.NewReader(body))
 
 			scope := app.IdempotencyScope{TenantID: p.TenantID, Env: p.Env, Key: values[0]}
-			hash := app.IdempotencyRequestHash(r.Method, r.URL.Path, body)
+			hash := app.IdempotencyRequestHash(r.Method, r.URL.Path, r.URL.RawQuery, body)
 			out, err := store.Begin(r.Context(), scope, hash, clock.Now())
 			if err != nil {
 				idempotencyUnavailable(log, w, r, err)
