@@ -86,6 +86,11 @@ services:
 
   deliveries:
     <<: *service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
     build:
       context: ../../backend
       args:
@@ -94,6 +99,12 @@ services:
       PORT: "8081"
       LOG_LEVEL: info
       DATABASE_URL: "postgres://svc_deliveries:svc_deliveries@postgres:5432/dt?sslmode=disable"
+      NATS_URL: "nats://nats:4222"
+      # Dev-only placeholders, never real secrets. DATA_KEYS holds one key
+      # (id "dev1") that is base64 of "dev-only-not-a-secret-data-key-0".
+      INTERNAL_RPC_TOKEN: "dev-only-not-a-secret-internal-token-0000"
+      DATA_KEYS: "dev1:ZGV2LW9ubHktbm90LWEtc2VjcmV0LWRhdGEta2V5LTA=" # gitleaks:allow (dev-only placeholder)
+      DATA_KEY_CURRENT: "dev1"
     ports:
       - "127.0.0.1:8081:8081"
 
