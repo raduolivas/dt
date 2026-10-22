@@ -72,7 +72,7 @@ Public routes on the gateway (`/v1`, secret key, every POST needs an `Idempotenc
 | `PATCH /v1/deliveries/{id}` | `deliveries:write` | Change dropoff, dropoff label, notes or metadata (the dropoff location only before pickup) |
 | `POST /v1/deliveries/{id}/assignment` | `deliveries:write` | Assign a courier by `cou_` id |
 | `POST /v1/deliveries/{id}/events` | `deliveries:write` | Report progress (`event_id` makes it idempotent); returns `{outcome, delivery}` |
-| `POST /v1/deliveries/{id}/cancel` | `deliveries:write` | Cancel a delivery that is not final |
+| `POST /v1/deliveries/{id}/cancel` | `deliveries:write` | Cancel a delivery before pickup (`picked_up` or later: `409 invalid_transition`) |
 | `DELETE /v1/deliveries/{id}/personal-data` | `deliveries:write` | Erase personal data of a final delivery |
 
 Delivery settings per tenant (allowed models, default model, pickup confirmation rule) are set with `dtctl`.
@@ -80,8 +80,11 @@ Note that `--default` must be one of the `--models`:
 
 ```bash
 backend/bin/dtctl tenant settings --tenant "$T" --models direct,end_to_end --default direct --pickup any
-backend/bin/dtctl tenant settings --tenant "$T" --models end_to_end --default end_to_end --pickup courier_and_store
+backend/bin/dtctl tenant settings --tenant "$T" --models end_to_end --default end_to_end --pickup store
 ```
+
+`--pickup courier` and `--pickup courier_and_store` need a courier's own confirmation (`by: courier`), which only
+the courier endpoints (M5) can send; until then, deliveries under those rules cannot get past pickup.
 
 Until a tenant's settings reach `deliveries` (through NATS), the defaults apply: both models, `direct`, `any`.
 The `deliveries` service also needs `DATA_KEYS` (`id:base64,...`, 32-byte keys) and `DATA_KEY_CURRENT` to

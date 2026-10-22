@@ -1,7 +1,7 @@
 # DT: Open Questions
 
 > Standalone file for sharing with another AI or a person. It's self-contained, so it can be read without the other files.
-> **Last updated:** 2026-10-22 (OQ16–OQ18 added after M2; OQ14 tech part and OQ15 answered 2026-10-20) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+> **Last updated:** 2026-10-22 (OQ16–OQ22 added after M2, OQ19–OQ22 from the final review, to settle before M3; OQ14 tech part and OQ15 answered 2026-10-20) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
 ## Context in 30 seconds
 
@@ -37,6 +37,18 @@ The OpenAPI `lat`/`lng` fields lack `format: double`, so the generated Go models
 
 ### OQ18. A courier repeating its own state right after a partner override *(M2, behavior)*
 If a courier reports the same state it already reported, right after a partner override changed the delivery, today the report is rejected with `409 invalid_transition`. Should it be logged as `conflict` (200, recorded and ignored) instead, like other courier reports that lose to the partner?
+
+### OQ19. Order of delivery events on the stream *(M2 review, pre-M3)*
+The outbox relay publishes in `created_at` order, which is the start time of the transaction that wrote the event. Two changes to the same delivery are serialized by a row lock, but the one whose transaction started first can commit second, so `delivery.status_changed` events can reach NATS out of logical order. Before tracking and webhooks consume them: add a per-delivery sequence (or version) to the delivery event payloads, or document that consumers order by it.
+
+### OQ20. The `reason` text of history entries *(M2 review, pre-M3)*
+`reason` (cancel and event reports) is partner free text. It is stored in clear in the delivery history, carried in `delivery.status_changed` events and not cleared by the personal-data erasure. Decide: seal it and clear it on erasure, or document in the API that `reason` must not contain personal data.
+
+### OQ21. History size *(M2 review, pre-M3)*
+A delivery's history grows without bound: every `stale` or recorded report with a fresh `event_id` adds a row, and List and every change load the full history. Consider a cap on recorded reports per delivery, or a projection that keeps only what the domain needs.
+
+### OQ22. Who defines the `ACCOUNTS` stream *(M2 review, pre-M3)*
+`deliveries` calls `EnsureStream(ACCOUNTS)` to consume `tenant.settings_set`, so two services define the same stream's configuration. Only the owner (`accounts`) should define it, with consumers waiting for it to exist, or the configuration must be shared strictly from one place.
 
 ---
 
