@@ -1,7 +1,7 @@
 # DT: Open Questions
 
 > Standalone file for sharing with another AI or a person. It's self-contained, so it can be read without the other files.
-> **Last updated:** 2026-10-21 (no change since 2026-10-20, when the OQ14 tech part and OQ15 were answered) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+> **Last updated:** 2026-10-22 (OQ16–OQ18 added after M2; OQ14 tech part and OQ15 answered 2026-10-20) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
 ## Context in 30 seconds
 
@@ -21,6 +21,15 @@
 ### OQ14. Spec review items *(from the MVP spec §17; tech part answered 2026-10-20, see R20)*
 - **Cloud provider (EU region)** for staging/production, needed before milestone M3. Candidates: GCP `europe-west4` (Netherlands), AWS `eu-central-1`/`eu-west-1`, Scaleway/OVH (EU-owned).
 - **Product name and domain.**
+
+### OQ16. Who owns the deliveries tables? *(M2, security)*
+Row-level security on the deliveries tables is enabled and forced, but each service runs its migrations as its own role, which therefore owns the tables and can switch `FORCE ROW LEVEL SECURITY` off. Consider a separate migration/owner role that only the deploy pipeline uses, so the runtime role cannot weaken its own protection. Decide before the first staging deploy.
+
+### OQ17. Latitude and longitude format in the OpenAPI contract *(M2, contract)*
+The OpenAPI `lat`/`lng` fields lack `format: double`, so the generated Go models use `float32`. The gateway therefore uses its own `float64` wire structs for coordinates. Should the contract declare `format: double` (a contract change that regenerates the models and the TypeScript types)?
+
+### OQ18. A courier repeating its own state right after a partner override *(M2, behavior)*
+If a courier reports the same state it already reported, right after a partner override changed the delivery, today the report is rejected with `409 invalid_transition`. Should it be logged as `conflict` (200, recorded and ignored) instead, like other courier reports that lose to the partner?
 
 ### OQ12. Plans and pricing *(new, business)*
 Two plans exist: **Direct** and **End-to-end**. Still to define:
