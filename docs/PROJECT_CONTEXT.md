@@ -1,10 +1,10 @@
 # DT (Delivery Tracker): Project Context
 
 > Portable state file. It works without any AI-specific memory. Share it with any assistant or person to pick up where we left off.
-> **Last updated:** 2026-10-21
+> **Last updated:** 2026-10-22
 > **Open questions (shareable on their own):** [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md)
 > **MVP spec:** [`superpowers/specs/2026-10-18-dt-mvp-design.md`](superpowers/specs/2026-10-18-dt-mvp-design.md) (approved 2026-10-19)
-> **Current plan:** M1 accounts + gateway: [`superpowers/plans/2026-10-20-m1-accounts-gateway.md`](superpowers/plans/2026-10-20-m1-accounts-gateway.md) (merged 2026-10-21, PR #8). Next: M2 deliveries, brainstorming in progress on branch `m2-deliveries`. Previous: [`superpowers/plans/2026-10-19-m0-foundations.md`](superpowers/plans/2026-10-19-m0-foundations.md) (M0, merged 2026-10-20)
+> **Current plan:** M2 deliveries: [`superpowers/plans/2026-10-22-m2-deliveries.md`](superpowers/plans/2026-10-22-m2-deliveries.md) (11 tasks, decisions C1–C12 made by Claude at the owner's request; awaiting owner review + execution choice). Previous: M1 [`superpowers/plans/2026-10-20-m1-accounts-gateway.md`](superpowers/plans/2026-10-20-m1-accounts-gateway.md) (merged 2026-10-21, PR #8). Previous: [`superpowers/plans/2026-10-19-m0-foundations.md`](superpowers/plans/2026-10-19-m0-foundations.md) (M0, merged 2026-10-20)
 > **Architecture draft:** [`ARCHITECTURE.md`](ARCHITECTURE.md) (v0.1, under review)
 
 ## 1. What DT is
