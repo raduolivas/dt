@@ -24,6 +24,184 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List deliveries
+         * @description Lists deliveries newest first by id. Page with `starting_after`. Requires scope `deliveries:read`.
+         */
+        get: operations["listDeliveries"];
+        put?: never;
+        /**
+         * Create a delivery
+         * @description Creates a delivery in `confirmed` status. `external_id` is unique per tenant and environment. Requires scope `deliveries:write`. Problem codes: `validation_failed` (400), `external_id_conflict` (409, the external id is already used by another delivery), `model_not_allowed` (422, the tenant does not allow the requested model).
+         */
+        post: operations["createDelivery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/deliveries/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get a delivery
+         * @description Requires scope `deliveries:read`. A delivery of another tenant or environment is `404 not_found`.
+         */
+        get: operations["getDelivery"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update a delivery
+         * @description Changes the dropoff location, dropoff label, notes or metadata. Send `null` to clear `dropoff_label` or `notes` (the dropoff location cannot be cleared); a `metadata` value replaces the whole map and `null` clears it. Requires scope `deliveries:write`. Problem codes: `validation_failed` (400), `not_found` (404), `dropoff_locked` (409, the delivery is past pickup or final, so the dropoff location cannot change).
+         */
+        patch: operations["updateDelivery"];
+        trace?: never;
+    };
+    "/deliveries/{id}/assignment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Assign a courier
+         * @description Assigns an upserted courier to the delivery. Requires scope `deliveries:write`. Problem codes: `validation_failed` (400), `not_found` (404), `courier_not_found` (422, no such courier in this tenant and environment), `invalid_transition` (409, the delivery is final).
+         */
+        post: operations["assignCourier"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/deliveries/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report a delivery event
+         * @description Reports a progress event for a delivery. `event_id` makes the report idempotent. `outcome` says what happened: `applied` (state changed), `duplicate` (this `event_id` was seen), `stale` (older than the current state; ignored), `conflict` (contradicts a conflicting report within 60 seconds), `recorded` (stored without a state change, for example one confirmation toward a multi-party pickup policy). `occurred_at` may be at most 5 minutes after receipt; when absent it is the receipt time. Requires scope `deliveries:write`. Problem codes: `validation_failed` (400), `not_found` (404), `invalid_transition` (409).
+         */
+        post: operations["reportDeliveryEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/deliveries/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel a delivery
+         * @description Cancels a delivery that is not yet final. Requires scope `deliveries:write`. Problem codes: `not_found` (404), `invalid_transition` (409, the delivery is already final).
+         */
+        post: operations["cancelDelivery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/deliveries/{id}/personal-data": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Erase a delivery's personal data
+         * @description Irreversibly clears the customer first name, notes, dropoff label and metadata. Allowed only once the delivery is final. Requires scope `deliveries:write`. Problem codes: `not_found` (404), `delivery_active` (409, the delivery is not final yet).
+         */
+        delete: operations["erasePersonalData"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/couriers/{external_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Create or update a courier
+         * @description Creates the courier, or updates it when `external_id` already exists. Returns 201 when created and 200 when updated. Requires scope `couriers:write`.
+         */
+        put: operations["upsertCourier"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -71,6 +249,177 @@ export interface components {
             detail?: string;
             request_id: string;
             errors?: components["schemas"]["FieldError"][];
+        };
+        /**
+         * @description `direct`: the partner reports progress. `end_to_end`: DT couriers report it.
+         * @enum {string}
+         */
+        DeliveryModel: "direct" | "end_to_end";
+        /**
+         * @description `delivered`, `cancelled` and `failed` are final.
+         * @enum {string}
+         */
+        DeliveryStatus: "confirmed" | "courier_assigned" | "at_pickup" | "picked_up" | "arriving" | "delivered" | "cancelled" | "failed";
+        /**
+         * @description Who must confirm the pickup. A delivery keeps the policy it was created with.
+         * @enum {string}
+         */
+        PickupPolicy: "any" | "courier" | "store" | "courier_and_store";
+        /** @enum {string} */
+        Vehicle: "bicycle" | "e_bike" | "scooter" | "car" | "on_foot";
+        /** @enum {string} */
+        DeliveryEventType: "at_pickup" | "pickup_confirmed" | "arriving" | "delivered" | "failed";
+        /** @enum {string} */
+        DeliveryEventOutcome: "applied" | "duplicate" | "stale" | "conflict" | "recorded";
+        /** @example del_01j9z3k8m2q4r6s8t0v2w4x6y8 */
+        DeliveryId: string;
+        /** @example cou_01j9z3k8m2q4r6s8t0v2w4x6y8 */
+        CourierId: string;
+        /**
+         * @description Your identifier (1 to 255 printable ASCII characters).
+         * @example order-1042
+         */
+        ExternalId: string;
+        /**
+         * @description Up to 50 string key/value pairs. Keys are 1 to 40 characters of `a-zA-Z0-9_`; values are at most 500 characters.
+         * @example {
+         *       "table": "12"
+         *     }
+         */
+        Metadata: {
+            [key: string]: string;
+        };
+        Pickup: {
+            location: components["schemas"]["LatLng"];
+            name: string;
+        };
+        Dropoff: {
+            location: components["schemas"]["LatLng"];
+            label?: string;
+        };
+        Customer: {
+            first_name?: string;
+        };
+        /** @description Pickup and dropoff must be at most 100 km apart. */
+        CreateDeliveryRequest: {
+            external_id: components["schemas"]["ExternalId"];
+            delivery_model?: components["schemas"]["DeliveryModel"];
+            pickup: components["schemas"]["Pickup"];
+            dropoff: components["schemas"]["Dropoff"];
+            customer?: components["schemas"]["Customer"];
+            items_summary?: string;
+            item_count?: number;
+            notes?: string;
+            metadata?: components["schemas"]["Metadata"];
+        };
+        /** @description Only the fields sent change. `null` clears `dropoff_label`, `notes` and `metadata`; the dropoff location cannot be cleared. */
+        UpdateDeliveryRequest: {
+            dropoff?: {
+                location: components["schemas"]["LatLng"];
+            };
+            dropoff_label?: string | null;
+            notes?: string | null;
+            /**
+             * @description Up to 50 string key/value pairs. Keys are 1 to 40 characters of `a-zA-Z0-9_`; values are at most 500 characters.
+             * @example {
+             *       "table": "12"
+             *     }
+             */
+            metadata?: {
+                [key: string]: string;
+            } | null;
+        };
+        AssignCourierRequest: {
+            courier_id: components["schemas"]["CourierId"];
+        };
+        ReportDeliveryEventRequest: {
+            /** @description Your id for this report; a repeat is reported as `duplicate`. */
+            event_id: string;
+            type: components["schemas"]["DeliveryEventType"];
+            /**
+             * Format: date-time
+             * @description When it happened. At most 5 minutes after receipt; defaults to receipt time.
+             */
+            occurred_at?: string;
+            /**
+             * @description Who confirms. Only meaningful for `pickup_confirmed`; defaults to `partner`.
+             * @enum {string}
+             */
+            by?: "partner" | "store";
+            reason?: string;
+        };
+        CancelDeliveryRequest: {
+            reason?: string;
+        };
+        UpsertCourierRequest: {
+            display_name: string;
+            vehicle: components["schemas"]["Vehicle"];
+            /** Format: uri */
+            photo_url?: string;
+        };
+        CourierRef: {
+            id: components["schemas"]["CourierId"];
+            external_id: components["schemas"]["ExternalId"];
+            display_name: string;
+            vehicle: components["schemas"]["Vehicle"];
+        };
+        Courier: {
+            id: components["schemas"]["CourierId"];
+            external_id: components["schemas"]["ExternalId"];
+            display_name: string;
+            vehicle: components["schemas"]["Vehicle"];
+            /** Format: uri */
+            photo_url: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        PickupConfirmation: {
+            /** @enum {string} */
+            by: "courier" | "store" | "partner";
+            /** Format: date-time */
+            at: string;
+        };
+        Delivery: {
+            id: components["schemas"]["DeliveryId"];
+            external_id: components["schemas"]["ExternalId"];
+            environment: components["schemas"]["Environment"];
+            delivery_model: components["schemas"]["DeliveryModel"];
+            status: components["schemas"]["DeliveryStatus"];
+            pickup: {
+                location: components["schemas"]["LatLng"];
+                name: string;
+            };
+            dropoff: {
+                location: components["schemas"]["LatLng"];
+                label: string | null;
+            };
+            customer: {
+                first_name: string | null;
+            };
+            items_summary: string | null;
+            item_count: number | null;
+            notes: string | null;
+            metadata: {
+                [key: string]: string;
+            };
+            courier: components["schemas"]["CourierRef"] | null;
+            pickup_policy: components["schemas"]["PickupPolicy"];
+            pickup_confirmations: components["schemas"]["PickupConfirmation"][];
+            personal_data_erased: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        DeliveryList: {
+            data: components["schemas"]["Delivery"][];
+            has_more: boolean;
+        };
+        DeliveryEventResult: {
+            outcome: components["schemas"]["DeliveryEventOutcome"];
+            delivery: components["schemas"]["Delivery"];
         };
     };
     responses: {
@@ -120,10 +469,42 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
+        /** @description The resource does not exist for this tenant and environment (`not_found`). Resources of other tenants or environments are never revealed. */
+        NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The request is invalid (`validation_failed`); `errors` lists each failing field. */
+        ValidationFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
     };
     parameters: {
         /** @description Client-chosen key that makes a POST safe to retry (1 to 255 printable ASCII characters). A retry with the same key and body replays the first response for 24 hours; a different body is refused. */
         IdempotencyKey: string;
+        /** @description Only deliveries in this status. */
+        DeliveryStatusFilter: components["schemas"]["DeliveryStatus"];
+        /** @description Only deliveries of this model. */
+        DeliveryModelFilter: components["schemas"]["DeliveryModel"];
+        /** @description Only deliveries created at or after this time. */
+        CreatedGte: string;
+        /** @description Only deliveries created before this time. */
+        CreatedLt: string;
+        /** @description Only the delivery with this external id. */
+        ExternalIdFilter: components["schemas"]["ExternalId"];
+        /** @description Page size. */
+        Limit: number;
+        /** @description Return deliveries after this id (the last id of the previous page). */
+        StartingAfter: components["schemas"]["DeliveryId"];
     };
     requestBodies: never;
     headers: never;
@@ -151,6 +532,406 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listDeliveries: {
+        parameters: {
+            query?: {
+                /** @description Only deliveries in this status. */
+                status?: components["parameters"]["DeliveryStatusFilter"];
+                /** @description Only deliveries of this model. */
+                delivery_model?: components["parameters"]["DeliveryModelFilter"];
+                /** @description Only deliveries created at or after this time. */
+                created_gte?: components["parameters"]["CreatedGte"];
+                /** @description Only deliveries created before this time. */
+                created_lt?: components["parameters"]["CreatedLt"];
+                /** @description Only the delivery with this external id. */
+                external_id?: components["parameters"]["ExternalIdFilter"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Return deliveries after this id (the last id of the previous page). */
+                starting_after?: components["parameters"]["StartingAfter"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of deliveries. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryList"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    createDelivery: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Client-chosen key that makes a POST safe to retry (1 to 255 printable ASCII characters). A retry with the same key and body replays the first response for 24 hours; a different body is refused. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateDeliveryRequest"];
+            };
+        };
+        responses: {
+            /** @description The created delivery. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Delivery"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description `external_id_conflict`: a delivery with this `external_id` already exists, or the Idempotency-Key was reused with a different request or is still in progress. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            413: components["responses"]["PayloadTooLarge"];
+            /** @description `model_not_allowed`: the tenant does not allow this `delivery_model`. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getDelivery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The delivery. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Delivery"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    updateDelivery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateDeliveryRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated delivery. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Delivery"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description `dropoff_locked`: the dropoff location can no longer change. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            413: components["responses"]["PayloadTooLarge"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    assignCourier: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Client-chosen key that makes a POST safe to retry (1 to 255 printable ASCII characters). A retry with the same key and body replays the first response for 24 hours; a different body is refused. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignCourierRequest"];
+            };
+        };
+        responses: {
+            /** @description The delivery with the courier assigned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Delivery"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description `invalid_transition`: the delivery cannot take a courier in its current status, or the Idempotency-Key was reused with a different request or is still in progress. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            413: components["responses"]["PayloadTooLarge"];
+            /** @description `courier_not_found`: no courier with this id exists for the tenant and environment. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    reportDeliveryEvent: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Client-chosen key that makes a POST safe to retry (1 to 255 printable ASCII characters). A retry with the same key and body replays the first response for 24 hours; a different body is refused. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportDeliveryEventRequest"];
+            };
+        };
+        responses: {
+            /** @description The outcome of the report and the delivery. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryEventResult"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description `invalid_transition`: the event is not allowed in the delivery's current status, or the Idempotency-Key was reused with a different request or is still in progress. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            413: components["responses"]["PayloadTooLarge"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    cancelDelivery: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Client-chosen key that makes a POST safe to retry (1 to 255 printable ASCII characters). A retry with the same key and body replays the first response for 24 hours; a different body is refused. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CancelDeliveryRequest"];
+            };
+        };
+        responses: {
+            /** @description The cancelled delivery. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Delivery"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description `invalid_transition`: the delivery is already final, or the Idempotency-Key was reused with a different request or is still in progress. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            413: components["responses"]["PayloadTooLarge"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    erasePersonalData: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The delivery with its personal data erased. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Delivery"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description `delivery_active`: the delivery is not final yet. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    upsertCourier: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Your id for the courier (1 to 255 printable ASCII characters).
+                 * @example driver-77
+                 */
+                external_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpsertCourierRequest"];
+            };
+        };
+        responses: {
+            /** @description The courier was updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Courier"];
+                };
+            };
+            /** @description The courier was created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Courier"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            413: components["responses"]["PayloadTooLarge"];
             429: components["responses"]["TooManyRequests"];
         };
     };

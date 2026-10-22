@@ -22,6 +22,8 @@ service AccountsService {
   rpc RevokeApiKey(RevokeApiKeyRequest) returns (RevokeApiKeyResponse);
   // ListApiKeys lists a tenant's keys in one environment.
   rpc ListApiKeys(ListApiKeysRequest) returns (ListApiKeysResponse);
+  // SetTenantSettings replaces a tenant's delivery settings.
+  rpc SetTenantSettings(SetTenantSettingsRequest) returns (SetTenantSettingsResponse);
 }
 
 // Actor is who performs a key action.
@@ -36,6 +38,15 @@ message Tenant {
   string name = 2;
   bool live_enabled = 3;
   google.protobuf.Timestamp created_at = 4;
+  TenantSettings settings = 5;
+}
+
+// TenantSettings are a tenant's delivery settings.
+message TenantSettings {
+  repeated string allowed_models = 1; // "direct" | "end_to_end"
+  string default_model = 2;
+  string pickup_confirmation = 3; // "any" | "courier" | "store" | "courier_and_store"
+  google.protobuf.Timestamp updated_at = 4;
 }
 
 // ApiKey is a key's metadata. It never carries the hash or the plaintext.
@@ -113,4 +124,16 @@ message ListApiKeysRequest {
 
 message ListApiKeysResponse {
   repeated ApiKey api_keys = 1;
+}
+
+message SetTenantSettingsRequest {
+  Actor actor = 1;
+  string tenant_id = 2;
+  repeated string allowed_models = 3;
+  string default_model = 4;
+  string pickup_confirmation = 5;
+}
+
+message SetTenantSettingsResponse {
+  TenantSettings settings = 1;
 }

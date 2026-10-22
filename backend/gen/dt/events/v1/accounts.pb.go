@@ -229,6 +229,83 @@ func (x *ApiKeyRevoked) GetRevokedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+// tenant.settings_set
+type TenantSettingsSet struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	TenantId           string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	AllowedModels      []string               `protobuf:"bytes,2,rep,name=allowed_models,json=allowedModels,proto3" json:"allowed_models,omitempty"`
+	DefaultModel       string                 `protobuf:"bytes,3,opt,name=default_model,json=defaultModel,proto3" json:"default_model,omitempty"`
+	PickupConfirmation string                 `protobuf:"bytes,4,opt,name=pickup_confirmation,json=pickupConfirmation,proto3" json:"pickup_confirmation,omitempty"`
+	UpdatedAt          *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *TenantSettingsSet) Reset() {
+	*x = TenantSettingsSet{}
+	mi := &file_dt_events_v1_accounts_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TenantSettingsSet) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TenantSettingsSet) ProtoMessage() {}
+
+func (x *TenantSettingsSet) ProtoReflect() protoreflect.Message {
+	mi := &file_dt_events_v1_accounts_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TenantSettingsSet.ProtoReflect.Descriptor instead.
+func (*TenantSettingsSet) Descriptor() ([]byte, []int) {
+	return file_dt_events_v1_accounts_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *TenantSettingsSet) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *TenantSettingsSet) GetAllowedModels() []string {
+	if x != nil {
+		return x.AllowedModels
+	}
+	return nil
+}
+
+func (x *TenantSettingsSet) GetDefaultModel() string {
+	if x != nil {
+		return x.DefaultModel
+	}
+	return ""
+}
+
+func (x *TenantSettingsSet) GetPickupConfirmation() string {
+	if x != nil {
+		return x.PickupConfirmation
+	}
+	return ""
+}
+
+func (x *TenantSettingsSet) GetUpdatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return nil
+}
+
 var File_dt_events_v1_accounts_proto protoreflect.FileDescriptor
 
 const file_dt_events_v1_accounts_proto_rawDesc = "" +
@@ -252,7 +329,14 @@ const file_dt_events_v1_accounts_proto_rawDesc = "" +
 	"\rApiKeyRevoked\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x129\n" +
 	"\n" +
-	"revoked_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\trevokedAtB\xaf\x01\n" +
+	"revoked_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\trevokedAt\"\xe8\x01\n" +
+	"\x11TenantSettingsSet\x12\x1b\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12%\n" +
+	"\x0eallowed_models\x18\x02 \x03(\tR\rallowedModels\x12#\n" +
+	"\rdefault_model\x18\x03 \x01(\tR\fdefaultModel\x12/\n" +
+	"\x13pickup_confirmation\x18\x04 \x01(\tR\x12pickupConfirmation\x129\n" +
+	"\n" +
+	"updated_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAtB\xaf\x01\n" +
 	"\x10com.dt.events.v1B\rAccountsProtoP\x01Z:github.com/raduolivas/dt/backend/gen/dt/events/v1;eventsv1\xa2\x02\x03DEX\xaa\x02\fDt.Events.V1\xca\x02\fDt\\Events\\V1\xe2\x02\x18Dt\\Events\\V1\\GPBMetadata\xea\x02\x0eDt::Events::V1b\x06proto3"
 
 var (
@@ -267,24 +351,26 @@ func file_dt_events_v1_accounts_proto_rawDescGZIP() []byte {
 	return file_dt_events_v1_accounts_proto_rawDescData
 }
 
-var file_dt_events_v1_accounts_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_dt_events_v1_accounts_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_dt_events_v1_accounts_proto_goTypes = []any{
 	(*ApiKeyCreated)(nil),         // 0: dt.events.v1.ApiKeyCreated
 	(*ApiKeyExpirySet)(nil),       // 1: dt.events.v1.ApiKeyExpirySet
 	(*ApiKeyRevoked)(nil),         // 2: dt.events.v1.ApiKeyRevoked
-	(Environment)(0),              // 3: dt.events.v1.Environment
-	(*timestamppb.Timestamp)(nil), // 4: google.protobuf.Timestamp
+	(*TenantSettingsSet)(nil),     // 3: dt.events.v1.TenantSettingsSet
+	(Environment)(0),              // 4: dt.events.v1.Environment
+	(*timestamppb.Timestamp)(nil), // 5: google.protobuf.Timestamp
 }
 var file_dt_events_v1_accounts_proto_depIdxs = []int32{
-	3, // 0: dt.events.v1.ApiKeyCreated.environment:type_name -> dt.events.v1.Environment
-	4, // 1: dt.events.v1.ApiKeyCreated.created_at:type_name -> google.protobuf.Timestamp
-	4, // 2: dt.events.v1.ApiKeyExpirySet.expires_at:type_name -> google.protobuf.Timestamp
-	4, // 3: dt.events.v1.ApiKeyRevoked.revoked_at:type_name -> google.protobuf.Timestamp
-	4, // [4:4] is the sub-list for method output_type
-	4, // [4:4] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	4, // 0: dt.events.v1.ApiKeyCreated.environment:type_name -> dt.events.v1.Environment
+	5, // 1: dt.events.v1.ApiKeyCreated.created_at:type_name -> google.protobuf.Timestamp
+	5, // 2: dt.events.v1.ApiKeyExpirySet.expires_at:type_name -> google.protobuf.Timestamp
+	5, // 3: dt.events.v1.ApiKeyRevoked.revoked_at:type_name -> google.protobuf.Timestamp
+	5, // 4: dt.events.v1.TenantSettingsSet.updated_at:type_name -> google.protobuf.Timestamp
+	5, // [5:5] is the sub-list for method output_type
+	5, // [5:5] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_dt_events_v1_accounts_proto_init() }
@@ -299,7 +385,7 @@ func file_dt_events_v1_accounts_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_dt_events_v1_accounts_proto_rawDesc), len(file_dt_events_v1_accounts_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

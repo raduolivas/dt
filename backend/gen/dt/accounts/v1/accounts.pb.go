@@ -90,6 +90,7 @@ type Tenant struct {
 	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	LiveEnabled   bool                   `protobuf:"varint,3,opt,name=live_enabled,json=liveEnabled,proto3" json:"live_enabled,omitempty"`
 	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Settings      *TenantSettings        `protobuf:"bytes,5,opt,name=settings,proto3" json:"settings,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -152,6 +153,82 @@ func (x *Tenant) GetCreatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Tenant) GetSettings() *TenantSettings {
+	if x != nil {
+		return x.Settings
+	}
+	return nil
+}
+
+// TenantSettings are a tenant's delivery settings.
+type TenantSettings struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	AllowedModels      []string               `protobuf:"bytes,1,rep,name=allowed_models,json=allowedModels,proto3" json:"allowed_models,omitempty"` // "direct" | "end_to_end"
+	DefaultModel       string                 `protobuf:"bytes,2,opt,name=default_model,json=defaultModel,proto3" json:"default_model,omitempty"`
+	PickupConfirmation string                 `protobuf:"bytes,3,opt,name=pickup_confirmation,json=pickupConfirmation,proto3" json:"pickup_confirmation,omitempty"` // "any" | "courier" | "store" | "courier_and_store"
+	UpdatedAt          *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *TenantSettings) Reset() {
+	*x = TenantSettings{}
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TenantSettings) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TenantSettings) ProtoMessage() {}
+
+func (x *TenantSettings) ProtoReflect() protoreflect.Message {
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TenantSettings.ProtoReflect.Descriptor instead.
+func (*TenantSettings) Descriptor() ([]byte, []int) {
+	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *TenantSettings) GetAllowedModels() []string {
+	if x != nil {
+		return x.AllowedModels
+	}
+	return nil
+}
+
+func (x *TenantSettings) GetDefaultModel() string {
+	if x != nil {
+		return x.DefaultModel
+	}
+	return ""
+}
+
+func (x *TenantSettings) GetPickupConfirmation() string {
+	if x != nil {
+		return x.PickupConfirmation
+	}
+	return ""
+}
+
+func (x *TenantSettings) GetUpdatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return nil
+}
+
 // ApiKey is a key's metadata. It never carries the hash or the plaintext.
 type ApiKey struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -171,7 +248,7 @@ type ApiKey struct {
 
 func (x *ApiKey) Reset() {
 	*x = ApiKey{}
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[2]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -183,7 +260,7 @@ func (x *ApiKey) String() string {
 func (*ApiKey) ProtoMessage() {}
 
 func (x *ApiKey) ProtoReflect() protoreflect.Message {
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[2]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -196,7 +273,7 @@ func (x *ApiKey) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApiKey.ProtoReflect.Descriptor instead.
 func (*ApiKey) Descriptor() ([]byte, []int) {
-	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{2}
+	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ApiKey) GetId() string {
@@ -278,7 +355,7 @@ type CreateTenantRequest struct {
 
 func (x *CreateTenantRequest) Reset() {
 	*x = CreateTenantRequest{}
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[3]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -290,7 +367,7 @@ func (x *CreateTenantRequest) String() string {
 func (*CreateTenantRequest) ProtoMessage() {}
 
 func (x *CreateTenantRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[3]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -303,7 +380,7 @@ func (x *CreateTenantRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTenantRequest.ProtoReflect.Descriptor instead.
 func (*CreateTenantRequest) Descriptor() ([]byte, []int) {
-	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{3}
+	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *CreateTenantRequest) GetName() string {
@@ -322,7 +399,7 @@ type CreateTenantResponse struct {
 
 func (x *CreateTenantResponse) Reset() {
 	*x = CreateTenantResponse{}
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[4]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -334,7 +411,7 @@ func (x *CreateTenantResponse) String() string {
 func (*CreateTenantResponse) ProtoMessage() {}
 
 func (x *CreateTenantResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[4]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -347,7 +424,7 @@ func (x *CreateTenantResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTenantResponse.ProtoReflect.Descriptor instead.
 func (*CreateTenantResponse) Descriptor() ([]byte, []int) {
-	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{4}
+	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *CreateTenantResponse) GetTenant() *Tenant {
@@ -367,7 +444,7 @@ type SetLiveEnabledRequest struct {
 
 func (x *SetLiveEnabledRequest) Reset() {
 	*x = SetLiveEnabledRequest{}
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[5]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -379,7 +456,7 @@ func (x *SetLiveEnabledRequest) String() string {
 func (*SetLiveEnabledRequest) ProtoMessage() {}
 
 func (x *SetLiveEnabledRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[5]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -392,7 +469,7 @@ func (x *SetLiveEnabledRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetLiveEnabledRequest.ProtoReflect.Descriptor instead.
 func (*SetLiveEnabledRequest) Descriptor() ([]byte, []int) {
-	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{5}
+	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *SetLiveEnabledRequest) GetTenantId() string {
@@ -417,7 +494,7 @@ type SetLiveEnabledResponse struct {
 
 func (x *SetLiveEnabledResponse) Reset() {
 	*x = SetLiveEnabledResponse{}
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[6]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -429,7 +506,7 @@ func (x *SetLiveEnabledResponse) String() string {
 func (*SetLiveEnabledResponse) ProtoMessage() {}
 
 func (x *SetLiveEnabledResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[6]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -442,7 +519,7 @@ func (x *SetLiveEnabledResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetLiveEnabledResponse.ProtoReflect.Descriptor instead.
 func (*SetLiveEnabledResponse) Descriptor() ([]byte, []int) {
-	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{6}
+	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{7}
 }
 
 type CreateApiKeyRequest struct {
@@ -459,7 +536,7 @@ type CreateApiKeyRequest struct {
 
 func (x *CreateApiKeyRequest) Reset() {
 	*x = CreateApiKeyRequest{}
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[7]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -471,7 +548,7 @@ func (x *CreateApiKeyRequest) String() string {
 func (*CreateApiKeyRequest) ProtoMessage() {}
 
 func (x *CreateApiKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[7]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -484,7 +561,7 @@ func (x *CreateApiKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateApiKeyRequest.ProtoReflect.Descriptor instead.
 func (*CreateApiKeyRequest) Descriptor() ([]byte, []int) {
-	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{7}
+	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *CreateApiKeyRequest) GetActor() *Actor {
@@ -540,7 +617,7 @@ type CreateApiKeyResponse struct {
 
 func (x *CreateApiKeyResponse) Reset() {
 	*x = CreateApiKeyResponse{}
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[8]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -552,7 +629,7 @@ func (x *CreateApiKeyResponse) String() string {
 func (*CreateApiKeyResponse) ProtoMessage() {}
 
 func (x *CreateApiKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[8]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -565,7 +642,7 @@ func (x *CreateApiKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateApiKeyResponse.ProtoReflect.Descriptor instead.
 func (*CreateApiKeyResponse) Descriptor() ([]byte, []int) {
-	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{8}
+	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *CreateApiKeyResponse) GetApiKey() *ApiKey {
@@ -593,7 +670,7 @@ type RollApiKeyRequest struct {
 
 func (x *RollApiKeyRequest) Reset() {
 	*x = RollApiKeyRequest{}
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[9]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -605,7 +682,7 @@ func (x *RollApiKeyRequest) String() string {
 func (*RollApiKeyRequest) ProtoMessage() {}
 
 func (x *RollApiKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[9]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -618,7 +695,7 @@ func (x *RollApiKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RollApiKeyRequest.ProtoReflect.Descriptor instead.
 func (*RollApiKeyRequest) Descriptor() ([]byte, []int) {
-	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{9}
+	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *RollApiKeyRequest) GetActor() *Actor {
@@ -654,7 +731,7 @@ type RollApiKeyResponse struct {
 
 func (x *RollApiKeyResponse) Reset() {
 	*x = RollApiKeyResponse{}
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[10]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -666,7 +743,7 @@ func (x *RollApiKeyResponse) String() string {
 func (*RollApiKeyResponse) ProtoMessage() {}
 
 func (x *RollApiKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[10]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -679,7 +756,7 @@ func (x *RollApiKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RollApiKeyResponse.ProtoReflect.Descriptor instead.
 func (*RollApiKeyResponse) Descriptor() ([]byte, []int) {
-	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{10}
+	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *RollApiKeyResponse) GetApiKey() *ApiKey {
@@ -714,7 +791,7 @@ type RevokeApiKeyRequest struct {
 
 func (x *RevokeApiKeyRequest) Reset() {
 	*x = RevokeApiKeyRequest{}
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[11]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -726,7 +803,7 @@ func (x *RevokeApiKeyRequest) String() string {
 func (*RevokeApiKeyRequest) ProtoMessage() {}
 
 func (x *RevokeApiKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[11]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -739,7 +816,7 @@ func (x *RevokeApiKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeApiKeyRequest.ProtoReflect.Descriptor instead.
 func (*RevokeApiKeyRequest) Descriptor() ([]byte, []int) {
-	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{11}
+	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *RevokeApiKeyRequest) GetActor() *Actor {
@@ -772,7 +849,7 @@ type RevokeApiKeyResponse struct {
 
 func (x *RevokeApiKeyResponse) Reset() {
 	*x = RevokeApiKeyResponse{}
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[12]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -784,7 +861,7 @@ func (x *RevokeApiKeyResponse) String() string {
 func (*RevokeApiKeyResponse) ProtoMessage() {}
 
 func (x *RevokeApiKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[12]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -797,7 +874,7 @@ func (x *RevokeApiKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeApiKeyResponse.ProtoReflect.Descriptor instead.
 func (*RevokeApiKeyResponse) Descriptor() ([]byte, []int) {
-	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{12}
+	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *RevokeApiKeyResponse) GetApiKey() *ApiKey {
@@ -818,7 +895,7 @@ type ListApiKeysRequest struct {
 
 func (x *ListApiKeysRequest) Reset() {
 	*x = ListApiKeysRequest{}
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[13]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -830,7 +907,7 @@ func (x *ListApiKeysRequest) String() string {
 func (*ListApiKeysRequest) ProtoMessage() {}
 
 func (x *ListApiKeysRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[13]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -843,7 +920,7 @@ func (x *ListApiKeysRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListApiKeysRequest.ProtoReflect.Descriptor instead.
 func (*ListApiKeysRequest) Descriptor() ([]byte, []int) {
-	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{13}
+	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ListApiKeysRequest) GetActor() *Actor {
@@ -876,7 +953,7 @@ type ListApiKeysResponse struct {
 
 func (x *ListApiKeysResponse) Reset() {
 	*x = ListApiKeysResponse{}
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[14]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -888,7 +965,7 @@ func (x *ListApiKeysResponse) String() string {
 func (*ListApiKeysResponse) ProtoMessage() {}
 
 func (x *ListApiKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[14]
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -901,12 +978,132 @@ func (x *ListApiKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListApiKeysResponse.ProtoReflect.Descriptor instead.
 func (*ListApiKeysResponse) Descriptor() ([]byte, []int) {
-	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{14}
+	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ListApiKeysResponse) GetApiKeys() []*ApiKey {
 	if x != nil {
 		return x.ApiKeys
+	}
+	return nil
+}
+
+type SetTenantSettingsRequest struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Actor              *Actor                 `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
+	TenantId           string                 `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	AllowedModels      []string               `protobuf:"bytes,3,rep,name=allowed_models,json=allowedModels,proto3" json:"allowed_models,omitempty"`
+	DefaultModel       string                 `protobuf:"bytes,4,opt,name=default_model,json=defaultModel,proto3" json:"default_model,omitempty"`
+	PickupConfirmation string                 `protobuf:"bytes,5,opt,name=pickup_confirmation,json=pickupConfirmation,proto3" json:"pickup_confirmation,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *SetTenantSettingsRequest) Reset() {
+	*x = SetTenantSettingsRequest{}
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetTenantSettingsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetTenantSettingsRequest) ProtoMessage() {}
+
+func (x *SetTenantSettingsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetTenantSettingsRequest.ProtoReflect.Descriptor instead.
+func (*SetTenantSettingsRequest) Descriptor() ([]byte, []int) {
+	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *SetTenantSettingsRequest) GetActor() *Actor {
+	if x != nil {
+		return x.Actor
+	}
+	return nil
+}
+
+func (x *SetTenantSettingsRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *SetTenantSettingsRequest) GetAllowedModels() []string {
+	if x != nil {
+		return x.AllowedModels
+	}
+	return nil
+}
+
+func (x *SetTenantSettingsRequest) GetDefaultModel() string {
+	if x != nil {
+		return x.DefaultModel
+	}
+	return ""
+}
+
+func (x *SetTenantSettingsRequest) GetPickupConfirmation() string {
+	if x != nil {
+		return x.PickupConfirmation
+	}
+	return ""
+}
+
+type SetTenantSettingsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Settings      *TenantSettings        `protobuf:"bytes,1,opt,name=settings,proto3" json:"settings,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetTenantSettingsResponse) Reset() {
+	*x = SetTenantSettingsResponse{}
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetTenantSettingsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetTenantSettingsResponse) ProtoMessage() {}
+
+func (x *SetTenantSettingsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_dt_accounts_v1_accounts_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetTenantSettingsResponse.ProtoReflect.Descriptor instead.
+func (*SetTenantSettingsResponse) Descriptor() ([]byte, []int) {
+	return file_dt_accounts_v1_accounts_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *SetTenantSettingsResponse) GetSettings() *TenantSettings {
+	if x != nil {
+		return x.Settings
 	}
 	return nil
 }
@@ -919,13 +1116,20 @@ const file_dt_accounts_v1_accounts_proto_rawDesc = "" +
 	"\x05Actor\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x12\n" +
-	"\x04role\x18\x03 \x01(\tR\x04role\"\x8a\x01\n" +
+	"\x04role\x18\x03 \x01(\tR\x04role\"\xc6\x01\n" +
 	"\x06Tenant\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12!\n" +
 	"\flive_enabled\x18\x03 \x01(\bR\vliveEnabled\x129\n" +
 	"\n" +
-	"created_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\x97\x03\n" +
+	"created_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12:\n" +
+	"\bsettings\x18\x05 \x01(\v2\x1e.dt.accounts.v1.TenantSettingsR\bsettings\"\xc8\x01\n" +
+	"\x0eTenantSettings\x12%\n" +
+	"\x0eallowed_models\x18\x01 \x03(\tR\rallowedModels\x12#\n" +
+	"\rdefault_model\x18\x02 \x01(\tR\fdefaultModel\x12/\n" +
+	"\x13pickup_confirmation\x18\x03 \x01(\tR\x12pickupConfirmation\x129\n" +
+	"\n" +
+	"updated_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\x97\x03\n" +
 	"\x06ApiKey\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12;\n" +
@@ -980,7 +1184,15 @@ const file_dt_accounts_v1_accounts_proto_rawDesc = "" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12;\n" +
 	"\venvironment\x18\x03 \x01(\x0e2\x19.dt.events.v1.EnvironmentR\venvironment\"H\n" +
 	"\x13ListApiKeysResponse\x121\n" +
-	"\bapi_keys\x18\x01 \x03(\v2\x16.dt.accounts.v1.ApiKeyR\aapiKeys2\xb0\x04\n" +
+	"\bapi_keys\x18\x01 \x03(\v2\x16.dt.accounts.v1.ApiKeyR\aapiKeys\"\xe1\x01\n" +
+	"\x18SetTenantSettingsRequest\x12+\n" +
+	"\x05actor\x18\x01 \x01(\v2\x15.dt.accounts.v1.ActorR\x05actor\x12\x1b\n" +
+	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12%\n" +
+	"\x0eallowed_models\x18\x03 \x03(\tR\rallowedModels\x12#\n" +
+	"\rdefault_model\x18\x04 \x01(\tR\fdefaultModel\x12/\n" +
+	"\x13pickup_confirmation\x18\x05 \x01(\tR\x12pickupConfirmation\"W\n" +
+	"\x19SetTenantSettingsResponse\x12:\n" +
+	"\bsettings\x18\x01 \x01(\v2\x1e.dt.accounts.v1.TenantSettingsR\bsettings2\x9a\x05\n" +
 	"\x0fAccountsService\x12Y\n" +
 	"\fCreateTenant\x12#.dt.accounts.v1.CreateTenantRequest\x1a$.dt.accounts.v1.CreateTenantResponse\x12_\n" +
 	"\x0eSetLiveEnabled\x12%.dt.accounts.v1.SetLiveEnabledRequest\x1a&.dt.accounts.v1.SetLiveEnabledResponse\x12Y\n" +
@@ -988,7 +1200,8 @@ const file_dt_accounts_v1_accounts_proto_rawDesc = "" +
 	"\n" +
 	"RollApiKey\x12!.dt.accounts.v1.RollApiKeyRequest\x1a\".dt.accounts.v1.RollApiKeyResponse\x12Y\n" +
 	"\fRevokeApiKey\x12#.dt.accounts.v1.RevokeApiKeyRequest\x1a$.dt.accounts.v1.RevokeApiKeyResponse\x12V\n" +
-	"\vListApiKeys\x12\".dt.accounts.v1.ListApiKeysRequest\x1a#.dt.accounts.v1.ListApiKeysResponseB\xbd\x01\n" +
+	"\vListApiKeys\x12\".dt.accounts.v1.ListApiKeysRequest\x1a#.dt.accounts.v1.ListApiKeysResponse\x12h\n" +
+	"\x11SetTenantSettings\x12(.dt.accounts.v1.SetTenantSettingsRequest\x1a).dt.accounts.v1.SetTenantSettingsResponseB\xbd\x01\n" +
 	"\x12com.dt.accounts.v1B\rAccountsProtoP\x01Z>github.com/raduolivas/dt/backend/gen/dt/accounts/v1;accountsv1\xa2\x02\x03DAX\xaa\x02\x0eDt.Accounts.V1\xca\x02\x0eDt\\Accounts\\V1\xe2\x02\x1aDt\\Accounts\\V1\\GPBMetadata\xea\x02\x10Dt::Accounts::V1b\x06proto3"
 
 var (
@@ -1003,61 +1216,70 @@ func file_dt_accounts_v1_accounts_proto_rawDescGZIP() []byte {
 	return file_dt_accounts_v1_accounts_proto_rawDescData
 }
 
-var file_dt_accounts_v1_accounts_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_dt_accounts_v1_accounts_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_dt_accounts_v1_accounts_proto_goTypes = []any{
-	(*Actor)(nil),                  // 0: dt.accounts.v1.Actor
-	(*Tenant)(nil),                 // 1: dt.accounts.v1.Tenant
-	(*ApiKey)(nil),                 // 2: dt.accounts.v1.ApiKey
-	(*CreateTenantRequest)(nil),    // 3: dt.accounts.v1.CreateTenantRequest
-	(*CreateTenantResponse)(nil),   // 4: dt.accounts.v1.CreateTenantResponse
-	(*SetLiveEnabledRequest)(nil),  // 5: dt.accounts.v1.SetLiveEnabledRequest
-	(*SetLiveEnabledResponse)(nil), // 6: dt.accounts.v1.SetLiveEnabledResponse
-	(*CreateApiKeyRequest)(nil),    // 7: dt.accounts.v1.CreateApiKeyRequest
-	(*CreateApiKeyResponse)(nil),   // 8: dt.accounts.v1.CreateApiKeyResponse
-	(*RollApiKeyRequest)(nil),      // 9: dt.accounts.v1.RollApiKeyRequest
-	(*RollApiKeyResponse)(nil),     // 10: dt.accounts.v1.RollApiKeyResponse
-	(*RevokeApiKeyRequest)(nil),    // 11: dt.accounts.v1.RevokeApiKeyRequest
-	(*RevokeApiKeyResponse)(nil),   // 12: dt.accounts.v1.RevokeApiKeyResponse
-	(*ListApiKeysRequest)(nil),     // 13: dt.accounts.v1.ListApiKeysRequest
-	(*ListApiKeysResponse)(nil),    // 14: dt.accounts.v1.ListApiKeysResponse
-	(*timestamppb.Timestamp)(nil),  // 15: google.protobuf.Timestamp
-	(v1.Environment)(0),            // 16: dt.events.v1.Environment
+	(*Actor)(nil),                     // 0: dt.accounts.v1.Actor
+	(*Tenant)(nil),                    // 1: dt.accounts.v1.Tenant
+	(*TenantSettings)(nil),            // 2: dt.accounts.v1.TenantSettings
+	(*ApiKey)(nil),                    // 3: dt.accounts.v1.ApiKey
+	(*CreateTenantRequest)(nil),       // 4: dt.accounts.v1.CreateTenantRequest
+	(*CreateTenantResponse)(nil),      // 5: dt.accounts.v1.CreateTenantResponse
+	(*SetLiveEnabledRequest)(nil),     // 6: dt.accounts.v1.SetLiveEnabledRequest
+	(*SetLiveEnabledResponse)(nil),    // 7: dt.accounts.v1.SetLiveEnabledResponse
+	(*CreateApiKeyRequest)(nil),       // 8: dt.accounts.v1.CreateApiKeyRequest
+	(*CreateApiKeyResponse)(nil),      // 9: dt.accounts.v1.CreateApiKeyResponse
+	(*RollApiKeyRequest)(nil),         // 10: dt.accounts.v1.RollApiKeyRequest
+	(*RollApiKeyResponse)(nil),        // 11: dt.accounts.v1.RollApiKeyResponse
+	(*RevokeApiKeyRequest)(nil),       // 12: dt.accounts.v1.RevokeApiKeyRequest
+	(*RevokeApiKeyResponse)(nil),      // 13: dt.accounts.v1.RevokeApiKeyResponse
+	(*ListApiKeysRequest)(nil),        // 14: dt.accounts.v1.ListApiKeysRequest
+	(*ListApiKeysResponse)(nil),       // 15: dt.accounts.v1.ListApiKeysResponse
+	(*SetTenantSettingsRequest)(nil),  // 16: dt.accounts.v1.SetTenantSettingsRequest
+	(*SetTenantSettingsResponse)(nil), // 17: dt.accounts.v1.SetTenantSettingsResponse
+	(*timestamppb.Timestamp)(nil),     // 18: google.protobuf.Timestamp
+	(v1.Environment)(0),               // 19: dt.events.v1.Environment
 }
 var file_dt_accounts_v1_accounts_proto_depIdxs = []int32{
-	15, // 0: dt.accounts.v1.Tenant.created_at:type_name -> google.protobuf.Timestamp
-	16, // 1: dt.accounts.v1.ApiKey.environment:type_name -> dt.events.v1.Environment
-	15, // 2: dt.accounts.v1.ApiKey.created_at:type_name -> google.protobuf.Timestamp
-	15, // 3: dt.accounts.v1.ApiKey.expires_at:type_name -> google.protobuf.Timestamp
-	15, // 4: dt.accounts.v1.ApiKey.revoked_at:type_name -> google.protobuf.Timestamp
-	1,  // 5: dt.accounts.v1.CreateTenantResponse.tenant:type_name -> dt.accounts.v1.Tenant
-	0,  // 6: dt.accounts.v1.CreateApiKeyRequest.actor:type_name -> dt.accounts.v1.Actor
-	16, // 7: dt.accounts.v1.CreateApiKeyRequest.environment:type_name -> dt.events.v1.Environment
-	2,  // 8: dt.accounts.v1.CreateApiKeyResponse.api_key:type_name -> dt.accounts.v1.ApiKey
-	0,  // 9: dt.accounts.v1.RollApiKeyRequest.actor:type_name -> dt.accounts.v1.Actor
-	2,  // 10: dt.accounts.v1.RollApiKeyResponse.api_key:type_name -> dt.accounts.v1.ApiKey
-	2,  // 11: dt.accounts.v1.RollApiKeyResponse.previous:type_name -> dt.accounts.v1.ApiKey
-	0,  // 12: dt.accounts.v1.RevokeApiKeyRequest.actor:type_name -> dt.accounts.v1.Actor
-	2,  // 13: dt.accounts.v1.RevokeApiKeyResponse.api_key:type_name -> dt.accounts.v1.ApiKey
-	0,  // 14: dt.accounts.v1.ListApiKeysRequest.actor:type_name -> dt.accounts.v1.Actor
-	16, // 15: dt.accounts.v1.ListApiKeysRequest.environment:type_name -> dt.events.v1.Environment
-	2,  // 16: dt.accounts.v1.ListApiKeysResponse.api_keys:type_name -> dt.accounts.v1.ApiKey
-	3,  // 17: dt.accounts.v1.AccountsService.CreateTenant:input_type -> dt.accounts.v1.CreateTenantRequest
-	5,  // 18: dt.accounts.v1.AccountsService.SetLiveEnabled:input_type -> dt.accounts.v1.SetLiveEnabledRequest
-	7,  // 19: dt.accounts.v1.AccountsService.CreateApiKey:input_type -> dt.accounts.v1.CreateApiKeyRequest
-	9,  // 20: dt.accounts.v1.AccountsService.RollApiKey:input_type -> dt.accounts.v1.RollApiKeyRequest
-	11, // 21: dt.accounts.v1.AccountsService.RevokeApiKey:input_type -> dt.accounts.v1.RevokeApiKeyRequest
-	13, // 22: dt.accounts.v1.AccountsService.ListApiKeys:input_type -> dt.accounts.v1.ListApiKeysRequest
-	4,  // 23: dt.accounts.v1.AccountsService.CreateTenant:output_type -> dt.accounts.v1.CreateTenantResponse
-	6,  // 24: dt.accounts.v1.AccountsService.SetLiveEnabled:output_type -> dt.accounts.v1.SetLiveEnabledResponse
-	8,  // 25: dt.accounts.v1.AccountsService.CreateApiKey:output_type -> dt.accounts.v1.CreateApiKeyResponse
-	10, // 26: dt.accounts.v1.AccountsService.RollApiKey:output_type -> dt.accounts.v1.RollApiKeyResponse
-	12, // 27: dt.accounts.v1.AccountsService.RevokeApiKey:output_type -> dt.accounts.v1.RevokeApiKeyResponse
-	14, // 28: dt.accounts.v1.AccountsService.ListApiKeys:output_type -> dt.accounts.v1.ListApiKeysResponse
-	23, // [23:29] is the sub-list for method output_type
-	17, // [17:23] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	18, // 0: dt.accounts.v1.Tenant.created_at:type_name -> google.protobuf.Timestamp
+	2,  // 1: dt.accounts.v1.Tenant.settings:type_name -> dt.accounts.v1.TenantSettings
+	18, // 2: dt.accounts.v1.TenantSettings.updated_at:type_name -> google.protobuf.Timestamp
+	19, // 3: dt.accounts.v1.ApiKey.environment:type_name -> dt.events.v1.Environment
+	18, // 4: dt.accounts.v1.ApiKey.created_at:type_name -> google.protobuf.Timestamp
+	18, // 5: dt.accounts.v1.ApiKey.expires_at:type_name -> google.protobuf.Timestamp
+	18, // 6: dt.accounts.v1.ApiKey.revoked_at:type_name -> google.protobuf.Timestamp
+	1,  // 7: dt.accounts.v1.CreateTenantResponse.tenant:type_name -> dt.accounts.v1.Tenant
+	0,  // 8: dt.accounts.v1.CreateApiKeyRequest.actor:type_name -> dt.accounts.v1.Actor
+	19, // 9: dt.accounts.v1.CreateApiKeyRequest.environment:type_name -> dt.events.v1.Environment
+	3,  // 10: dt.accounts.v1.CreateApiKeyResponse.api_key:type_name -> dt.accounts.v1.ApiKey
+	0,  // 11: dt.accounts.v1.RollApiKeyRequest.actor:type_name -> dt.accounts.v1.Actor
+	3,  // 12: dt.accounts.v1.RollApiKeyResponse.api_key:type_name -> dt.accounts.v1.ApiKey
+	3,  // 13: dt.accounts.v1.RollApiKeyResponse.previous:type_name -> dt.accounts.v1.ApiKey
+	0,  // 14: dt.accounts.v1.RevokeApiKeyRequest.actor:type_name -> dt.accounts.v1.Actor
+	3,  // 15: dt.accounts.v1.RevokeApiKeyResponse.api_key:type_name -> dt.accounts.v1.ApiKey
+	0,  // 16: dt.accounts.v1.ListApiKeysRequest.actor:type_name -> dt.accounts.v1.Actor
+	19, // 17: dt.accounts.v1.ListApiKeysRequest.environment:type_name -> dt.events.v1.Environment
+	3,  // 18: dt.accounts.v1.ListApiKeysResponse.api_keys:type_name -> dt.accounts.v1.ApiKey
+	0,  // 19: dt.accounts.v1.SetTenantSettingsRequest.actor:type_name -> dt.accounts.v1.Actor
+	2,  // 20: dt.accounts.v1.SetTenantSettingsResponse.settings:type_name -> dt.accounts.v1.TenantSettings
+	4,  // 21: dt.accounts.v1.AccountsService.CreateTenant:input_type -> dt.accounts.v1.CreateTenantRequest
+	6,  // 22: dt.accounts.v1.AccountsService.SetLiveEnabled:input_type -> dt.accounts.v1.SetLiveEnabledRequest
+	8,  // 23: dt.accounts.v1.AccountsService.CreateApiKey:input_type -> dt.accounts.v1.CreateApiKeyRequest
+	10, // 24: dt.accounts.v1.AccountsService.RollApiKey:input_type -> dt.accounts.v1.RollApiKeyRequest
+	12, // 25: dt.accounts.v1.AccountsService.RevokeApiKey:input_type -> dt.accounts.v1.RevokeApiKeyRequest
+	14, // 26: dt.accounts.v1.AccountsService.ListApiKeys:input_type -> dt.accounts.v1.ListApiKeysRequest
+	16, // 27: dt.accounts.v1.AccountsService.SetTenantSettings:input_type -> dt.accounts.v1.SetTenantSettingsRequest
+	5,  // 28: dt.accounts.v1.AccountsService.CreateTenant:output_type -> dt.accounts.v1.CreateTenantResponse
+	7,  // 29: dt.accounts.v1.AccountsService.SetLiveEnabled:output_type -> dt.accounts.v1.SetLiveEnabledResponse
+	9,  // 30: dt.accounts.v1.AccountsService.CreateApiKey:output_type -> dt.accounts.v1.CreateApiKeyResponse
+	11, // 31: dt.accounts.v1.AccountsService.RollApiKey:output_type -> dt.accounts.v1.RollApiKeyResponse
+	13, // 32: dt.accounts.v1.AccountsService.RevokeApiKey:output_type -> dt.accounts.v1.RevokeApiKeyResponse
+	15, // 33: dt.accounts.v1.AccountsService.ListApiKeys:output_type -> dt.accounts.v1.ListApiKeysResponse
+	17, // 34: dt.accounts.v1.AccountsService.SetTenantSettings:output_type -> dt.accounts.v1.SetTenantSettingsResponse
+	28, // [28:35] is the sub-list for method output_type
+	21, // [21:28] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_dt_accounts_v1_accounts_proto_init() }
@@ -1071,7 +1293,7 @@ func file_dt_accounts_v1_accounts_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_dt_accounts_v1_accounts_proto_rawDesc), len(file_dt_accounts_v1_accounts_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

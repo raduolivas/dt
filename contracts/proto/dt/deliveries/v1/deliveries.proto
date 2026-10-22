@@ -1,0 +1,215 @@
+syntax = "proto3";
+package dt.deliveries.v1;
+
+import "dt/events/v1/envelope.proto";
+import "dt/events/v1/deliveries.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+
+// DeliveriesService is the internal deliveries API, called by the gateway. It
+// is never routed publicly and requires
+// "Authorization: Bearer <INTERNAL_RPC_TOKEN>". Errors carry a "dt-code"
+// response trailer (snake_case: not_found, validation_failed,
+// invalid_transition, external_id_conflict, dropoff_locked, delivery_active,
+// model_not_allowed, courier_not_found); over the Connect protocol it arrives
+// as the HTTP header "Trailer-Dt-Code". Validation failures also carry a
+// FieldViolation error detail per offending field.
+service DeliveriesService {
+  rpc CreateDelivery(CreateDeliveryRequest) returns (CreateDeliveryResponse);
+  rpc GetDelivery(GetDeliveryRequest) returns (GetDeliveryResponse);
+  rpc ListDeliveries(ListDeliveriesRequest) returns (ListDeliveriesResponse);
+  rpc UpdateDelivery(UpdateDeliveryRequest) returns (UpdateDeliveryResponse);
+  rpc AssignCourier(AssignCourierRequest) returns (AssignCourierResponse);
+  rpc ReportEvent(ReportEventRequest) returns (ReportEventResponse);
+  rpc CancelDelivery(CancelDeliveryRequest) returns (CancelDeliveryResponse);
+  rpc ErasePersonalData(ErasePersonalDataRequest) returns (ErasePersonalDataResponse);
+  rpc UpsertCourier(UpsertCourierRequest) returns (UpsertCourierResponse);
+}
+
+// Scope is the tenant, environment and caller every request runs under.
+message Scope {
+  string tenant_id = 1;
+  dt.events.v1.Environment environment = 2;
+  string actor_id = 3; // the API key id
+}
+
+// FieldViolation is the error detail of a validation failure.
+message FieldViolation {
+  string field = 1;
+  string code = 2;
+  string message = 3;
+}
+
+message Pickup {
+  dt.events.v1.LatLng location = 1;
+  string name = 2;
+}
+
+message Dropoff {
+  dt.events.v1.LatLng location = 1;
+  optional string label = 2;
+}
+
+message Customer {
+  optional string first_name = 1;
+}
+
+message PickupConfirmation {
+  string by = 1; // "courier" | "store" | "partner"
+  google.protobuf.Timestamp at = 2;
+}
+
+message CourierRef {
+  string id = 1;
+  string external_id = 2;
+  string display_name = 3;
+  string vehicle = 4;
+}
+
+message Courier {
+  string id = 1;
+  string external_id = 2;
+  string display_name = 3;
+  string vehicle = 4;
+  optional string photo_url = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+// Delivery mirrors the public Delivery object.
+message Delivery {
+  string id = 1;
+  string external_id = 2;
+  dt.events.v1.Environment environment = 3;
+  string delivery_model = 4;
+  string status = 5;
+  Pickup pickup = 6;
+  Dropoff dropoff = 7;
+  Customer customer = 8;
+  optional string items_summary = 9;
+  optional int32 item_count = 10;
+  optional string notes = 11;
+  map<string, string> metadata = 12;
+  CourierRef courier = 13; // unset = none assigned
+  string pickup_policy = 14;
+  repeated PickupConfirmation pickup_confirmations = 15;
+  bool personal_data_erased = 16;
+  google.protobuf.Timestamp created_at = 17;
+  google.protobuf.Timestamp updated_at = 18;
+}
+
+message CreateDeliveryRequest {
+  Scope scope = 1;
+  string external_id = 2;
+  string delivery_model = 3; // empty = tenant default
+  Pickup pickup = 4;
+  Dropoff dropoff = 5;
+  Customer customer = 6;
+  optional string items_summary = 7;
+  optional int32 item_count = 8;
+  optional string notes = 9;
+  map<string, string> metadata = 10;
+}
+
+message CreateDeliveryResponse {
+  Delivery delivery = 1;
+}
+
+message GetDeliveryRequest {
+  Scope scope = 1;
+  string id = 2;
+}
+
+message GetDeliveryResponse {
+  Delivery delivery = 1;
+}
+
+message ListDeliveriesRequest {
+  Scope scope = 1;
+  string status = 2;
+  string delivery_model = 3;
+  google.protobuf.Timestamp created_gte = 4;
+  google.protobuf.Timestamp created_lt = 5;
+  string external_id = 6;
+  int32 limit = 7; // 0 = default 20; max 100
+  string starting_after = 8; // a del_ id
+}
+
+message ListDeliveriesResponse {
+  repeated Delivery data = 1;
+  bool has_more = 2;
+}
+
+// UpdateDeliveryRequest patches a delivery. Only fields named in update_mask
+// change; a masked field that is unset means "clear" (PATCH null). Mask paths:
+// dropoff, dropoff_label, notes, metadata. dropoff cannot be cleared.
+message UpdateDeliveryRequest {
+  Scope scope = 1;
+  string id = 2;
+  google.protobuf.FieldMask update_mask = 3;
+  dt.events.v1.LatLng dropoff = 4;
+  optional string dropoff_label = 5;
+  optional string notes = 6;
+  map<string, string> metadata = 7;
+}
+
+message UpdateDeliveryResponse {
+  Delivery delivery = 1;
+}
+
+message AssignCourierRequest {
+  Scope scope = 1;
+  string id = 2;
+  string courier_id = 3; // a cou_ id
+}
+
+message AssignCourierResponse {
+  Delivery delivery = 1;
+}
+
+message ReportEventRequest {
+  Scope scope = 1;
+  string id = 2; // delivery id
+  string event_id = 3;
+  string type = 4; // at_pickup | pickup_confirmed | arriving | delivered | failed
+  google.protobuf.Timestamp occurred_at = 5; // unset = receipt time
+  string by = 6; // "partner" | "store"; only for pickup_confirmed
+  string reason = 7;
+}
+
+message ReportEventResponse {
+  Delivery delivery = 1;
+  string outcome = 2; // applied | duplicate | stale | conflict | recorded
+}
+
+message CancelDeliveryRequest {
+  Scope scope = 1;
+  string id = 2;
+  string reason = 3;
+}
+
+message CancelDeliveryResponse {
+  Delivery delivery = 1;
+}
+
+message ErasePersonalDataRequest {
+  Scope scope = 1;
+  string id = 2;
+}
+
+message ErasePersonalDataResponse {
+  Delivery delivery = 1;
+}
+
+message UpsertCourierRequest {
+  Scope scope = 1;
+  string external_id = 2;
+  string display_name = 3;
+  string vehicle = 4;
+  optional string photo_url = 5;
+}
+
+message UpsertCourierResponse {
+  Courier courier = 1;
+  bool created = 2;
+}

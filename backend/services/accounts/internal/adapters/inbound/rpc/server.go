@@ -112,6 +112,12 @@ func (s *Server) ListApiKeys(ctx context.Context, req *accountsv1.ListApiKeysReq
 }
 
 // logKey logs a key mutation by id only: never the secret, hash or lookup.
+// SetTenantSettings is declared by the contract; the use case lands with the
+// tenant settings task.
+func (s *Server) SetTenantSettings(_ context.Context, _ *accountsv1.SetTenantSettingsRequest) (*accountsv1.SetTenantSettingsResponse, error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, "set tenant settings is not implemented yet")
+}
+
 func (s *Server) logKey(ctx context.Context, msg string, k domain.APIKey) {
 	s.log.InfoContext(ctx, msg, slog.String("credential_id", k.ID), slog.String("tenant_id", k.TenantID),
 		slog.String("environment", string(k.Env)))

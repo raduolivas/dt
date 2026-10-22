@@ -12,6 +12,10 @@ servers:
 tags:
   - name: Account
     description: The credential a request authenticates with.
+  - name: Deliveries
+    description: Create deliveries, report their progress and read them back.
+  - name: Couriers
+    description: Couriers you register for assignment.
 paths:
   /me:
     get:
@@ -36,6 +40,640 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /deliveries:
+    post:
+      operationId: createDelivery
+      summary: Create a delivery
+      description: 'Creates a delivery in `confirmed` status. `external_id` is unique per tenant and environment.
+        Requires scope `deliveries:write`. Problem codes: `validation_failed` (400), `external_id_conflict`
+        (409, the external id is already used by another delivery), `model_not_allowed` (422, the tenant
+        does not allow the requested model).'
+      tags:
+      - Deliveries
+      security:
+      - SecretKey: []
+      parameters:
+      - &id008
+        $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDeliveryRequest'
+            examples:
+              minimal:
+                summary: Minimal
+                value:
+                  external_id: order-1042
+                  pickup:
+                    location:
+                      lat: -23.5614
+                      lng: -46.6559
+                    name: Pizzaria Central
+                  dropoff:
+                    location:
+                      lat: -23.5505
+                      lng: -46.6333
+              full:
+                summary: All fields
+                value:
+                  external_id: order-1042
+                  delivery_model: direct
+                  pickup:
+                    location:
+                      lat: -23.5614
+                      lng: -46.6559
+                    name: Pizzaria Central
+                  dropoff:
+                    location:
+                      lat: -23.5505
+                      lng: -46.6333
+                    label: Apto 42
+                  customer:
+                    first_name: Ana
+                  items_summary: 2 pizzas
+                  item_count: 2
+                  notes: Ring twice
+                  metadata:
+                    table: '12'
+      responses:
+        '201':
+          description: The created delivery.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delivery'
+              examples:
+                default:
+                  value: &id001
+                    id: del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                    external_id: order-1042
+                    environment: test
+                    delivery_model: direct
+                    status: confirmed
+                    pickup:
+                      location:
+                        lat: -23.5614
+                        lng: -46.6559
+                      name: Pizzaria Central
+                    dropoff:
+                      location:
+                        lat: -23.5505
+                        lng: -46.6333
+                      label: Apto 42
+                    customer:
+                      first_name: Ana
+                    items_summary: 2 pizzas
+                    item_count: 2
+                    notes: Ring twice
+                    metadata:
+                      table: '12'
+                    courier: null
+                    pickup_policy: any
+                    pickup_confirmations: []
+                    personal_data_erased: false
+                    created_at: '2026-10-22T14:00:00Z'
+                    updated_at: '2026-10-22T14:00:00Z'
+        '400': &id002
+          $ref: '#/components/responses/ValidationFailed'
+        '409':
+          description: '`external_id_conflict`: a delivery with this `external_id` already exists, or the
+            Idempotency-Key was reused with a different request or is still in progress.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          description: '`model_not_allowed`: the tenant does not allow this `delivery_model`.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401': &id003
+          $ref: '#/components/responses/Unauthenticated'
+        '403': &id004
+          $ref: '#/components/responses/Forbidden'
+        '429': &id005
+          $ref: '#/components/responses/TooManyRequests'
+    get:
+      operationId: listDeliveries
+      summary: List deliveries
+      description: Lists deliveries newest first by id. Page with `starting_after`. Requires scope `deliveries:read`.
+      tags:
+      - Deliveries
+      security:
+      - SecretKey: []
+      parameters:
+      - $ref: '#/components/parameters/DeliveryStatusFilter'
+      - $ref: '#/components/parameters/DeliveryModelFilter'
+      - $ref: '#/components/parameters/CreatedGte'
+      - $ref: '#/components/parameters/CreatedLt'
+      - $ref: '#/components/parameters/ExternalIdFilter'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/StartingAfter'
+      responses:
+        '200':
+          description: A page of deliveries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryList'
+              examples:
+                default:
+                  value:
+                    data:
+                    - *id001
+                    has_more: false
+        '400': *id002
+        '401': *id003
+        '403': *id004
+        '429': *id005
+  /deliveries/{id}:
+    parameters:
+    - &id007
+      name: id
+      in: path
+      required: true
+      description: The delivery id.
+      schema:
+        type: string
+        pattern: ^del_[0-9a-z]{26}$
+      example: del_01j9z3k8m2q4r6s8t0v2w4x6y8
+    get:
+      operationId: getDelivery
+      summary: Get a delivery
+      description: Requires scope `deliveries:read`. A delivery of another tenant or environment is `404
+        not_found`.
+      tags:
+      - Deliveries
+      security:
+      - SecretKey: []
+      responses:
+        '200':
+          description: The delivery.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delivery'
+              examples:
+                default:
+                  value: *id001
+        '404': &id006
+          $ref: '#/components/responses/NotFound'
+        '401': *id003
+        '403': *id004
+        '429': *id005
+    patch:
+      operationId: updateDelivery
+      summary: Update a delivery
+      description: 'Changes the dropoff location, dropoff label, notes or metadata. Send `null` to clear
+        `dropoff_label` or `notes` (the dropoff location cannot be cleared); a `metadata` value replaces
+        the whole map and `null` clears it. Requires scope `deliveries:write`. Problem codes: `validation_failed`
+        (400), `not_found` (404), `dropoff_locked` (409, the delivery is past pickup or final, so the dropoff
+        location cannot change).'
+      tags:
+      - Deliveries
+      security:
+      - SecretKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDeliveryRequest'
+            examples:
+              move_dropoff:
+                summary: Move the dropoff
+                value:
+                  dropoff:
+                    location:
+                      lat: -23.55
+                      lng: -46.64
+              clear_notes:
+                summary: Clear notes and label
+                value:
+                  notes: null
+                  dropoff_label: null
+      responses:
+        '200':
+          description: The updated delivery.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delivery'
+              examples:
+                default:
+                  value: *id001
+        '400': *id002
+        '404': *id006
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '409':
+          description: '`dropoff_locked`: the dropoff location can no longer change.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401': *id003
+        '403': *id004
+        '429': *id005
+  /deliveries/{id}/assignment:
+    parameters:
+    - *id007
+    post:
+      operationId: assignCourier
+      summary: Assign a courier
+      description: 'Assigns an upserted courier to the delivery. Requires scope `deliveries:write`. Problem
+        codes: `validation_failed` (400), `not_found` (404), `courier_not_found` (422, no such courier in
+        this tenant and environment), `invalid_transition` (409, the delivery is final).'
+      tags:
+      - Deliveries
+      security:
+      - SecretKey: []
+      parameters:
+      - *id008
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignCourierRequest'
+            examples:
+              default:
+                value:
+                  courier_id: cou_01j9z3k8m2q4r6s8t0v2w4x6y8
+      responses:
+        '200':
+          description: The delivery with the courier assigned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delivery'
+              examples:
+                default:
+                  value:
+                    id: del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                    external_id: order-1042
+                    environment: test
+                    delivery_model: direct
+                    status: courier_assigned
+                    pickup:
+                      location:
+                        lat: -23.5614
+                        lng: -46.6559
+                      name: Pizzaria Central
+                    dropoff:
+                      location:
+                        lat: -23.5505
+                        lng: -46.6333
+                      label: Apto 42
+                    customer:
+                      first_name: Ana
+                    items_summary: 2 pizzas
+                    item_count: 2
+                    notes: Ring twice
+                    metadata:
+                      table: '12'
+                    courier:
+                      id: cou_01j9z3k8m2q4r6s8t0v2w4x6y8
+                      external_id: driver-77
+                      display_name: Carlos
+                      vehicle: e_bike
+                    pickup_policy: any
+                    pickup_confirmations: []
+                    personal_data_erased: false
+                    created_at: '2026-10-22T14:00:00Z'
+                    updated_at: '2026-10-22T14:00:00Z'
+        '400': *id002
+        '404': *id006
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '409':
+          description: '`invalid_transition`: the delivery cannot take a courier in its current status,
+            or the Idempotency-Key was reused with a different request or is still in progress.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: '`courier_not_found`: no courier with this id exists for the tenant and environment.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401': *id003
+        '403': *id004
+        '429': *id005
+  /deliveries/{id}/events:
+    parameters:
+    - *id007
+    post:
+      operationId: reportDeliveryEvent
+      summary: Report a delivery event
+      description: 'Reports a progress event for a delivery. `event_id` makes the report idempotent. `outcome`
+        says what happened: `applied` (state changed), `duplicate` (this `event_id` was seen), `stale` (older
+        than the current state; ignored), `conflict` (contradicts a conflicting report within 60 seconds),
+        `recorded` (stored without a state change, for example one confirmation toward a multi-party pickup
+        policy). `occurred_at` may be at most 5 minutes after receipt; when absent it is the receipt time.
+        Requires scope `deliveries:write`. Problem codes: `validation_failed` (400), `not_found` (404),
+        `invalid_transition` (409).'
+      tags:
+      - Deliveries
+      security:
+      - SecretKey: []
+      parameters:
+      - *id008
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportDeliveryEventRequest'
+            examples:
+              at_pickup:
+                summary: Courier at the pickup
+                value:
+                  event_id: evt-9001
+                  type: at_pickup
+                  occurred_at: '2026-10-22T14:10:00Z'
+              pickup_confirmed:
+                summary: Store confirms the pickup
+                value:
+                  event_id: evt-9002
+                  type: pickup_confirmed
+                  by: store
+              failed:
+                summary: Delivery failed
+                value:
+                  event_id: evt-9003
+                  type: failed
+                  reason: Customer not reachable
+      responses:
+        '200':
+          description: The outcome of the report and the delivery.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryEventResult'
+              examples:
+                default:
+                  value:
+                    outcome: applied
+                    delivery:
+                      id: del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                      external_id: order-1042
+                      environment: test
+                      delivery_model: direct
+                      status: at_pickup
+                      pickup:
+                        location:
+                          lat: -23.5614
+                          lng: -46.6559
+                        name: Pizzaria Central
+                      dropoff:
+                        location:
+                          lat: -23.5505
+                          lng: -46.6333
+                        label: Apto 42
+                      customer:
+                        first_name: Ana
+                      items_summary: 2 pizzas
+                      item_count: 2
+                      notes: Ring twice
+                      metadata:
+                        table: '12'
+                      courier:
+                        id: cou_01j9z3k8m2q4r6s8t0v2w4x6y8
+                        external_id: driver-77
+                        display_name: Carlos
+                        vehicle: e_bike
+                      pickup_policy: any
+                      pickup_confirmations: []
+                      personal_data_erased: false
+                      created_at: '2026-10-22T14:00:00Z'
+                      updated_at: '2026-10-22T14:10:00Z'
+        '400': *id002
+        '404': *id006
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '409':
+          description: '`invalid_transition`: the event is not allowed in the delivery''s current status,
+            or the Idempotency-Key was reused with a different request or is still in progress.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401': *id003
+        '403': *id004
+        '429': *id005
+  /deliveries/{id}/cancel:
+    parameters:
+    - *id007
+    post:
+      operationId: cancelDelivery
+      summary: Cancel a delivery
+      description: 'Cancels a delivery that is not yet final. Requires scope `deliveries:write`. Problem
+        codes: `not_found` (404), `invalid_transition` (409, the delivery is already final).'
+      tags:
+      - Deliveries
+      security:
+      - SecretKey: []
+      parameters:
+      - *id008
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelDeliveryRequest'
+            examples:
+              with_reason:
+                summary: With a reason
+                value:
+                  reason: Customer cancelled the order
+              empty:
+                summary: No reason
+                value: {}
+      responses:
+        '200':
+          description: The cancelled delivery.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delivery'
+              examples:
+                default:
+                  value:
+                    id: del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                    external_id: order-1042
+                    environment: test
+                    delivery_model: direct
+                    status: cancelled
+                    pickup:
+                      location:
+                        lat: -23.5614
+                        lng: -46.6559
+                      name: Pizzaria Central
+                    dropoff:
+                      location:
+                        lat: -23.5505
+                        lng: -46.6333
+                      label: Apto 42
+                    customer:
+                      first_name: Ana
+                    items_summary: 2 pizzas
+                    item_count: 2
+                    notes: Ring twice
+                    metadata:
+                      table: '12'
+                    courier: null
+                    pickup_policy: any
+                    pickup_confirmations: []
+                    personal_data_erased: false
+                    created_at: '2026-10-22T14:00:00Z'
+                    updated_at: '2026-10-22T14:05:00Z'
+        '400': *id002
+        '404': *id006
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '409':
+          description: '`invalid_transition`: the delivery is already final, or the Idempotency-Key was
+            reused with a different request or is still in progress.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401': *id003
+        '403': *id004
+        '429': *id005
+  /deliveries/{id}/personal-data:
+    parameters:
+    - *id007
+    delete:
+      operationId: erasePersonalData
+      summary: Erase a delivery's personal data
+      description: 'Irreversibly clears the customer first name, notes, dropoff label and metadata. Allowed
+        only once the delivery is final. Requires scope `deliveries:write`. Problem codes: `not_found` (404),
+        `delivery_active` (409, the delivery is not final yet).'
+      tags:
+      - Deliveries
+      security:
+      - SecretKey: []
+      responses:
+        '200':
+          description: The delivery with its personal data erased.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delivery'
+              examples:
+                default:
+                  value:
+                    id: del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                    external_id: order-1042
+                    environment: test
+                    delivery_model: direct
+                    status: delivered
+                    pickup:
+                      location:
+                        lat: -23.5614
+                        lng: -46.6559
+                      name: Pizzaria Central
+                    dropoff:
+                      location:
+                        lat: -23.5505
+                        lng: -46.6333
+                      label: null
+                    customer:
+                      first_name: null
+                    items_summary: 2 pizzas
+                    item_count: 2
+                    notes: null
+                    metadata: {}
+                    courier: null
+                    pickup_policy: any
+                    pickup_confirmations: []
+                    personal_data_erased: true
+                    created_at: '2026-10-22T14:00:00Z'
+                    updated_at: '2026-10-22T14:00:00Z'
+        '404': *id006
+        '409':
+          description: '`delivery_active`: the delivery is not final yet.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401': *id003
+        '403': *id004
+        '429': *id005
+  /couriers/{external_id}:
+    put:
+      operationId: upsertCourier
+      summary: Create or update a courier
+      description: Creates the courier, or updates it when `external_id` already exists. Returns 201 when
+        created and 200 when updated. Requires scope `couriers:write`.
+      tags:
+      - Couriers
+      security:
+      - SecretKey: []
+      parameters:
+      - name: external_id
+        in: path
+        required: true
+        description: Your id for the courier (1 to 255 printable ASCII characters).
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 255
+          pattern: ^[ -~]+$
+        example: driver-77
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertCourierRequest'
+            examples:
+              default:
+                value:
+                  display_name: Carlos
+                  vehicle: e_bike
+                  photo_url: https://cdn.example.com/c/77.jpg
+      responses:
+        '200':
+          description: The courier was updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Courier'
+              examples:
+                default:
+                  value: &id009
+                    id: cou_01j9z3k8m2q4r6s8t0v2w4x6y8
+                    external_id: driver-77
+                    display_name: Carlos
+                    vehicle: e_bike
+                    photo_url: https://cdn.example.com/c/77.jpg
+                    created_at: '2026-10-22T13:00:00Z'
+                    updated_at: '2026-10-22T13:00:00Z'
+        '201':
+          description: The courier was created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Courier'
+              examples:
+                default:
+                  value: *id009
+        '400': *id002
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '401': *id003
+        '403': *id004
+        '429': *id005
 webhooks: {}
 components:
   securitySchemes:
@@ -43,16 +681,6 @@ components:
       type: http
       scheme: bearer
       description: Partner secret API key (`dt_sk_test_…` / `dt_sk_live_…`). Server-to-server only.
-    CourierToken:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-      description: Short-lived courier access token, bound to one courier and shift.
-    ViewerToken:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-      description: Short-lived viewer token for one delivery, exchanged from a tracking link token.
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
@@ -67,6 +695,53 @@ components:
         minLength: 1
         maxLength: 255
         pattern: '^[ -~]+$'
+    DeliveryStatusFilter:
+      name: status
+      in: query
+      description: Only deliveries in this status.
+      schema:
+        $ref: '#/components/schemas/DeliveryStatus'
+    DeliveryModelFilter:
+      name: delivery_model
+      in: query
+      description: Only deliveries of this model.
+      schema:
+        $ref: '#/components/schemas/DeliveryModel'
+    CreatedGte:
+      name: created_gte
+      in: query
+      description: Only deliveries created at or after this time.
+      schema:
+        type: string
+        format: date-time
+    CreatedLt:
+      name: created_lt
+      in: query
+      description: Only deliveries created before this time.
+      schema:
+        type: string
+        format: date-time
+    ExternalIdFilter:
+      name: external_id
+      in: query
+      description: Only the delivery with this external id.
+      schema:
+        $ref: '#/components/schemas/ExternalId'
+    Limit:
+      name: limit
+      in: query
+      description: Page size.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    StartingAfter:
+      name: starting_after
+      in: query
+      description: Return deliveries after this id (the last id of the previous page).
+      schema:
+        $ref: '#/components/schemas/DeliveryId'
   responses:
     Unauthenticated:
       description: >-
@@ -115,6 +790,19 @@ components:
             $ref: '#/components/schemas/Problem'
     PayloadTooLarge:
       description: The request body is larger than 64 KiB (`payload_too_large`).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: The resource does not exist for this tenant and environment (`not_found`). Resources of
+        other tenants or environments are never revealed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ValidationFailed:
+      description: The request is invalid (`validation_failed`); `errors` lists each failing field.
       content:
         application/problem+json:
           schema:
@@ -200,3 +888,423 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/FieldError'
+    DeliveryModel:
+      type: string
+      description: '`direct`: the partner reports progress. `end_to_end`: DT couriers report it.'
+      enum:
+      - direct
+      - end_to_end
+    DeliveryStatus:
+      type: string
+      description: '`delivered`, `cancelled` and `failed` are final.'
+      enum:
+      - confirmed
+      - courier_assigned
+      - at_pickup
+      - picked_up
+      - arriving
+      - delivered
+      - cancelled
+      - failed
+    PickupPolicy:
+      type: string
+      description: Who must confirm the pickup. A delivery keeps the policy it was created with.
+      enum:
+      - any
+      - courier
+      - store
+      - courier_and_store
+    Vehicle:
+      type: string
+      enum:
+      - bicycle
+      - e_bike
+      - scooter
+      - car
+      - on_foot
+    DeliveryEventType:
+      type: string
+      enum:
+      - at_pickup
+      - pickup_confirmed
+      - arriving
+      - delivered
+      - failed
+    DeliveryEventOutcome:
+      type: string
+      enum:
+      - applied
+      - duplicate
+      - stale
+      - conflict
+      - recorded
+    DeliveryId:
+      type: string
+      pattern: ^del_[0-9a-z]{26}$
+      examples:
+      - del_01j9z3k8m2q4r6s8t0v2w4x6y8
+    CourierId:
+      type: string
+      pattern: ^cou_[0-9a-z]{26}$
+      examples:
+      - cou_01j9z3k8m2q4r6s8t0v2w4x6y8
+    ExternalId:
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: ^[ -~]+$
+      description: Your identifier (1 to 255 printable ASCII characters).
+      examples:
+      - order-1042
+    Metadata:
+      type: object
+      description: Up to 50 string key/value pairs. Keys are 1 to 40 characters of `a-zA-Z0-9_`; values are
+        at most 500 characters.
+      maxProperties: 50
+      propertyNames: &id001
+        type: string
+        minLength: 1
+        maxLength: 40
+        pattern: ^[a-zA-Z0-9_]+$
+      additionalProperties: &id002
+        type: string
+        maxLength: 500
+      examples: &id003
+      - table: '12'
+    Pickup:
+      type: object
+      required:
+      - location
+      - name
+      additionalProperties: false
+      properties:
+        location:
+          $ref: '#/components/schemas/LatLng'
+        name:
+          type: string
+          maxLength: 100
+    Dropoff:
+      type: object
+      required:
+      - location
+      additionalProperties: false
+      properties:
+        location:
+          $ref: '#/components/schemas/LatLng'
+        label:
+          type: string
+          maxLength: 100
+    Customer:
+      type: object
+      additionalProperties: false
+      properties:
+        first_name:
+          type: string
+          maxLength: 50
+    CreateDeliveryRequest:
+      type: object
+      description: Pickup and dropoff must be at most 100 km apart.
+      additionalProperties: false
+      required:
+      - external_id
+      - pickup
+      - dropoff
+      properties:
+        external_id:
+          $ref: '#/components/schemas/ExternalId'
+        delivery_model:
+          $ref: '#/components/schemas/DeliveryModel'
+        pickup:
+          $ref: '#/components/schemas/Pickup'
+        dropoff:
+          $ref: '#/components/schemas/Dropoff'
+        customer:
+          $ref: '#/components/schemas/Customer'
+        items_summary:
+          type: string
+          maxLength: 200
+        item_count:
+          type: integer
+          minimum: 0
+          maximum: 999
+        notes:
+          type: string
+          maxLength: 500
+        metadata:
+          $ref: '#/components/schemas/Metadata'
+    UpdateDeliveryRequest:
+      type: object
+      description: Only the fields sent change. `null` clears `dropoff_label`, `notes` and `metadata`; the
+        dropoff location cannot be cleared.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        dropoff:
+          type: object
+          required:
+          - location
+          additionalProperties: false
+          properties:
+            location:
+              $ref: '#/components/schemas/LatLng'
+        dropoff_label:
+          type:
+          - string
+          - 'null'
+          maxLength: 100
+        notes:
+          type:
+          - string
+          - 'null'
+          maxLength: 500
+        metadata:
+          type:
+          - object
+          - 'null'
+          description: Up to 50 string key/value pairs. Keys are 1 to 40 characters of `a-zA-Z0-9_`; values
+            are at most 500 characters.
+          maxProperties: 50
+          propertyNames: *id001
+          additionalProperties: *id002
+          examples: *id003
+    AssignCourierRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - courier_id
+      properties:
+        courier_id:
+          $ref: '#/components/schemas/CourierId'
+    ReportDeliveryEventRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - event_id
+      - type
+      properties:
+        event_id:
+          type: string
+          minLength: 1
+          maxLength: 255
+          pattern: ^[ -~]+$
+          description: Your id for this report; a repeat is reported as `duplicate`.
+        type:
+          $ref: '#/components/schemas/DeliveryEventType'
+        occurred_at:
+          type: string
+          format: date-time
+          description: When it happened. At most 5 minutes after receipt; defaults to receipt time.
+        by:
+          type: string
+          enum:
+          - partner
+          - store
+          description: Who confirms. Only meaningful for `pickup_confirmed`; defaults to `partner`.
+        reason:
+          type: string
+          maxLength: 200
+    CancelDeliveryRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          maxLength: 200
+    UpsertCourierRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - display_name
+      - vehicle
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 50
+        vehicle:
+          $ref: '#/components/schemas/Vehicle'
+        photo_url:
+          type: string
+          maxLength: 2048
+          pattern: ^https://[^\s]+$
+          format: uri
+    CourierRef:
+      type: object
+      required:
+      - id
+      - external_id
+      - display_name
+      - vehicle
+      properties:
+        id:
+          $ref: '#/components/schemas/CourierId'
+        external_id:
+          $ref: '#/components/schemas/ExternalId'
+        display_name:
+          type: string
+        vehicle:
+          $ref: '#/components/schemas/Vehicle'
+    Courier:
+      type: object
+      required:
+      - id
+      - external_id
+      - display_name
+      - vehicle
+      - photo_url
+      - created_at
+      - updated_at
+      properties:
+        id:
+          $ref: '#/components/schemas/CourierId'
+        external_id:
+          $ref: '#/components/schemas/ExternalId'
+        display_name:
+          type: string
+        vehicle:
+          $ref: '#/components/schemas/Vehicle'
+        photo_url:
+          type:
+          - string
+          - 'null'
+          format: uri
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PickupConfirmation:
+      type: object
+      required:
+      - by
+      - at
+      properties:
+        by:
+          type: string
+          enum:
+          - courier
+          - store
+          - partner
+        at:
+          type: string
+          format: date-time
+    Delivery:
+      type: object
+      required:
+      - id
+      - external_id
+      - environment
+      - delivery_model
+      - status
+      - pickup
+      - dropoff
+      - customer
+      - items_summary
+      - item_count
+      - notes
+      - metadata
+      - courier
+      - pickup_policy
+      - pickup_confirmations
+      - personal_data_erased
+      - created_at
+      - updated_at
+      properties:
+        id:
+          $ref: '#/components/schemas/DeliveryId'
+        external_id:
+          $ref: '#/components/schemas/ExternalId'
+        environment:
+          $ref: '#/components/schemas/Environment'
+        delivery_model:
+          $ref: '#/components/schemas/DeliveryModel'
+        status:
+          $ref: '#/components/schemas/DeliveryStatus'
+        pickup:
+          type: object
+          required:
+          - location
+          - name
+          properties:
+            location:
+              $ref: '#/components/schemas/LatLng'
+            name:
+              type: string
+        dropoff:
+          type: object
+          required:
+          - location
+          - label
+          properties:
+            location:
+              $ref: '#/components/schemas/LatLng'
+            label:
+              type:
+              - string
+              - 'null'
+        customer:
+          type: object
+          required:
+          - first_name
+          properties:
+            first_name:
+              type:
+              - string
+              - 'null'
+        items_summary:
+          type:
+          - string
+          - 'null'
+        item_count:
+          type:
+          - integer
+          - 'null'
+        notes:
+          type:
+          - string
+          - 'null'
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        courier:
+          oneOf:
+          - $ref: '#/components/schemas/CourierRef'
+          - type: 'null'
+        pickup_policy:
+          $ref: '#/components/schemas/PickupPolicy'
+        pickup_confirmations:
+          type: array
+          items:
+            $ref: '#/components/schemas/PickupConfirmation'
+        personal_data_erased:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    DeliveryList:
+      type: object
+      required:
+      - data
+      - has_more
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Delivery'
+        has_more:
+          type: boolean
+    DeliveryEventResult:
+      type: object
+      required:
+      - outcome
+      - delivery
+      properties:
+        outcome:
+          $ref: '#/components/schemas/DeliveryEventOutcome'
+        delivery:
+          $ref: '#/components/schemas/Delivery'
