@@ -9,3 +9,4 @@ backend/**/bin/
 *.out
 # executor scratch (plan ledgers, review packages)
 .superpowers/
+backend/tools/dtctl/dtctl

@@ -389,3 +389,73 @@ func TestRevokeEndToEndPublishes(t *testing.T) {
 		t.Fatal("event contains the plaintext key")
 	}
 }
+
+func TestSetTenantSettingsRPC(t *testing.T) {
+	t.Parallel()
+	srv, pool := server(t)
+	c := authed(srv)
+	ctx := context.Background()
+
+	created, err := c.CreateTenant(ctx, &accountsv1.CreateTenantRequest{Name: "Acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tid := created.GetTenant().GetId()
+	def := created.GetTenant().GetSettings()
+	if def == nil || strings.Join(def.GetAllowedModels(), ",") != "direct,end_to_end" || def.GetDefaultModel() != "direct" ||
+		def.GetPickupConfirmation() != "any" || def.GetUpdatedAt() == nil {
+		t.Fatalf("created tenant settings = %v", def)
+	}
+
+	bad := []*accountsv1.SetTenantSettingsRequest{
+		{Actor: owner, TenantId: tid, AllowedModels: []string{"direct"}, DefaultModel: "direct", PickupConfirmation: "nobody"},
+		{Actor: owner, TenantId: tid, AllowedModels: []string{"end_to_end"}, DefaultModel: "direct", PickupConfirmation: "any"},
+		{Actor: owner, TenantId: tid, DefaultModel: "direct", PickupConfirmation: "any"},
+	}
+	for _, req := range bad {
+		cctx, info := connect.NewClientContext(ctx)
+		_, err := c.SetTenantSettings(cctx, req)
+		if connect.CodeOf(err) != connect.CodeInvalidArgument || dtCode(info) != "invalid_argument" {
+			t.Fatalf("%v: code %v, dt-code %q", req, err, dtCode(info))
+		}
+	}
+
+	for _, tc := range []struct {
+		name   string
+		req    *accountsv1.SetTenantSettingsRequest
+		code   connect.Code
+		dtCode string
+	}{
+		{"developer", &accountsv1.SetTenantSettingsRequest{Actor: dev, TenantId: tid, AllowedModels: []string{"direct"}, DefaultModel: "direct", PickupConfirmation: "any"},
+			connect.CodePermissionDenied, "forbidden_role"},
+		{"unknown tenant", &accountsv1.SetTenantSettingsRequest{Actor: owner, TenantId: "ten_missing", AllowedModels: []string{"direct"}, DefaultModel: "direct", PickupConfirmation: "any"},
+			connect.CodeNotFound, "not_found"},
+	} {
+		cctx, info := connect.NewClientContext(ctx)
+		_, err := c.SetTenantSettings(cctx, tc.req)
+		if connect.CodeOf(err) != tc.code || dtCode(info) != tc.dtCode {
+			t.Fatalf("%s: %v, dt-code %q", tc.name, err, dtCode(info))
+		}
+	}
+
+	res, err := c.SetTenantSettings(ctx, &accountsv1.SetTenantSettingsRequest{
+		Actor: owner, TenantId: tid, AllowedModels: []string{"end_to_end"}, DefaultModel: "end_to_end", PickupConfirmation: "courier",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := res.GetSettings()
+	if strings.Join(got.GetAllowedModels(), ",") != "end_to_end" || got.GetDefaultModel() != "end_to_end" ||
+		got.GetPickupConfirmation() != "courier" || !got.GetUpdatedAt().AsTime().After(def.GetUpdatedAt().AsTime()) {
+		t.Fatalf("settings = %v", got)
+	}
+
+	// Creation and the update each enqueued a tenant.settings_set event.
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM outbox WHERE subject = 'accounts.tenant.settings_set'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("settings events = %d, want 2", n)
+	}
+}

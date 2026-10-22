@@ -42,7 +42,8 @@ func (q *Queries) GetKeyForUpdate(ctx context.Context, arg GetKeyForUpdateParams
 }
 
 const getTenant = `-- name: GetTenant :one
-SELECT id, name, live_enabled, created_at FROM tenants WHERE id = $1
+SELECT id, name, live_enabled, created_at, allowed_models, default_model, pickup_confirmation, settings_updated_at
+FROM tenants WHERE id = $1
 `
 
 func (q *Queries) GetTenant(ctx context.Context, id string) (Tenant, error) {
@@ -53,6 +54,10 @@ func (q *Queries) GetTenant(ctx context.Context, id string) (Tenant, error) {
 		&i.Name,
 		&i.LiveEnabled,
 		&i.CreatedAt,
+		&i.AllowedModels,
+		&i.DefaultModel,
+		&i.PickupConfirmation,
+		&i.SettingsUpdatedAt,
 	)
 	return i, err
 }
@@ -99,14 +104,19 @@ func (q *Queries) InsertKey(ctx context.Context, arg InsertKeyParams) error {
 }
 
 const insertTenant = `-- name: InsertTenant :exec
-INSERT INTO tenants (id, name, live_enabled, created_at) VALUES ($1, $2, $3, $4)
+INSERT INTO tenants (id, name, live_enabled, created_at, allowed_models, default_model, pickup_confirmation, settings_updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 `
 
 type InsertTenantParams struct {
-	ID          string
-	Name        string
-	LiveEnabled bool
-	CreatedAt   time.Time
+	ID                 string
+	Name               string
+	LiveEnabled        bool
+	CreatedAt          time.Time
+	AllowedModels      []string
+	DefaultModel       string
+	PickupConfirmation string
+	SettingsUpdatedAt  time.Time
 }
 
 func (q *Queries) InsertTenant(ctx context.Context, arg InsertTenantParams) error {
@@ -115,6 +125,10 @@ func (q *Queries) InsertTenant(ctx context.Context, arg InsertTenantParams) erro
 		arg.Name,
 		arg.LiveEnabled,
 		arg.CreatedAt,
+		arg.AllowedModels,
+		arg.DefaultModel,
+		arg.PickupConfirmation,
+		arg.SettingsUpdatedAt,
 	)
 	return err
 }
@@ -173,6 +187,33 @@ type SetLiveEnabledParams struct {
 
 func (q *Queries) SetLiveEnabled(ctx context.Context, arg SetLiveEnabledParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setLiveEnabled, arg.ID, arg.LiveEnabled)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setTenantSettings = `-- name: SetTenantSettings :execrows
+UPDATE tenants SET allowed_models = $2, default_model = $3, pickup_confirmation = $4, settings_updated_at = $5
+WHERE id = $1
+`
+
+type SetTenantSettingsParams struct {
+	ID                 string
+	AllowedModels      []string
+	DefaultModel       string
+	PickupConfirmation string
+	SettingsUpdatedAt  time.Time
+}
+
+func (q *Queries) SetTenantSettings(ctx context.Context, arg SetTenantSettingsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setTenantSettings,
+		arg.ID,
+		arg.AllowedModels,
+		arg.DefaultModel,
+		arg.PickupConfirmation,
+		arg.SettingsUpdatedAt,
+	)
 	if err != nil {
 		return 0, err
 	}

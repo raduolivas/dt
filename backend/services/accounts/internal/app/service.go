@@ -21,6 +21,8 @@ const (
 	EventKeyCreated   = "apikey.created"
 	EventKeyExpirySet = "apikey.expiry_set"
 	EventKeyRevoked   = "apikey.revoked"
+	// EventTenantSettingsSet is tenant-level: its envelope has no environment.
+	EventTenantSettingsSet = "tenant.settings_set"
 )
 
 const maxNameLen = 100
@@ -47,12 +49,50 @@ func (s *Service) CreateTenant(ctx context.Context, name string) (domain.Tenant,
 	if err != nil {
 		return domain.Tenant{}, err
 	}
-	t := domain.Tenant{ID: ids.New(ids.Tenant), Name: name, CreatedAt: s.Clock.Now()}
-	err = s.Repo.InTx(ctx, func(ctx context.Context, tx Tx) error { return tx.InsertTenant(ctx, t) })
+	now := s.Clock.Now()
+	settings := domain.DefaultTenantSettings()
+	settings.UpdatedAt = now
+	t := domain.Tenant{ID: ids.New(ids.Tenant), Name: name, CreatedAt: now, Settings: settings}
+	err = s.Repo.InTx(ctx, func(ctx context.Context, tx Tx) error {
+		if err := tx.InsertTenant(ctx, t); err != nil {
+			return err
+		}
+		return publishSettings(ctx, tx, t.ID, settings)
+	})
 	if err != nil {
 		return domain.Tenant{}, err
 	}
 	return t, nil
+}
+
+// SetTenantSettings replaces a tenant's delivery settings and announces them.
+// The caller's UpdatedAt is ignored; the clock stamps it.
+func (s *Service) SetTenantSettings(ctx context.Context, actor domain.Actor, tenantID string, in domain.TenantSettings) (domain.TenantSettings, error) {
+	if err := domain.CanSetSettings(actor); err != nil {
+		return domain.TenantSettings{}, err
+	}
+	in.AllowedModels = slices.Clone(in.AllowedModels)
+	in.UpdatedAt = s.Clock.Now()
+	if err := in.Validate(); err != nil {
+		return domain.TenantSettings{}, err
+	}
+	err := s.Repo.InTx(ctx, func(ctx context.Context, tx Tx) error {
+		if err := tx.SetTenantSettings(ctx, tenantID, in); err != nil {
+			return err
+		}
+		return publishSettings(ctx, tx, tenantID, in)
+	})
+	if err != nil {
+		return domain.TenantSettings{}, err
+	}
+	return in, nil
+}
+
+func publishSettings(ctx context.Context, tx Tx, tenantID string, st domain.TenantSettings) error {
+	return tx.Publish(ctx, EventTenantSettingsSet, tenantID, "", &eventsv1.TenantSettingsSet{
+		TenantId: tenantID, AllowedModels: st.AllowedModels, DefaultModel: st.DefaultModel,
+		PickupConfirmation: st.PickupConfirmation, UpdatedAt: timestamppb.New(st.UpdatedAt),
+	})
 }
 
 // SetLiveEnabled flips the live-mode flag (system use; no actor).

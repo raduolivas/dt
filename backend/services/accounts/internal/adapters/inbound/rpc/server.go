@@ -56,6 +56,7 @@ func (s *Server) CreateTenant(ctx context.Context, req *accountsv1.CreateTenantR
 	s.log.InfoContext(ctx, "tenant_created", slog.String("tenant_id", t.ID))
 	return &accountsv1.CreateTenantResponse{Tenant: &accountsv1.Tenant{
 		Id: t.ID, Name: t.Name, LiveEnabled: t.LiveEnabled, CreatedAt: timestamppb.New(t.CreatedAt),
+		Settings: toProtoSettings(t.Settings),
 	}}, nil
 }
 
@@ -111,13 +112,19 @@ func (s *Server) ListApiKeys(ctx context.Context, req *accountsv1.ListApiKeysReq
 	return &accountsv1.ListApiKeysResponse{ApiKeys: out}, nil
 }
 
-// logKey logs a key mutation by id only: never the secret, hash or lookup.
-// SetTenantSettings is declared by the contract; the use case lands with the
-// tenant settings task.
-func (s *Server) SetTenantSettings(_ context.Context, _ *accountsv1.SetTenantSettingsRequest) (*accountsv1.SetTenantSettingsResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "set tenant settings is not implemented yet")
+func (s *Server) SetTenantSettings(ctx context.Context, req *accountsv1.SetTenantSettingsRequest) (*accountsv1.SetTenantSettingsResponse, error) {
+	st, err := s.svc.SetTenantSettings(ctx, toActor(req.GetActor()), req.GetTenantId(), domain.TenantSettings{
+		AllowedModels: req.GetAllowedModels(), DefaultModel: req.GetDefaultModel(),
+		PickupConfirmation: req.GetPickupConfirmation(),
+	})
+	if err != nil {
+		return nil, ToConnect(ctx, s.log, err)
+	}
+	s.log.InfoContext(ctx, "tenant_settings_set", slog.String("tenant_id", req.GetTenantId()))
+	return &accountsv1.SetTenantSettingsResponse{Settings: toProtoSettings(st)}, nil
 }
 
+// logKey logs a key mutation by id only: never the secret, hash or lookup.
 func (s *Server) logKey(ctx context.Context, msg string, k domain.APIKey) {
 	s.log.InfoContext(ctx, msg, slog.String("credential_id", k.ID), slog.String("tenant_id", k.TenantID),
 		slog.String("environment", string(k.Env)))
@@ -159,6 +166,13 @@ func toProto(k domain.APIKey) *accountsv1.ApiKey {
 		Id: k.ID, TenantId: k.TenantID, Environment: fromEnv(k.Env), Name: k.Name,
 		DisplayPrefix: k.DisplayPrefix, Scopes: k.Scopes, AllowedIps: ips,
 		CreatedAt: timestamppb.New(k.CreatedAt), ExpiresAt: ts(k.ExpiresAt), RevokedAt: ts(k.RevokedAt),
+	}
+}
+
+func toProtoSettings(s domain.TenantSettings) *accountsv1.TenantSettings {
+	return &accountsv1.TenantSettings{
+		AllowedModels: s.AllowedModels, DefaultModel: s.DefaultModel,
+		PickupConfirmation: s.PickupConfirmation, UpdatedAt: timestamppb.New(s.UpdatedAt),
 	}
 }
 

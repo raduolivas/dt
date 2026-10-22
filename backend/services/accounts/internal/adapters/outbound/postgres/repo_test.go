@@ -50,7 +50,9 @@ func setup(t *testing.T) (*pgxpool.Pool, *postgres.Repo) {
 }
 
 func tenant(id string) domain.Tenant {
-	return domain.Tenant{ID: id, Name: "Acme " + id, CreatedAt: t0}
+	st := domain.DefaultTenantSettings()
+	st.UpdatedAt = t0
+	return domain.Tenant{ID: id, Name: "Acme " + id, CreatedAt: t0, Settings: st}
 }
 
 func key(id, tenantID, lookup string) domain.APIKey {
@@ -281,5 +283,96 @@ func TestDuplicateLookupIsAnError(t *testing.T) {
 	}
 	if errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want a storage error", err)
+	}
+}
+
+func TestSettingsPersistAndEnqueue(t *testing.T) {
+	t.Parallel()
+	pool, r := setup(t)
+	mustTx(t, r, func(ctx context.Context, tx app.Tx) error { return tx.InsertTenant(ctx, tenant("ten_1")) })
+
+	want := domain.TenantSettings{
+		AllowedModels: []string{"end_to_end"}, DefaultModel: "end_to_end",
+		PickupConfirmation: "courier_and_store", UpdatedAt: t0.Add(time.Hour),
+	}
+	payload := &eventsv1.TenantSettingsSet{TenantId: "ten_1", AllowedModels: want.AllowedModels,
+		DefaultModel: want.DefaultModel, PickupConfirmation: want.PickupConfirmation}
+
+	// A failed transaction leaves neither the row change nor an outbox row.
+	errRollback := errors.New("rollback")
+	err := inTx(t, r, func(ctx context.Context, tx app.Tx) error {
+		if err := tx.SetTenantSettings(ctx, "ten_1", want); err != nil {
+			return err
+		}
+		if err := tx.Publish(ctx, app.EventTenantSettingsSet, "ten_1", "", payload); err != nil {
+			return err
+		}
+		return errRollback
+	})
+	if !errors.Is(err, errRollback) {
+		t.Fatalf("err = %v", err)
+	}
+	if n := countOutbox(t, pool); n != 0 {
+		t.Fatalf("outbox has %d rows after rollback", n)
+	}
+	mustTx(t, r, func(ctx context.Context, tx app.Tx) error {
+		got, err := tx.GetTenant(ctx, "ten_1")
+		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(got.Settings, tenant("ten_1").Settings) {
+			t.Errorf("settings after rollback = %+v", got.Settings)
+		}
+		return nil
+	})
+
+	mustTx(t, r, func(ctx context.Context, tx app.Tx) error {
+		if err := tx.SetTenantSettings(ctx, "ten_1", want); err != nil {
+			return err
+		}
+		return tx.Publish(ctx, app.EventTenantSettingsSet, "ten_1", "", payload)
+	})
+	mustTx(t, r, func(ctx context.Context, tx app.Tx) error {
+		got, err := tx.GetTenant(ctx, "ten_1")
+		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(got.Settings, want) {
+			t.Errorf("settings = %+v, want %+v", got.Settings, want)
+		}
+		if err := tx.SetTenantSettings(ctx, "ten_missing", want); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("missing tenant: %v", err)
+		}
+		return nil
+	})
+	var subject string
+	var raw []byte
+	if err := pool.QueryRow(context.Background(), `SELECT subject, payload FROM outbox`).Scan(&subject, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if subject != "accounts.tenant.settings_set" {
+		t.Errorf("subject = %q", subject)
+	}
+	var env eventsv1.Envelope
+	if err := proto.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.GetType() != "tenant.settings_set" || env.GetTenantId() != "ten_1" || env.GetSubject() != nil ||
+		env.GetEnvironment() != eventsv1.Environment_ENVIRONMENT_UNSPECIFIED {
+		t.Errorf("envelope = %v", &env)
+	}
+
+	// The CHECK constraints mirror Validate.
+	for _, q := range []string{
+		`UPDATE tenants SET allowed_models = '{}'`,
+		`UPDATE tenants SET allowed_models = '{drone}'`,
+		`UPDATE tenants SET allowed_models = '{direct,direct}'`,
+		`UPDATE tenants SET allowed_models = '{direct,NULL}'`,
+		`UPDATE tenants SET default_model = 'direct'`, // not among '{end_to_end}'
+		`UPDATE tenants SET pickup_confirmation = 'nobody'`,
+	} {
+		if _, err := pool.Exec(context.Background(), q); err == nil {
+			t.Errorf("%s: want a constraint violation", q)
+		}
 	}
 }

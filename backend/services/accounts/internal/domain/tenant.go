@@ -8,4 +8,5 @@ type Tenant struct {
 	Name        string
 	LiveEnabled bool
 	CreatedAt   time.Time
+	Settings    TenantSettings
 }

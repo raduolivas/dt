@@ -1,8 +1,14 @@
 -- name: InsertTenant :exec
-INSERT INTO tenants (id, name, live_enabled, created_at) VALUES ($1, $2, $3, $4);
+INSERT INTO tenants (id, name, live_enabled, created_at, allowed_models, default_model, pickup_confirmation, settings_updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
 
 -- name: GetTenant :one
-SELECT id, name, live_enabled, created_at FROM tenants WHERE id = $1;
+SELECT id, name, live_enabled, created_at, allowed_models, default_model, pickup_confirmation, settings_updated_at
+FROM tenants WHERE id = $1;
+
+-- name: SetTenantSettings :execrows
+UPDATE tenants SET allowed_models = $2, default_model = $3, pickup_confirmation = $4, settings_updated_at = $5
+WHERE id = $1;
 
 -- name: SetLiveEnabled :execrows
 UPDATE tenants SET live_enabled = $2 WHERE id = $1;

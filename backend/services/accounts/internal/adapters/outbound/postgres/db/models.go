@@ -41,8 +41,12 @@ type Outbox struct {
 }
 
 type Tenant struct {
-	ID          string
-	Name        string
-	LiveEnabled bool
-	CreatedAt   time.Time
+	ID                 string
+	Name               string
+	LiveEnabled        bool
+	CreatedAt          time.Time
+	AllowedModels      []string
+	DefaultModel       string
+	PickupConfirmation string
+	SettingsUpdatedAt  time.Time
 }

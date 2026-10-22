@@ -40,6 +40,7 @@ func setup(t *testing.T, live bool) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	repo.events = nil // tenant creation's settings event is covered in settings_test.go
 	if live {
 		if err := svc.SetLiveEnabled(context.Background(), ten.ID, true); err != nil {
 			t.Fatal(err)
