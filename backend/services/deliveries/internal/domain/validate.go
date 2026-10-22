@@ -41,12 +41,33 @@ func checkASCIIID(field, v string) error {
 	return nil
 }
 
-// checkLen checks v is at most max characters.
+// checkLen checks v is at most max characters and has no control
+// characters (see hasControl).
 func checkLen(field, v string, max int) error {
 	if utf8.RuneCountInString(v) > max {
 		return invalid(field, "too_long", fmt.Sprintf("must be at most %d characters", max))
 	}
+	if hasControl(v) {
+		return invalidCharacters(field)
+	}
 	return nil
+}
+
+// hasControl reports whether v holds a C0 control character (U+0000 to
+// U+001F, tab and line breaks included) or DEL (U+007F). Clear-text fields
+// are single-line labels; PostgreSQL text also refuses NUL, which would
+// otherwise surface as a 500.
+func hasControl(v string) bool {
+	for i := 0; i < len(v); i++ {
+		if v[i] < 0x20 || v[i] == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+func invalidCharacters(field string) error {
+	return invalid(field, "invalid_characters", "must not contain control characters")
 }
 
 func checkOptLen(field string, v *string, max int) error {
@@ -80,6 +101,9 @@ func checkMetadata(m map[string]string) error {
 		}
 		if utf8.RuneCountInString(v) > maxMetadataValLen {
 			return invalid("metadata", "too_long", fmt.Sprintf("values must be at most %d characters", maxMetadataValLen))
+		}
+		if hasControl(v) {
+			return invalidCharacters("metadata")
 		}
 	}
 	return nil
