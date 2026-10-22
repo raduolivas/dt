@@ -219,3 +219,28 @@ func TestReportZeroOccurredAtMeansReceivedAt(t *testing.T) {
 		t.Fatalf("occurred_at not defaulted: %+v", evs[0].Payload)
 	}
 }
+
+func TestConflictOlderEarlierStateIsStale(t *testing.T) {
+	d := pickedUp(t)
+	at := t0.Add(10 * time.Minute)
+	mustReport(t, d, rep("e1", ReportDelivered, ActorCourier, at))
+	o, evs := mustReport(t, d, rep("e2", ReportArriving, ActorPartner, at.Add(-30*time.Second)))
+	if o != OutcomeStale || len(evs) != 0 || d.Status != StatusDelivered {
+		t.Fatalf("outcome %s events %v status %s", o, evs, d.Status)
+	}
+}
+
+func TestConflictIgnoresOwnSide(t *testing.T) {
+	// The courier picks up from confirmed, the partner then delivers: the
+	// latest state change is the partner's own, so a partner at_pickup within
+	// the window is not an override of the courier's pickup.
+	d := newDel(t, ModelDirect, PolicyAny)
+	at := t0.Add(10 * time.Minute)
+	mustReport(t, d, rep("e1", ReportPickupConfirmed, ActorCourier, at))
+	mustReport(t, d, rep("e2", ReportDelivered, ActorPartner, at.Add(10*time.Second)))
+	n := len(d.History)
+	_, evs, err := d.Report(rep("e3", ReportAtPickup, ActorPartner, at.Add(20*time.Second)))
+	if !isInvalidTransition(err) || d.Status != StatusDelivered || len(evs) != 0 || len(d.History) != n {
+		t.Fatalf("err %v status %s events %v", err, d.Status, evs)
+	}
+}

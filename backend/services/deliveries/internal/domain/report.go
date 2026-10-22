@@ -95,13 +95,18 @@ func (d *Delivery) reportPickup(r Report) (Outcome, []Event, error) {
 	return OutcomeApplied, append([]Event{confirmed}, evs...), err
 }
 
-// conflicts implements the conflict rule (decision C4): r contradicts the
-// last state the other side applied within ConflictWindow, i.e. r's target
-// is not reachable from the current state but was reachable from the state
-// the other side moved from.
+// conflicts implements the conflict rule (decision C4, rulings R1/R5): the
+// latest applied state change L was made by the other side within
+// ConflictWindow, r does not report an earlier state than L reached, and
+// r's target is not reachable from the current state but was reachable
+// from the state L moved from. A late report of an earlier state is never a
+// conflict; it falls through to the stale/invalid steps.
 func (d *Delivery) conflicts(r Report, target Status) bool {
-	last := d.lastApplied(func(h HistoryEntry) bool { return h.Actor.opposes(r.Actor) })
-	if last == nil || target == d.Status {
+	last := d.lastApplied(func(HistoryEntry) bool { return true })
+	if last == nil || !last.Actor.opposes(r.Actor) || target == d.Status {
+		return false
+	}
+	if target.rank() < last.To.rank() {
 		return false
 	}
 	if delta := r.OccurredAt.Sub(last.OccurredAt).Abs(); delta > ConflictWindow {
