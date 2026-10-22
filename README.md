@@ -19,7 +19,7 @@ make doctor
 |---|---|
 | `make dev` | Build the service images, start the local stack (Postgres + PostGIS, Redis, NATS JetStream and the five services) and wait until every `/readyz` answers 200 |
 | `make seed` | After `make dev`: create the tenant `Dev Tenant` and one test key, and print a `curl` line for `GET /v1/me` |
-| `make smoke` | After `make dev`: the M1 and M2 end-to-end smoke tests (`scripts/smoke-m1.sh`, `scripts/smoke-m2.sh`, need `jq`); each prints `SMOKE OK`/`OK` |
+| `make smoke` | After `make dev`: the M1 and M2 end-to-end smoke tests (`scripts/smoke-m1.sh`, `scripts/smoke-m2.sh`, need `jq`); prints `SMOKE OK`, then `SMOKE M2 OK` and `OK` |
 | `make dtctl` | Build the dev CLI for the accounts API into `backend/bin/dtctl` |
 | `make down` | Stop the local stack and delete its volumes |
 | `make logs` | Follow the local stack logs |

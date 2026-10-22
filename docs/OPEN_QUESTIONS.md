@@ -18,6 +18,13 @@
 
 ## Open
 
+### OQ12. Plans and pricing *(new, business)*
+Two plans exist: **Direct** and **End-to-end**. Still to define:
+- Prices and what they're based on (per delivery, per month, tiers)
+- A free test (sandbox) tier
+- Limits
+- The price of paid integration support
+
 ### OQ14. Spec review items *(from the MVP spec §17; tech part answered 2026-10-20, see R20)*
 - **Cloud provider (EU region)** for staging/production, needed before milestone M3. Candidates: GCP `europe-west4` (Netherlands), AWS `eu-central-1`/`eu-west-1`, Scaleway/OVH (EU-owned).
 - **Product name and domain.**
@@ -30,13 +37,6 @@ The OpenAPI `lat`/`lng` fields lack `format: double`, so the generated Go models
 
 ### OQ18. A courier repeating its own state right after a partner override *(M2, behavior)*
 If a courier reports the same state it already reported, right after a partner override changed the delivery, today the report is rejected with `409 invalid_transition`. Should it be logged as `conflict` (200, recorded and ignored) instead, like other courier reports that lose to the partner?
-
-### OQ12. Plans and pricing *(new, business)*
-Two plans exist: **Direct** and **End-to-end**. Still to define:
-- Prices and what they're based on (per delivery, per month, tiers)
-- A free test (sandbox) tier
-- Limits
-- The price of paid integration support
 
 ---
 

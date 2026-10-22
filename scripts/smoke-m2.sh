@@ -58,12 +58,28 @@ new_delivery() { # EXTERNAL_ID MODEL
 
 event() { jq -nc --arg e "$1" --arg t "$2" '{event_id: $e, type: $t}'; }
 
+# deliveries_last_seq: the DELIVERIES stream's last sequence (0 before the stream exists).
+deliveries_last_seq() {
+  curl -fsS --max-time 3 "${NATS_MONITOR}/jsz?streams=true" \
+    | jq '[.account_details[]?.stream_detail[]? | select(.name == "DELIVERIES") | .state.last_seq] | add // 0'
+}
+seq_before="$(deliveries_last_seq)" || fail "NATS monitoring at ${NATS_MONITOR} is not reachable"
+
+# dtctl ARGS...: runs dtctl, failing with its stderr on error; prints stdout.
+dtctl() {
+  local err out
+  err="$(mktemp)"
+  out="$("$DTCTL" "$@" 2>"$err")" || { local msg; msg="$(cat "$err")"; rm -f "$err"; fail "dtctl $*: ${msg}"; }
+  rm -f "$err"
+  printf '%s' "$out"
+}
+
 step "1. create a tenant, a test key and delivery settings"
-tenant="$("$DTCTL" tenant create --name "Smoke M2 ${run_id}")"
+tenant="$(dtctl tenant create --name "Smoke M2 ${run_id}")"
 [[ "$tenant" == ten_* ]] || fail "tenant id ${tenant}"
-key="$("$DTCTL" key create --tenant "$tenant" --env test --name smoke-m2 2>/dev/null)"
+key="$(dtctl key create --tenant "$tenant" --env test --name smoke-m2)"
 [[ "$key" =~ ^dt_sk_test_[0-9A-Za-z]{55}$ ]] || fail "key create did not print a test secret key"
-"$DTCTL" tenant settings --tenant "$tenant" --models direct,end_to_end --default direct --pickup any 2>/dev/null
+dtctl tenant settings --tenant "$tenant" --models direct,end_to_end --default direct --pickup any >/dev/null
 echo "tenant ${tenant}" >&2
 
 # The gateway's key cache is eventually consistent (accounts outbox -> NATS).
@@ -129,24 +145,21 @@ field '.data | length' 2
 field '.data[0].id' "$d2"
 field .has_more false
 
-step "10. deliveries.delivery.* events reached the DELIVERIES stream"
-# The outbox relay publishes asynchronously; poll the NATS monitoring endpoint.
-msgs=0
+step "10. this run published its deliveries.* events to the DELIVERIES stream"
+# The stream keeps 7 days on a persistent volume, so compare with the baseline taken
+# before the flow. This run publishes 11 events: courier.upserted (1); d1 created,
+# pickup_confirmed, status_changed x3 (picked_up, arriving, delivered) and
+# personal_data_erased (6); d2 created, courier.assigned, status_changed x2
+# (courier_assigned, cancelled) (4). The outbox relay is asynchronous, so poll.
+want=11
+published=0
 for _ in $(seq 1 40); do
-  msgs="$(curl -fsS --max-time 3 "${NATS_MONITOR}/jsz?streams=true" \
-    | jq '[.account_details[]?.stream_detail[]? | select(.name == "DELIVERIES") | .state.messages] | add // 0')"
-  # 2 created + status changes (>= 4 on d1, 1 cancel on d2) is well above 6.
-  (( msgs >= 6 )) && break
+  published=$(( $(deliveries_last_seq) - seq_before ))
+  (( published >= want )) && break
   sleep 0.25
 done
-(( msgs >= 6 )) || fail "DELIVERIES stream holds ${msgs} messages, want at least 6"
-# The monitoring endpoint reports the number of distinct subjects, not their names:
-# created, status_changed, pickup_confirmed, personal_data_erased and the two
-# courier subjects make six; require at least the five delivery-side ones.
-nsubj="$(curl -fsS --max-time 3 "${NATS_MONITOR}/jsz?streams=true" \
-  | jq '[.account_details[]?.stream_detail[]? | select(.name == "DELIVERIES") | .state.num_subjects] | add // 0')"
-(( nsubj >= 5 )) || fail "DELIVERIES stream holds ${nsubj} distinct subjects, want at least 5"
-echo "   ${msgs} messages on ${nsubj} subjects in DELIVERIES" >&2
+(( published >= want )) || fail "DELIVERIES stream grew by ${published} messages, want at least ${want}"
+echo "   ${published} new messages on DELIVERIES" >&2
 
 echo "SMOKE M2 OK"
 echo OK
