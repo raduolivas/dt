@@ -11,6 +11,14 @@ const (
 	PolicyCourierAndStore PickupPolicy = "courier_and_store"
 )
 
+func (p PickupPolicy) valid() bool {
+	switch p {
+	case PolicyAny, PolicyCourier, PolicyStore, PolicyCourierAndStore:
+		return true
+	}
+	return false
+}
+
 // ConfirmedBy is who confirmed a pickup.
 type ConfirmedBy string
 

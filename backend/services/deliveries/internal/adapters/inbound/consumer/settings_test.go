@@ -60,7 +60,7 @@ func TestSettingsConsumerAppliesLatest(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- outbox.Consume(cctx, js, pool, slog.New(slog.DiscardHandler),
-			consumer.SettingsStream, consumer.SettingsConfig, consumer.Settings(repo.ApplySettings))
+			consumer.SettingsStream, consumer.SettingsConfig, consumer.Settings(repo.ApplySettings, slog.New(slog.DiscardHandler)))
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -96,6 +96,9 @@ func TestSettingsConsumerAppliesLatest(t *testing.T) {
 		}
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
+	// An invalid event first: it must be dropped, not block the ones after
+	// it (the consumer is ordered, MaxAckPending 1).
+	publish([]string{"drone"}, "drone", "any", now.Add(time.Hour))
 	publish([]string{"end_to_end"}, "end_to_end", "courier_and_store", now)
 	publish([]string{"direct"}, "direct", "store", now.Add(-time.Hour)) // older: ignored
 

@@ -66,7 +66,7 @@ func run(ctx context.Context) error {
 			sweeper := &app.PickupSweeper{Repo: repo, Clock: systemClock{}, Log: d.Log}
 			settings := func(ctx context.Context) error {
 				return outbox.Consume(ctx, d.JS, d.DB, d.Log, consumer.SettingsStream,
-					consumer.SettingsConfig, consumer.Settings(repo.ApplySettings))
+					consumer.SettingsConfig, consumer.Settings(repo.ApplySettings, d.Log))
 			}
 			return []bootstrap.Worker{relay.Run, settings, sweeper.Run}, nil
 		},

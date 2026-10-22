@@ -4,6 +4,7 @@ package consumer
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -34,8 +35,15 @@ var SettingsConfig = jetstream.ConsumerConfig{
 // Settings returns the handler that stores a tenant's settings with apply.
 // The event is tenant-level, so its environment is not checked. apply keeps
 // the newest settings by updatedAt, so an older event after a newer one is
-// ignored.
-func Settings(apply func(ctx context.Context, tx pgx.Tx, tenantID string, s domain.TenantSettings, updatedAt time.Time) error) outbox.Handler {
+// ignored. Settings that are not domain.TenantSettings.Valid (an unknown
+// model or policy, or a default outside the allowed models) are never
+// applied: the event is logged at error with its tenant and event ids only
+// and rejected as outbox.ErrPermanent, so it is terminated instead of
+// blocking the ordered consumer for every tenant.
+func Settings(apply func(ctx context.Context, tx pgx.Tx, tenantID string, s domain.TenantSettings, updatedAt time.Time) error, log *slog.Logger) outbox.Handler {
+	if log == nil {
+		log = slog.Default()
+	}
 	return func(ctx context.Context, tx pgx.Tx, env *eventsv1.Envelope) error {
 		if env.GetType() != settingsEventType {
 			return nil
@@ -59,10 +67,17 @@ func Settings(apply func(ctx context.Context, tx pgx.Tx, tenantID string, s doma
 		for i, m := range ev.GetAllowedModels() {
 			models[i] = domain.Model(m)
 		}
-		return apply(ctx, tx, tenantID, domain.TenantSettings{
+		s := domain.TenantSettings{
 			AllowedModels: models,
 			DefaultModel:  domain.Model(ev.GetDefaultModel()),
 			PickupPolicy:  domain.PickupPolicy(ev.GetPickupConfirmation()),
-		}, at)
+		}
+		if !s.Valid() {
+			// No payload values: only the ids say which event to look at.
+			log.ErrorContext(ctx, "tenant_settings_invalid",
+				"tenant_id", tenantID, "event_id", env.GetEventId())
+			return fmt.Errorf("invalid tenant settings: %w", outbox.ErrPermanent)
+		}
+		return apply(ctx, tx, tenantID, s, at)
 	}
 }
