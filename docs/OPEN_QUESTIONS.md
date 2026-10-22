@@ -50,6 +50,12 @@ A delivery's history grows without bound: every `stale` or recorded report with 
 ### OQ22. Who defines the `ACCOUNTS` stream *(M2 review, pre-M3)*
 `deliveries` calls `EnsureStream(ACCOUNTS)` to consume `tenant.settings_set`, so two services define the same stream's configuration. Only the owner (`accounts`) should define it, with consumers waiting for it to exist, or the configuration must be shared strictly from one place.
 
+### OQ23. A write racing a personal-data erasure *(M2 review, pre-M3)*
+A request on a delivery that starts before `DELETE /personal-data` and finishes after the purge stores its pre-erasure response (sealed) in the gateway idempotency store for up to 24 h. In-progress records have no `resource_id` yet, so the purge doesn't see them. The window is narrow (erasure needs a final delivery, and deliveries serializes on the row lock). Options: set `resource_id` at Begin for `{id}` routes and purge in-progress records too, or check for erasure before storing.
+
+### OQ24. Gateway key rotation *(M2 review, with the KMS follow-up)*
+Stored idempotency responses are sealed with the gateway's `DATA_KEYS`. A key removed from `DATA_KEYS` makes records sealed with it answer `500` until they expire, so a retired key must stay in the ring for 24 h after rotation. Document this in the key-rotation procedure.
+
 ---
 
 ## Resolved (kept for reference)
