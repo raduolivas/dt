@@ -19,6 +19,7 @@ const (
 	version   = 0x01
 	keyLen    = 32
 	nonceSize = 12
+	maxIDLen  = 16
 )
 
 // ErrOpen covers every failure to open a sealed value: tampering, an unknown
@@ -29,8 +30,9 @@ var idPattern = regexp.MustCompile(`^[a-z0-9]{1,16}$`)
 
 // Box seals with the current key and opens with any configured key.
 type Box struct {
-	currentID string
-	aeads     map[string]cipher.AEAD
+	currentID    string
+	currentIDLen byte // len(currentID), computed once after the id pattern check (<=16)
+	aeads        map[string]cipher.AEAD
 }
 
 // ParseKeys builds a Box from spec (`id:base64[,id:base64...]`) and the id of
@@ -43,7 +45,14 @@ func ParseKeys(spec, current string) (*Box, error) {
 	if current == "" {
 		return nil, errors.New("sealbox: current key id is required")
 	}
+	if !idPattern.MatchString(current) {
+		// Never echo the value: an operator may have pasted key material here.
+		return nil, fmt.Errorf("sealbox: current key id must match %s", idPattern)
+	}
 	b := &Box{currentID: current, aeads: map[string]cipher.AEAD{}}
+	if n := len(current); n <= maxIDLen {
+		b.currentIDLen = byte(n)
+	}
 	for i, entry := range strings.Split(spec, ",") {
 		id, enc, ok := strings.Cut(strings.TrimSpace(entry), ":")
 		if !ok {
@@ -82,7 +91,7 @@ func ParseKeys(spec, current string) (*Box, error) {
 func (b *Box) Seal(plaintext, aad []byte) ([]byte, error) {
 	aead := b.aeads[b.currentID]
 	out := make([]byte, 0, 2+len(b.currentID)+nonceSize+len(plaintext)+aead.Overhead())
-	out = append(out, version, byte(len(b.currentID)))
+	out = append(out, version, b.currentIDLen)
 	out = append(out, b.currentID...)
 	nonceStart := len(out)
 	out = append(out, make([]byte, nonceSize)...)

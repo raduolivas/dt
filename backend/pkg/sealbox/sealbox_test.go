@@ -116,6 +116,13 @@ func TestParseKeysErrorDoesNotLeakKeyMaterial(t *testing.T) {
 	}
 }
 
+func TestParseKeysDoesNotEchoCurrent(t *testing.T) {
+	leaky := key(9)
+	_, err := sealbox.ParseKeys("k1:"+key(1), leaky)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), leaky)
+}
+
 func TestSealNonceUnique(t *testing.T) {
 	b := newBox(t)
 	seen := map[string]struct{}{}
