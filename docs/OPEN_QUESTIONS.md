@@ -1,7 +1,7 @@
 # DT: Open Questions
 
 > Standalone file for sharing with another AI or a person. It's self-contained, so it can be read without the other files.
-> **Last updated:** 2026-10-22 (OQ16–OQ22 added after M2, OQ19–OQ22 from the final review, to settle before M3; OQ14 tech part and OQ15 answered 2026-10-20) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+> **Last updated:** 2026-10-23 (OQ16–OQ24 answered, see R22; cloud provider chosen, see R23; OQ14 tech part and OQ15 answered 2026-10-20) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
 ## Context in 30 seconds
 
@@ -11,7 +11,7 @@
 
 ## Suggested order to answer
 
-1. **OQ14**: cloud provider (needed before M3) and product name/domain
+1. **OQ14**: product name and domain (brainstorm in progress)
 2. **OQ12**: business (plans and pricing), can be answered later
 
 ---
@@ -25,36 +25,9 @@ Two plans exist: **Direct** and **End-to-end**. Still to define:
 - Limits
 - The price of paid integration support
 
-### OQ14. Spec review items *(from the MVP spec §17; tech part answered 2026-10-20, see R20)*
-- **Cloud provider (EU region)** for staging/production, needed before milestone M3. Candidates: GCP `europe-west4` (Netherlands), AWS `eu-central-1`/`eu-west-1`, Scaleway/OVH (EU-owned).
-- **Product name and domain.**
+### OQ14. Product name and domain *(from the MVP spec §17; tech part answered 2026-10-20 (R20), cloud provider 2026-10-23 (R23))*
+- **Product name and domain.** "DT" is the working name until then.
 
-### OQ16. Who owns the deliveries tables? *(M2, security)*
-Row-level security on the deliveries tables is enabled and forced, but each service runs its migrations as its own role, which therefore owns the tables and can switch `FORCE ROW LEVEL SECURITY` off. Consider a separate migration/owner role that only the deploy pipeline uses, so the runtime role cannot weaken its own protection. Decide before the first staging deploy.
-
-### OQ17. Latitude and longitude format in the OpenAPI contract *(M2, contract)*
-The OpenAPI `lat`/`lng` fields lack `format: double`, so the generated Go models use `float32`. The gateway therefore uses its own `float64` wire structs for coordinates. Should the contract declare `format: double` (a contract change that regenerates the models and the TypeScript types)?
-
-### OQ18. A courier repeating its own state right after a partner override *(M2, behavior)*
-If a courier reports the same state it already reported, right after a partner override changed the delivery, today the report is rejected with `409 invalid_transition`. Should it be logged as `conflict` (200, recorded and ignored) instead, like other courier reports that lose to the partner?
-
-### OQ19. Order of delivery events on the stream *(M2 review, pre-M3)*
-The outbox relay publishes in `created_at` order, which is the start time of the transaction that wrote the event. Two changes to the same delivery are serialized by a row lock, but the one whose transaction started first can commit second, so `delivery.status_changed` events can reach NATS out of logical order. Before tracking and webhooks consume them: add a per-delivery sequence (or version) to the delivery event payloads, or document that consumers order by it.
-
-### OQ20. The `reason` text of history entries *(M2 review, pre-M3)*
-`reason` (cancel and event reports) is partner free text. It is stored in clear in the delivery history, carried in `delivery.status_changed` events and not cleared by the personal-data erasure. Decide: seal it and clear it on erasure, or document in the API that `reason` must not contain personal data.
-
-### OQ21. History size *(M2 review, pre-M3)*
-A delivery's history grows without bound: every `stale` or recorded report with a fresh `event_id` adds a row, and List and every change load the full history. Consider a cap on recorded reports per delivery, or a projection that keeps only what the domain needs.
-
-### OQ22. Who defines the `ACCOUNTS` stream *(M2 review, pre-M3)*
-`deliveries` calls `EnsureStream(ACCOUNTS)` to consume `tenant.settings_set`, so two services define the same stream's configuration. Only the owner (`accounts`) should define it, with consumers waiting for it to exist, or the configuration must be shared strictly from one place.
-
-### OQ23. A write racing a personal-data erasure *(M2 review, pre-M3)*
-A request on a delivery that starts before `DELETE /personal-data` and finishes after the purge stores its pre-erasure response (sealed) in the gateway idempotency store for up to 24 h. In-progress records have no `resource_id` yet, so the purge doesn't see them. The window is narrow (erasure needs a final delivery, and deliveries serializes on the row lock). Options: set `resource_id` at Begin for `{id}` routes and purge in-progress records too, or check for erasure before storing.
-
-### OQ24. Gateway key rotation *(M2 review, with the KMS follow-up)*
-Stored idempotency responses are sealed with the gateway's `DATA_KEYS`. A key removed from `DATA_KEYS` makes records sealed with it answer `500` until they expire, so a retired key must stay in the ring for 24 h after rotation. Document this in the key-rotation procedure.
 
 ---
 
@@ -83,3 +56,5 @@ Stored idempotency responses are sealed with the gateway's `DATA_KEYS`. A key re
 | R19 | Approve the MVP design (OQ1)? | **Yes.** Spec written: `superpowers/specs/2026-10-18-dt-mvp-design.md`. | 2026-10-18 |
 | R20 | Internal tech (OQ14 part)? | **Confirmed:** NATS JetStream for events, gRPC via Connect for service-to-service calls. | 2026-10-20 |
 | R21 | `GET /v1/me` and rate-limiter outage behavior (OQ15)? | **Yes** to a public `GET /v1/me` (check a key, first quickstart call). When Redis is down the rate limiter **fails open** (requests are still authenticated, a warning is logged). | 2026-10-20 |
+| R22 | M2 follow-ups (OQ16–OQ24)? | **Claude's recommendations accepted.** **OQ16** a separate `migrator` role owns the tables and is used only by the deploy pipeline; runtime roles get DML grants only, so they can't weaken RLS. **OQ17** the contract declares `format: double` for `lat`/`lng`; regenerate the models and drop the gateway's own `float64` wire structs. **OQ18** a courier repeating its state after a partner override is `200 conflict` (recorded and ignored). **OQ19** delivery events carry a per-delivery `version`, incremented under the row lock; consumers drop events with an older version. **OQ20** `reason` is sealed and cleared on erasure. **OQ21** stale/recorded reports are capped per delivery (e.g. 200); past the cap only a counter goes up; state-changing entries are always stored. **OQ22** only `accounts` defines the `ACCOUNTS` stream; `deliveries` waits for it and is not ready until it exists. **OQ23** `{id}` routes set `resource_id` when the idempotency record starts, and the erasure purge also deletes in-progress records. **OQ24** a retired gateway data key stays in `DATA_KEYS` for 24 h after rotation (written into the key-rotation procedure). | 2026-10-23 |
+| R23 | Cloud provider (OQ14 part)? | **AWS `eu-central-1` (Frankfurt)** for staging and production (RDS Postgres + PostGIS, KMS for wrapping `DATA_KEYS`, Secrets Manager). | 2026-10-23 |
