@@ -19,7 +19,7 @@ make doctor
 |---|---|
 | `make dev` | Build the service images, start the local stack (Postgres + PostGIS, Redis, NATS JetStream and the five services) and wait until every `/readyz` answers 200 |
 | `make seed` | After `make dev`: create the tenant `Dev Tenant` and one test key, and print a `curl` line for `GET /v1/me` |
-| `make smoke` | After `make dev`: the M1 end-to-end smoke test (`scripts/smoke-m1.sh`, needs `jq`); prints `SMOKE OK` |
+| `make smoke` | After `make dev`: the M1 and M2 end-to-end smoke tests (`scripts/smoke-m1.sh`, `scripts/smoke-m2.sh`, need `jq`); prints `SMOKE OK`, then `SMOKE M2 OK` and `OK` |
 | `make dtctl` | Build the dev CLI for the accounts API into `backend/bin/dtctl` |
 | `make down` | Stop the local stack and delete its volumes |
 | `make logs` | Follow the local stack logs |
@@ -59,6 +59,40 @@ A secret is printed once on stdout and is never stored or logged; everything els
 print as `<connect code>: <dt-code>`, for example `failed_precondition: live_not_enabled`. A new key reaches
 the gateway through NATS, usually within milliseconds.
 
+## Deliveries and couriers (M2)
+
+Public routes on the gateway (`/v1`, secret key, every POST needs an `Idempotency-Key`; test and live keys both work):
+
+| Route | Scope | What it does |
+|---|---|---|
+| `PUT /v1/couriers/{external_id}` | `couriers:write` | Create (201) or update (200) a courier; returns DT's `cou_` id |
+| `POST /v1/deliveries` | `deliveries:write` | Create a delivery in `confirmed` (`201`) |
+| `GET /v1/deliveries` | `deliveries:read` | List, newest first (`limit` 1-100, `starting_after`) |
+| `GET /v1/deliveries/{id}` | `deliveries:read` | Get one delivery |
+| `PATCH /v1/deliveries/{id}` | `deliveries:write` | Change dropoff, dropoff label, notes or metadata (the dropoff location only before pickup) |
+| `POST /v1/deliveries/{id}/assignment` | `deliveries:write` | Assign a courier by `cou_` id |
+| `POST /v1/deliveries/{id}/events` | `deliveries:write` | Report progress (`event_id` makes it idempotent); returns `{outcome, delivery}` |
+| `POST /v1/deliveries/{id}/cancel` | `deliveries:write` | Cancel a delivery before pickup (`picked_up` or later: `409 invalid_transition`) |
+| `DELETE /v1/deliveries/{id}/personal-data` | `deliveries:write` | Erase personal data of a final delivery |
+
+Delivery settings per tenant (allowed models, default model, pickup confirmation rule) are set with `dtctl`.
+Note that `--default` must be one of the `--models`:
+
+```bash
+backend/bin/dtctl tenant settings --tenant "$T" --models direct,end_to_end --default direct --pickup any
+backend/bin/dtctl tenant settings --tenant "$T" --models end_to_end --default end_to_end --pickup store
+```
+
+`--pickup courier` and `--pickup courier_and_store` need a courier's own confirmation (`by: courier`), which only
+the courier endpoints (M5) can send; until then, deliveries under those rules cannot get past pickup.
+
+Until a tenant's settings reach `deliveries` (through NATS), the defaults apply: both models, `direct`, `any`.
+The `deliveries` service also needs `DATA_KEYS` (`id:base64,...`, 32-byte keys) and `DATA_KEY_CURRENT` to
+seal personal data, plus `INTERNAL_RPC_TOKEN`; it refuses to start without them. The gateway needs
+`DELIVERIES_RPC_URL` and its own `DATA_KEYS` / `DATA_KEY_CURRENT` (same format, a separate key ring):
+stored idempotency responses can carry customer data, so the gateway seals them and deletes a delivery's
+stored responses when its personal data is erased. `scripts/smoke-m2.sh` walks through the whole flow.
+
 ## Service configuration
 
 Besides `PORT`, `LOG_LEVEL` and `DATABASE_URL`, M1 adds:
@@ -70,6 +104,7 @@ Besides `PORT`, `LOG_LEVEL` and `DATABASE_URL`, M1 adds:
 | `TRUSTED_PROXIES` | gateway | comma-separated CIDRs of proxies whose `X-Forwarded-For` hops count; empty means the TCP peer is the client |
 | `REDIS_URL` | gateway | rate limits (the limiter fails open if Redis is down) |
 | `NATS_URL` | accounts, gateway | JetStream for the `accounts.*` events |
+| `DATA_KEYS`, `DATA_KEY_CURRENT` | deliveries, gateway (M2) | `id:base64,...` of 32-byte AES keys and the id that seals new values; each service has its own keys. It refuses to start without them |
 
 The values in `infra/compose/compose.yaml` are dev-only placeholders; never reuse them anywhere else.
 
@@ -89,7 +124,7 @@ web/                    pnpm workspace + Turborepo
   packages/renderer/    the Three.js tracking renderer (former prototype)
   packages/contract/    TypeScript types generated from the OpenAPI contract
 infra/compose/          local stack; postgres/init creates one schema and one role per service
-scripts/                helper scripts (wait-ready.sh, smoke-m1.sh)
+scripts/                helper scripts (wait-ready.sh, smoke-m1.sh, smoke-m2.sh)
 docs/                   project context, architecture, open questions, specs and plans
 ```
 
@@ -122,4 +157,5 @@ to watch the snapshot update live.
 - **`make dev` fails with `lookup proxy.golang.org ... i/o timeout`:** the Docker build containers have no
   network access. This happens with some rootless Docker setups. Fix Docker's networking (for example, the
   rootless network driver or the daemon `dns` setting), or build once with host networking through a
-  Compose override that sets `build.network: host` for each service.
+  Compose override that sets `build.network: host` for each service. Pass it with
+  `COMPOSE_OVERRIDE=/path/to/override.yaml make dev` (empty by default).

@@ -17,6 +17,7 @@ import (
 	accountsv1 "github.com/raduolivas/dt/backend/gen/dt/accounts/v1"
 	"github.com/raduolivas/dt/backend/gen/dt/accounts/v1/accountsv1connect"
 	eventsv1 "github.com/raduolivas/dt/backend/gen/dt/events/v1"
+	"github.com/raduolivas/dt/backend/pkg/rpcauth"
 	"github.com/raduolivas/dt/backend/services/accounts/internal/app"
 	"github.com/raduolivas/dt/backend/services/accounts/internal/domain"
 )
@@ -29,7 +30,7 @@ func Mount(mux *http.ServeMux, svc *app.Service, token string, log *slog.Logger)
 	if svc == nil || log == nil {
 		return errors.New("rpc: service and logger are required")
 	}
-	auth, err := NewAuthInterceptor(token)
+	auth, err := rpcauth.NewServerInterceptor(token)
 	if err != nil {
 		return err
 	}
@@ -55,6 +56,7 @@ func (s *Server) CreateTenant(ctx context.Context, req *accountsv1.CreateTenantR
 	s.log.InfoContext(ctx, "tenant_created", slog.String("tenant_id", t.ID))
 	return &accountsv1.CreateTenantResponse{Tenant: &accountsv1.Tenant{
 		Id: t.ID, Name: t.Name, LiveEnabled: t.LiveEnabled, CreatedAt: timestamppb.New(t.CreatedAt),
+		Settings: toProtoSettings(t.Settings),
 	}}, nil
 }
 
@@ -110,6 +112,18 @@ func (s *Server) ListApiKeys(ctx context.Context, req *accountsv1.ListApiKeysReq
 	return &accountsv1.ListApiKeysResponse{ApiKeys: out}, nil
 }
 
+func (s *Server) SetTenantSettings(ctx context.Context, req *accountsv1.SetTenantSettingsRequest) (*accountsv1.SetTenantSettingsResponse, error) {
+	st, err := s.svc.SetTenantSettings(ctx, toActor(req.GetActor()), req.GetTenantId(), domain.TenantSettings{
+		AllowedModels: req.GetAllowedModels(), DefaultModel: req.GetDefaultModel(),
+		PickupConfirmation: req.GetPickupConfirmation(),
+	})
+	if err != nil {
+		return nil, ToConnect(ctx, s.log, err)
+	}
+	s.log.InfoContext(ctx, "tenant_settings_set", slog.String("tenant_id", req.GetTenantId()))
+	return &accountsv1.SetTenantSettingsResponse{Settings: toProtoSettings(st)}, nil
+}
+
 // logKey logs a key mutation by id only: never the secret, hash or lookup.
 func (s *Server) logKey(ctx context.Context, msg string, k domain.APIKey) {
 	s.log.InfoContext(ctx, msg, slog.String("credential_id", k.ID), slog.String("tenant_id", k.TenantID),
@@ -152,6 +166,13 @@ func toProto(k domain.APIKey) *accountsv1.ApiKey {
 		Id: k.ID, TenantId: k.TenantID, Environment: fromEnv(k.Env), Name: k.Name,
 		DisplayPrefix: k.DisplayPrefix, Scopes: k.Scopes, AllowedIps: ips,
 		CreatedAt: timestamppb.New(k.CreatedAt), ExpiresAt: ts(k.ExpiresAt), RevokedAt: ts(k.RevokedAt),
+	}
+}
+
+func toProtoSettings(s domain.TenantSettings) *accountsv1.TenantSettings {
+	return &accountsv1.TenantSettings{
+		AllowedModels: s.AllowedModels, DefaultModel: s.DefaultModel,
+		PickupConfirmation: s.PickupConfirmation, UpdatedAt: timestamppb.New(s.UpdatedAt),
 	}
 }
 

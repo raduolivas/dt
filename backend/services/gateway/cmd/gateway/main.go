@@ -5,16 +5,24 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
+
+	"github.com/raduolivas/dt/backend/gen/dt/deliveries/v1/deliveriesv1connect"
 	"github.com/raduolivas/dt/backend/pkg/apikey"
 	"github.com/raduolivas/dt/backend/pkg/bootstrap"
 	"github.com/raduolivas/dt/backend/pkg/outbox"
+	"github.com/raduolivas/dt/backend/pkg/rpcauth"
+	"github.com/raduolivas/dt/backend/pkg/sealbox"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/adapters/inbound/consumer"
 	httpapi "github.com/raduolivas/dt/backend/services/gateway/internal/adapters/inbound/http"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/adapters/outbound/keyhash"
@@ -47,6 +55,17 @@ func run(ctx context.Context, ready func(addr string)) error {
 		return fmt.Errorf("gateway: config: %w", err)
 	}
 
+	// Seals stored idempotency responses, which can carry personal data.
+	box, err := sealbox.ParseKeys(os.Getenv("DATA_KEYS"), os.Getenv("DATA_KEY_CURRENT"))
+	if err != nil {
+		return fmt.Errorf("gateway: config: DATA_KEYS/DATA_KEY_CURRENT: %w", err)
+	}
+
+	deliveries, err := newDeliveriesClient(os.Getenv("DELIVERIES_RPC_URL"), os.Getenv("INTERNAL_RPC_TOKEN"))
+	if err != nil {
+		return fmt.Errorf("gateway: config: %w", err)
+	}
+
 	return bootstrap.Run(ctx, bootstrap.Options{
 		Name: "gateway",
 		// Redis is non-fatal for /readyz: the limiter fails open without it
@@ -61,10 +80,10 @@ func run(ctx context.Context, ready func(addr string)) error {
 			clock := systemClock{}
 			keys := postgres.New(d.DB)
 			limiter := redislimit.NewLimiter(d.Redis)
-			idem := postgres.NewIdempotencyStore(d.DB)
+			idem := postgres.NewIdempotencyStore(d.DB, box)
 			audit := postgres.NewAuditStore(d.DB)
 
-			httpapi.Mount(mux, httpapi.Routes(httpapi.Deps{}), httpapi.Middleware{
+			httpapi.Mount(mux, httpapi.Routes(httpapi.Deps{Deliveries: deliveries, Idempotency: idem, Log: d.Log}), httpapi.Middleware{
 				Auth:           &app.Authenticator{Keys: keys, Hasher: keyhash.New(pepper), Clock: clock},
 				TrustedProxies: trusted,
 				Log:            d.Log,
@@ -82,6 +101,25 @@ func run(ctx context.Context, ready func(addr string)) error {
 			return []bootstrap.Worker{consume, sweeper.Run, retention.Run}, nil
 		},
 	})
+}
+
+// deliveriesCallTimeout bounds every call to the deliveries service.
+const deliveriesCallTimeout = 5 * time.Second
+
+// newDeliveriesClient builds the deliveries RPC client. Errors never echo the
+// token.
+func newDeliveriesClient(baseURL, token string) (deliveriesv1connect.DeliveriesServiceClient, error) {
+	u, err := url.Parse(baseURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, errors.New("DELIVERIES_RPC_URL must be an http(s) URL")
+	}
+	auth, err := rpcauth.NewClientInterceptor(token)
+	if err != nil {
+		return nil, fmt.Errorf("INTERNAL_RPC_TOKEN: %w", err)
+	}
+	hc := &http.Client{Timeout: deliveriesCallTimeout}
+	return deliveriesv1connect.NewDeliveriesServiceClient(
+		connect.NewClient(connecthttp.NewTransport(hc, baseURL), auth)), nil
 }
 
 type systemClock struct{}

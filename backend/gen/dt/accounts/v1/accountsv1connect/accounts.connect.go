@@ -41,6 +41,9 @@ const (
 	// AccountsServiceListApiKeysProcedure is the procedure name of the AccountsService's ListApiKeys
 	// RPC.
 	AccountsServiceListApiKeysProcedure = "/dt.accounts.v1.AccountsService/ListApiKeys"
+	// AccountsServiceSetTenantSettingsProcedure is the procedure name of the AccountsService's
+	// SetTenantSettings RPC.
+	AccountsServiceSetTenantSettingsProcedure = "/dt.accounts.v1.AccountsService/SetTenantSettings"
 )
 
 var (
@@ -86,6 +89,13 @@ var (
 			Procedure:  AccountsServiceListApiKeysProcedure,
 		}
 	})
+	accountsServiceSetTenantSettingsSpec = sync.OnceValue(func() connect.Spec {
+		return connect.Spec{
+			StreamType: connect.StreamTypeUnary,
+			Schema:     v1.File_dt_accounts_v1_accounts_proto.Services().ByName("AccountsService").Methods().ByName("SetTenantSettings"),
+			Procedure:  AccountsServiceSetTenantSettingsProcedure,
+		}
+	})
 )
 
 // AccountsServiceClient is a client for the dt.accounts.v1.AccountsService service.
@@ -102,6 +112,8 @@ type AccountsServiceClient interface {
 	RevokeApiKey(context.Context, *v1.RevokeApiKeyRequest) (*v1.RevokeApiKeyResponse, error)
 	// ListApiKeys lists a tenant's keys in one environment.
 	ListApiKeys(context.Context, *v1.ListApiKeysRequest) (*v1.ListApiKeysResponse, error)
+	// SetTenantSettings replaces a tenant's delivery settings.
+	SetTenantSettings(context.Context, *v1.SetTenantSettingsRequest) (*v1.SetTenantSettingsResponse, error)
 }
 
 // NewAccountsServiceClient constructs a client for the dt.accounts.v1.AccountsService service.
@@ -124,6 +136,8 @@ type AccountsServiceHandler interface {
 	RevokeApiKey(context.Context, *v1.RevokeApiKeyRequest) (*v1.RevokeApiKeyResponse, error)
 	// ListApiKeys lists a tenant's keys in one environment.
 	ListApiKeys(context.Context, *v1.ListApiKeysRequest) (*v1.ListApiKeysResponse, error)
+	// SetTenantSettings replaces a tenant's delivery settings.
+	SetTenantSettings(context.Context, *v1.SetTenantSettingsRequest) (*v1.SetTenantSettingsResponse, error)
 }
 
 // RegisterAccountsServiceHandler registers svc as the dt.accounts.v1.AccountsService implementation
@@ -137,6 +151,7 @@ func RegisterAccountsServiceHandler(server *connect.Server, svc AccountsServiceH
 		connect.Method{Spec: accountsServiceRollApiKeySpec(), Handler: adapter.rollApiKey},
 		connect.Method{Spec: accountsServiceRevokeApiKeySpec(), Handler: adapter.revokeApiKey},
 		connect.Method{Spec: accountsServiceListApiKeysSpec(), Handler: adapter.listApiKeys},
+		connect.Method{Spec: accountsServiceSetTenantSettingsSpec(), Handler: adapter.setTenantSettings},
 	)
 }
 
@@ -165,6 +180,10 @@ func (UnimplementedAccountsServiceHandler) RevokeApiKey(context.Context, *v1.Rev
 
 func (UnimplementedAccountsServiceHandler) ListApiKeys(context.Context, *v1.ListApiKeysRequest) (*v1.ListApiKeysResponse, error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, "dt.accounts.v1.AccountsService.ListApiKeys is not implemented")
+}
+
+func (UnimplementedAccountsServiceHandler) SetTenantSettings(context.Context, *v1.SetTenantSettingsRequest) (*v1.SetTenantSettingsResponse, error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, "dt.accounts.v1.AccountsService.SetTenantSettings is not implemented")
 }
 
 type accountsServiceClient struct {
@@ -214,6 +233,14 @@ func (c *accountsServiceClient) RevokeApiKey(ctx context.Context, req *v1.Revoke
 func (c *accountsServiceClient) ListApiKeys(ctx context.Context, req *v1.ListApiKeysRequest) (*v1.ListApiKeysResponse, error) {
 	var res v1.ListApiKeysResponse
 	if err := c.client.CallUnary(ctx, accountsServiceListApiKeysSpec(), req, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+func (c *accountsServiceClient) SetTenantSettings(ctx context.Context, req *v1.SetTenantSettingsRequest) (*v1.SetTenantSettingsResponse, error) {
+	var res v1.SetTenantSettingsResponse
+	if err := c.client.CallUnary(ctx, accountsServiceSetTenantSettingsSpec(), req, &res); err != nil {
 		return nil, err
 	}
 	return &res, nil
@@ -287,6 +314,18 @@ func (h accountsServiceHandler) listApiKeys(ctx context.Context, _ connect.Spec,
 		return err
 	}
 	res, err := h.svc.ListApiKeys(ctx, &req)
+	if err != nil {
+		return err
+	}
+	return stream.Send(res)
+}
+
+func (h accountsServiceHandler) setTenantSettings(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
+	var req v1.SetTenantSettingsRequest
+	if err := stream.Receive(&req); err != nil {
+		return err
+	}
+	res, err := h.svc.SetTenantSettings(ctx, &req)
 	if err != nil {
 		return err
 	}

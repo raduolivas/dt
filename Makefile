@@ -81,7 +81,9 @@ lint: lint-go lint-web lint-contracts ## Run every linter
 # ---- local stack ------------------------------------------------------------
 .PHONY: dev down logs dtctl seed smoke
 
-COMPOSE := docker compose -f infra/compose/compose.yaml
+# COMPOSE_OVERRIDE optionally names an extra Compose file (for example one that sets
+# build.network: host on machines whose Docker build containers have no network). Empty by default.
+COMPOSE := docker compose -f infra/compose/compose.yaml $(if $(COMPOSE_OVERRIDE),-f $(COMPOSE_OVERRIDE))
 
 # dtctl talks to the local accounts service with the dev-only token from
 # infra/compose/compose.yaml.
@@ -109,8 +111,9 @@ seed: dtctl ## Create the tenant "Dev Tenant" and a test key in the running stac
 	echo "Call the API with:" >&2; \
 	echo "curl -sS -H 'Authorization: Bearer $$secret' http://127.0.0.1:8080/v1/me"
 
-smoke: dtctl ## Run the M1 end-to-end smoke test against the running stack (after make dev)
+smoke: dtctl ## Run the M1 and M2 end-to-end smoke tests against the running stack (after make dev)
 	DTCTL=$(DTCTL) scripts/smoke-m1.sh
+	DTCTL=$(DTCTL) scripts/smoke-m2.sh
 
 # ---- security and CI --------------------------------------------------------
 .PHONY: secrets ci

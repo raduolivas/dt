@@ -1,0 +1,79 @@
+syntax = "proto3";
+package dt.events.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Payloads of the delivery.* and courier.* events on the DELIVERIES stream.
+// They never carry the customer first name, notes, dropoff label or metadata.
+
+message LatLng {
+  double lat = 1;
+  double lng = 2;
+}
+
+// delivery.created
+message DeliveryCreated {
+  string delivery_id = 1;
+  string external_id = 2;
+  string delivery_model = 3; // "direct" | "end_to_end"
+  string status = 4;
+  string pickup_policy = 5; // "any" | "courier" | "store" | "courier_and_store"
+  LatLng pickup = 6;
+  string pickup_name = 7;
+  LatLng dropoff = 8;
+  google.protobuf.Timestamp created_at = 9;
+}
+
+// delivery.status_changed
+message DeliveryStatusChanged {
+  string delivery_id = 1;
+  string from = 2;
+  string to = 3;
+  string actor = 4; // "partner" | "courier" | "system"
+  google.protobuf.Timestamp occurred_at = 5;
+  string reason = 6;
+  bool overrode = 7;
+}
+
+// delivery.pickup_confirmed
+message DeliveryPickupConfirmed {
+  string delivery_id = 1;
+  string by = 2; // "courier" | "store" | "partner"
+  google.protobuf.Timestamp occurred_at = 3;
+}
+
+// delivery.pickup_confirmation_pending
+message DeliveryPickupConfirmationPending {
+  string delivery_id = 1;
+  repeated string confirmed_by = 2;
+  google.protobuf.Timestamp since = 3;
+}
+
+// delivery.updated
+message DeliveryUpdated {
+  string delivery_id = 1;
+  repeated string changed_fields = 2;
+  LatLng dropoff = 3; // set only when the dropoff location changed
+}
+
+// delivery.personal_data_erased
+message DeliveryPersonalDataErased {
+  string delivery_id = 1;
+  google.protobuf.Timestamp erased_at = 2;
+}
+
+// courier.assigned
+message CourierAssigned {
+  string delivery_id = 1;
+  string courier_id = 2;
+  google.protobuf.Timestamp assigned_at = 3;
+}
+
+// courier.upserted
+message CourierUpserted {
+  string courier_id = 1;
+  string external_id = 2;
+  string display_name = 3;
+  string vehicle = 4;
+  string photo_url = 5;
+}

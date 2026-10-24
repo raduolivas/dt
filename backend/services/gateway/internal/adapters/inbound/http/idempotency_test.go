@@ -1,7 +1,9 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/raduolivas/dt/backend/pkg/apikey"
 	"github.com/raduolivas/dt/backend/pkg/migratex"
+	"github.com/raduolivas/dt/backend/pkg/sealbox"
 	"github.com/raduolivas/dt/backend/pkg/testkit"
 	httpapi "github.com/raduolivas/dt/backend/services/gateway/internal/adapters/inbound/http"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/adapters/outbound/postgres"
@@ -47,7 +50,7 @@ func idemStore(t *testing.T) *postgres.IdempotencyStore {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	return postgres.NewIdempotencyStore(pool)
+	return postgres.NewIdempotencyStore(pool, testBox(t))
 }
 
 const idemSpec = `
@@ -401,4 +404,14 @@ func TestServerErrorIsNotStored(t *testing.T) {
 			t.Fatalf("4xx replay: %d %v calls %d", rec.Code, rec.Header(), h.calls())
 		}
 	})
+}
+
+// testBox seals with a test-only key.
+func testBox(t *testing.T) *sealbox.Box {
+	t.Helper()
+	b, err := sealbox.ParseKeys("t1:"+base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)), "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

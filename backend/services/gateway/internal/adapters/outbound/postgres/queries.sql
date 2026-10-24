@@ -23,7 +23,7 @@ ON CONFLICT (tenant_id, environment, idem_key) DO NOTHING
 RETURNING idem_key;
 
 -- name: LockIdempotencyRecord :one
-SELECT request_hash, state, locked_until, response_status, response_headers, response_body, expires_at
+SELECT request_hash, state, locked_until, response_status, response_headers, response_body, resource_id, expires_at
 FROM idempotency_records
 WHERE tenant_id = @tenant_id AND environment = @environment AND idem_key = @idem_key
 FOR UPDATE;
@@ -32,14 +32,15 @@ FOR UPDATE;
 -- Restarts an expired record or a stale in-progress one as a new claim.
 UPDATE idempotency_records
 SET request_hash = @request_hash, state = 'in_progress', locked_until = @locked_until,
-    response_status = NULL, response_headers = NULL, response_body = NULL,
+    response_status = NULL, response_headers = NULL, response_body = NULL, resource_id = NULL,
     created_at = @created_at, expires_at = @expires_at
 WHERE tenant_id = @tenant_id AND environment = @environment AND idem_key = @idem_key;
 
 -- name: CompleteIdempotencyRecord :execrows
 UPDATE idempotency_records
 SET state = 'completed', locked_until = NULL,
-    response_status = @response_status, response_headers = @response_headers, response_body = @response_body
+    response_status = @response_status, response_headers = @response_headers, response_body = @response_body,
+    resource_id = sqlc.narg(resource_id)
 WHERE tenant_id = @tenant_id AND environment = @environment AND idem_key = @idem_key
   AND state = 'in_progress' AND locked_until = @lease;
 
@@ -47,6 +48,12 @@ WHERE tenant_id = @tenant_id AND environment = @environment AND idem_key = @idem
 DELETE FROM idempotency_records
 WHERE tenant_id = @tenant_id AND environment = @environment AND idem_key = @idem_key
   AND state = 'in_progress' AND locked_until = @lease;
+
+-- name: DeleteIdempotencyRecordsForResource :execrows
+-- Erasure: drops the stored responses of one resource (they may carry its
+-- personal data).
+DELETE FROM idempotency_records
+WHERE tenant_id = @tenant_id AND environment = @environment AND resource_id = @resource_id;
 
 -- name: DeleteExpiredIdempotencyRecords :execrows
 -- One sweeper batch, oldest first; key-based so concurrent updates are safe.

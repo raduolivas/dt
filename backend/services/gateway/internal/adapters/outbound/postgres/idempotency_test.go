@@ -1,7 +1,9 @@
 package postgres_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"reflect"
 	"sync"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/raduolivas/dt/backend/pkg/sealbox"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/adapters/outbound/postgres"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/domain"
@@ -18,7 +21,17 @@ import (
 func idemSetup(t *testing.T) (*pgxpool.Pool, *postgres.IdempotencyStore) {
 	t.Helper()
 	pool, _ := setup(t)
-	return pool, postgres.NewIdempotencyStore(pool)
+	return pool, postgres.NewIdempotencyStore(pool, testBox(t))
+}
+
+// testBox seals with a test-only key.
+func testBox(t *testing.T) *sealbox.Box {
+	t.Helper()
+	b, err := sealbox.ParseKeys("t1:"+base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)), "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 var (
@@ -269,3 +282,92 @@ func TestSweeperDeletesExpired(t *testing.T) {
 type fixedClock struct{ t time.Time }
 
 func (c fixedClock) Now() time.Time { return c.t }
+
+func TestIdempotencyBodyIsSealed(t *testing.T) {
+	t.Parallel()
+	pool, s := idemSetup(t)
+	ctx := context.Background()
+	resp := app.StoredResponse{
+		Status: 201, Header: map[string][]string{"Content-Type": {"application/json"}},
+		Body: []byte(`{"id":"del_1","customer":{"first_name":"Anabela-PII"}}`), ResourceID: "del_1",
+	}
+	o := begin(t, s, scopeA, hash1, t0)
+	if err := s.Complete(ctx, scopeA, o.Lease, resp); err != nil {
+		t.Fatal(err)
+	}
+	var body []byte
+	var resource *string
+	if err := pool.QueryRow(ctx, `SELECT response_body, resource_id FROM idempotency_records
+		WHERE tenant_id = $1 AND environment = $2 AND idem_key = $3`,
+		scopeA.TenantID, string(scopeA.Env), scopeA.Key).Scan(&body, &resource); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(body, []byte("Anabela-PII")) || bytes.Contains(body, []byte("del_1")) {
+		t.Fatalf("response_body holds plaintext: %q", body)
+	}
+	if resource == nil || *resource != "del_1" {
+		t.Fatalf("resource_id = %v, want del_1", resource)
+	}
+	r := begin(t, s, scopeA, hash1, t0.Add(time.Second))
+	wantKind(t, r, app.OutcomeReplay)
+	if !reflect.DeepEqual(r.Stored, resp) {
+		t.Fatalf("replayed %+v, want %+v", r.Stored, resp)
+	}
+}
+
+// A sealed body is bound to its record (<tenant>|<env>|<key>): copied to
+// another record it cannot be opened, and Begin fails (the edge answers 500,
+// as for any store failure) rather than replaying or re-running the request.
+func TestIdempotencyBodyMovedToAnotherRecordFailsToOpen(t *testing.T) {
+	t.Parallel()
+	pool, s := idemSetup(t)
+	ctx := context.Background()
+	o := begin(t, s, scopeA, hash1, t0)
+	if err := s.Complete(ctx, scopeA, o.Lease, stored); err != nil {
+		t.Fatal(err)
+	}
+	other := app.IdempotencyScope{TenantID: "ten_b", Env: domain.EnvTest, Key: scopeA.Key}
+	if _, err := pool.Exec(ctx, `INSERT INTO idempotency_records
+		(tenant_id, environment, idem_key, request_hash, state, response_status, response_headers, response_body, expires_at)
+		SELECT $1, environment, idem_key, request_hash, state, response_status, response_headers, response_body, expires_at
+		FROM idempotency_records WHERE tenant_id = $2`, other.TenantID, scopeA.TenantID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Begin(ctx, other, hash1, t0.Add(time.Second)); err == nil {
+		t.Fatal("Begin replayed a body sealed for another record")
+	}
+}
+
+func TestIdempotencyPurgeResource(t *testing.T) {
+	t.Parallel()
+	pool, s := idemSetup(t)
+	ctx := context.Background()
+	complete := func(sc app.IdempotencyScope, resource string) {
+		t.Helper()
+		o := begin(t, s, sc, hash1, t0)
+		resp := stored
+		resp.ResourceID = resource
+		if err := s.Complete(ctx, sc, o.Lease, resp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	complete(app.IdempotencyScope{TenantID: "ten_a", Env: domain.EnvTest, Key: "create"}, "del_1")
+	complete(app.IdempotencyScope{TenantID: "ten_a", Env: domain.EnvTest, Key: "event"}, "del_1")
+	complete(app.IdempotencyScope{TenantID: "ten_a", Env: domain.EnvTest, Key: "other"}, "del_2")
+	complete(app.IdempotencyScope{TenantID: "ten_a", Env: domain.EnvLive, Key: "live"}, "del_1")
+	complete(app.IdempotencyScope{TenantID: "ten_b", Env: domain.EnvTest, Key: "tenant-b"}, "del_1")
+	complete(app.IdempotencyScope{TenantID: "ten_a", Env: domain.EnvTest, Key: "none"}, "")
+
+	n, err := s.PurgeResource(ctx, "ten_a", domain.EnvTest, "del_1")
+	if err != nil || n != 2 {
+		t.Fatalf("PurgeResource = %d, %v; want 2", n, err)
+	}
+	if got := count(t, pool, "tenant_id = 'ten_a' AND environment = 'test' AND resource_id = 'del_1'"); got != 0 {
+		t.Fatalf("%d records of del_1 left", got)
+	}
+	if got := count(t, pool, "true"); got != 4 {
+		t.Fatalf("%d records left, want 4 (other resource, env, tenant and none)", got)
+	}
+	// The purged key is free: the request runs again instead of replaying.
+	wantKind(t, begin(t, s, app.IdempotencyScope{TenantID: "ten_a", Env: domain.EnvTest, Key: "create"}, hash1, t0), app.OutcomeStarted)
+}

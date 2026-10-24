@@ -30,11 +30,13 @@ import (
 	accountsv1 "github.com/raduolivas/dt/backend/gen/dt/accounts/v1"
 	"github.com/raduolivas/dt/backend/gen/dt/accounts/v1/accountsv1connect"
 	eventsv1 "github.com/raduolivas/dt/backend/gen/dt/events/v1"
+	"github.com/raduolivas/dt/backend/pkg/rpcauth"
 )
 
 const usage = `usage:
   dtctl tenant create --name NAME
   dtctl tenant live   --tenant ID --enabled=true|false
+  dtctl tenant settings --tenant ID [--models direct,end_to_end] [--default direct] [--pickup any]
   dtctl key create    --tenant ID --env test|live [--name N] [--scope S]... [--allow-ip CIDR]...
   dtctl key roll      --tenant ID --key ID
   dtctl key revoke    --tenant ID --key ID
@@ -75,6 +77,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		name, tenant, key, env string
 		enabled                bool
 		scopes, allowIPs       list
+		settings               tenantSettings
 	)
 	switch cmd {
 	case "tenant create":
@@ -82,6 +85,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 	case "tenant live":
 		fs.StringVar(&tenant, "tenant", "", "tenant id")
 		fs.BoolVar(&enabled, "enabled", false, "allow live keys")
+	case "tenant settings":
+		fs.StringVar(&tenant, "tenant", "", "tenant id")
+		fs.Var(&settings.models, "models", "comma-separated allowed models (default direct,end_to_end)")
+		fs.StringVar(&settings.defaultModel, "default", "direct", "default model")
+		fs.StringVar(&settings.pickup, "pickup", "any", "pickup confirmation: any, courier, store or courier_and_store")
 	case "key create":
 		fs.StringVar(&tenant, "tenant", "", "tenant id")
 		fs.StringVar(&env, "env", "", "test or live")
@@ -138,15 +146,19 @@ func run(args []string, stdout, stderr io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	ctx, info := connect.NewClientContext(ctx)
-	err = call(ctx, c, cmd, stdout, stderr, name, tenant, key, environment, enabled, scopes, allowIPs)
+	if len(settings.models) == 0 {
+		settings.models = csv{"direct", "end_to_end"}
+	}
+	err = call(ctx, c, cmd, stdout, stderr, name, tenant, key, environment, enabled, scopes, allowIPs, settings)
 	if err != nil {
-		return rpcError{err: err, dtCode: info.ResponseTrailer().Get("dt-code")}
+		return rpcError{err: err, dtCode: rpcauth.CodeFrom(info)}
 	}
 	return nil
 }
 
 func call(ctx context.Context, c accountsv1connect.AccountsServiceClient, cmd string, stdout, stderr io.Writer,
 	name, tenant, key string, env eventsv1.Environment, enabled bool, scopes, allowIPs list,
+	settings tenantSettings,
 ) error {
 	switch cmd {
 	case "tenant create":
@@ -160,6 +172,17 @@ func call(ctx context.Context, c accountsv1connect.AccountsServiceClient, cmd st
 			return err
 		}
 		notef(stderr, "tenant %s live_enabled=%t\n", tenant, enabled)
+	case "tenant settings":
+		res, err := c.SetTenantSettings(ctx, &accountsv1.SetTenantSettingsRequest{
+			Actor: actor, TenantId: tenant, AllowedModels: settings.models,
+			DefaultModel: settings.defaultModel, PickupConfirmation: settings.pickup,
+		})
+		if err != nil {
+			return err
+		}
+		st := res.GetSettings()
+		notef(stderr, "tenant %s settings: models=%s default=%s pickup=%s\n", tenant,
+			strings.Join(st.GetAllowedModels(), ","), st.GetDefaultModel(), st.GetPickupConfirmation())
 	case "key create":
 		res, err := c.CreateApiKey(ctx, &accountsv1.CreateApiKeyRequest{
 			Actor: actor, TenantId: tenant, Environment: env, Name: name, Scopes: scopes, AllowedIps: allowIPs,
@@ -315,3 +338,18 @@ type list []string
 
 func (l *list) String() string     { return strings.Join(*l, ",") }
 func (l *list) Set(v string) error { *l = append(*l, v); return nil }
+
+// tenantSettings are the flags of `tenant settings`.
+type tenantSettings struct {
+	models               csv
+	defaultModel, pickup string
+}
+
+// csv is a flag.Value that takes one comma-separated list.
+type csv []string
+
+func (c *csv) String() string { return strings.Join(*c, ",") }
+func (c *csv) Set(v string) error {
+	*c = strings.Split(v, ",")
+	return nil
+}

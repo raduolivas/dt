@@ -7,13 +7,9 @@ import (
 
 	"connectrpc.com/connect/v2"
 
+	"github.com/raduolivas/dt/backend/pkg/rpcauth"
 	"github.com/raduolivas/dt/backend/services/accounts/internal/domain"
 )
-
-// DTCodeKey is the response trailer carrying the snake_case error code. Over
-// the Connect protocol it arrives as the HTTP header "Trailer-Dt-Code";
-// clients read it with connect.NewClientContext and info.ResponseTrailer().
-const DTCodeKey = "dt-code"
 
 var errorCodes = []struct {
 	err    error
@@ -29,8 +25,8 @@ var errorCodes = []struct {
 }
 
 // ToConnect maps a use-case error to a Connect error and sets the dt-code
-// response trailer (HTTP header Trailer-Dt-Code over the Connect protocol). Domain errors keep their message, which never holds a
-// secret; anything else is logged and becomes CodeInternal with no detail.
+// response trailer (see rpcauth.CodeKey). Domain errors keep their message,
+// which never holds a secret; anything else is logged and becomes CodeInternal with no detail.
 func ToConnect(ctx context.Context, log *slog.Logger, err error) error {
 	if err == nil {
 		return nil
@@ -40,9 +36,7 @@ func ToConnect(ctx context.Context, log *slog.Logger, err error) error {
 	}
 	for _, m := range errorCodes {
 		if errors.Is(err, m.err) {
-			if info, ok := connect.CallInfoForServerContext(ctx); ok {
-				info.ResponseTrailer().Set(DTCodeKey, m.dtCode)
-			}
+			rpcauth.SetCode(ctx, m.dtCode)
 			return connect.NewError(m.code, err.Error()).WithCause(err)
 		}
 	}

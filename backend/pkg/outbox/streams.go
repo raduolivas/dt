@@ -21,6 +21,16 @@ var StreamAccounts = jetstream.StreamConfig{
 	Duplicates: DuplicateWindow,
 }
 
+// StreamDeliveries carries the deliveries service's events (delivery.*,
+// courier.*). Consumers keep their own state, so it is bounded to 7 days.
+var StreamDeliveries = jetstream.StreamConfig{
+	Name:       "DELIVERIES",
+	Subjects:   []string{"deliveries.>"},
+	Storage:    jetstream.FileStorage,
+	Duplicates: DuplicateWindow,
+	MaxAge:     7 * 24 * time.Hour,
+}
+
 // SubjectFor returns the subject of eventType on stream:
 // "<stream name lowercased>.<event type>", e.g. accounts.apikey.created.
 func SubjectFor(stream jetstream.StreamConfig, eventType string) string {

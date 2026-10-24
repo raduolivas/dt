@@ -42,11 +42,15 @@ type IdempotencyScope struct {
 }
 
 // StoredResponse is the response kept for replay. Header holds only the
-// allowlisted headers the edge chooses to replay (Content-Type).
+// allowlisted headers the edge chooses to replay (Content-Type). The store
+// keeps Body sealed: it can carry customer personal data.
 type StoredResponse struct {
 	Status int
 	Header map[string][]string
 	Body   []byte
+	// ResourceID is the resource the request acted on (a delivery id), ""
+	// if none. Erasing that resource's personal data purges the record.
+	ResourceID string
 }
 
 // OutcomeKind is what Begin decided for a request.
@@ -106,6 +110,14 @@ type IdempotencyStore interface {
 	Abandon(ctx context.Context, scope IdempotencyScope, lease time.Time) error
 }
 
+// IdempotencyPurger deletes the stored responses of one resource.
+type IdempotencyPurger interface {
+	// PurgeResource deletes every record of tenantID and env whose
+	// ResourceID is resourceID (in progress or completed) and returns how
+	// many it deleted.
+	PurgeResource(ctx context.Context, tenantID string, env domain.Environment, resourceID string) (int64, error)
+}
+
 // ValidIdempotencyKey reports whether k is 1–255 printable ASCII characters
 // (0x20–0x7E).
 func ValidIdempotencyKey(k string) bool {
@@ -120,11 +132,12 @@ func ValidIdempotencyKey(k string) bool {
 	return true
 }
 
-// IdempotencyRequestHash is SHA-256(method + "\n" + path + "\n" + body): the
-// fingerprint that tells a replay from a key reused for another request.
-func IdempotencyRequestHash(method, path string, body []byte) []byte {
+// IdempotencyRequestHash is SHA-256(method + "\n" + path + "\n" + rawQuery +
+// "\n" + body): the fingerprint that tells a replay from a key reused for
+// another request.
+func IdempotencyRequestHash(method, path, rawQuery string, body []byte) []byte {
 	h := sha256.New()
-	h.Write([]byte(method + "\n" + path + "\n"))
+	h.Write([]byte(method + "\n" + path + "\n" + rawQuery + "\n"))
 	h.Write(body)
 	return h.Sum(nil)
 }

@@ -56,6 +56,8 @@ type tx struct {
 func (t *tx) InsertTenant(ctx context.Context, ten domain.Tenant) error {
 	err := t.q.InsertTenant(ctx, db.InsertTenantParams{
 		ID: ten.ID, Name: ten.Name, LiveEnabled: ten.LiveEnabled, CreatedAt: ten.CreatedAt,
+		AllowedModels: nonNil(ten.Settings.AllowedModels), DefaultModel: ten.Settings.DefaultModel,
+		PickupConfirmation: ten.Settings.PickupConfirmation, SettingsUpdatedAt: ten.Settings.UpdatedAt,
 	})
 	if err != nil {
 		return fmt.Errorf("insert tenant: %w", err)
@@ -68,7 +70,27 @@ func (t *tx) GetTenant(ctx context.Context, id string) (domain.Tenant, error) {
 	if err != nil {
 		return domain.Tenant{}, notFound("get tenant", err)
 	}
-	return domain.Tenant{ID: row.ID, Name: row.Name, LiveEnabled: row.LiveEnabled, CreatedAt: row.CreatedAt.UTC()}, nil
+	return domain.Tenant{
+		ID: row.ID, Name: row.Name, LiveEnabled: row.LiveEnabled, CreatedAt: row.CreatedAt.UTC(),
+		Settings: domain.TenantSettings{
+			AllowedModels: row.AllowedModels, DefaultModel: row.DefaultModel,
+			PickupConfirmation: row.PickupConfirmation, UpdatedAt: row.SettingsUpdatedAt.UTC(),
+		},
+	}, nil
+}
+
+func (t *tx) SetTenantSettings(ctx context.Context, id string, s domain.TenantSettings) error {
+	n, err := t.q.SetTenantSettings(ctx, db.SetTenantSettingsParams{
+		ID: id, AllowedModels: nonNil(s.AllowedModels), DefaultModel: s.DefaultModel,
+		PickupConfirmation: s.PickupConfirmation, SettingsUpdatedAt: s.UpdatedAt,
+	})
+	if err != nil {
+		return fmt.Errorf("set tenant settings: %w", err)
+	}
+	if n == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
 }
 
 func (t *tx) SetLiveEnabled(ctx context.Context, id string, v bool) error {

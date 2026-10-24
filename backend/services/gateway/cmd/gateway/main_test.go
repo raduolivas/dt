@@ -23,7 +23,12 @@ import (
 	"github.com/raduolivas/dt/backend/pkg/testkit"
 )
 
+const testRPCToken = "test-only-internal-rpc-token-0123456789"
+
 var testPepper = []byte("test-only-pepper-0123456789abcdef")
+
+// testDataKeys is a test-only DATA_KEYS value (id "t1").
+var testDataKeys = "t1:" + base64.StdEncoding.EncodeToString([]byte("test-only-gateway-data-key-01234"))
 
 func TestRunRefusesBadConfigBeforeIO(t *testing.T) {
 	// No DATABASE_URL etc.: a config error must come first and never echo
@@ -32,8 +37,26 @@ func TestRunRefusesBadConfigBeforeIO(t *testing.T) {
 		{"missing pepper", "", "", "APIKEY_PEPPER"},
 		{"short pepper", base64.StdEncoding.EncodeToString([]byte("short-pepper-value")), "", "APIKEY_PEPPER"},
 		{"bad proxies", base64.StdEncoding.EncodeToString(testPepper), "10.0.0.7", "TRUSTED_PROXIES"},
+		{"missing rpc url", base64.StdEncoding.EncodeToString(testPepper), "", "DELIVERIES_RPC_URL"},
+		{"short rpc token", base64.StdEncoding.EncodeToString(testPepper), "", "INTERNAL_RPC_TOKEN"},
+		{"missing data keys", base64.StdEncoding.EncodeToString(testPepper), "", "DATA_KEYS"},
+		{"unknown current data key", base64.StdEncoding.EncodeToString(testPepper), "", "DATA_KEY_CURRENT"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("DELIVERIES_RPC_URL", "http://deliveries:8081")
+			t.Setenv("INTERNAL_RPC_TOKEN", testRPCToken)
+			t.Setenv("DATA_KEYS", testDataKeys)
+			t.Setenv("DATA_KEY_CURRENT", "t1")
+			switch tc.name {
+			case "missing rpc url":
+				t.Setenv("DELIVERIES_RPC_URL", "")
+			case "short rpc token":
+				t.Setenv("INTERNAL_RPC_TOKEN", "short")
+			case "missing data keys":
+				t.Setenv("DATA_KEYS", "")
+			case "unknown current data key":
+				t.Setenv("DATA_KEY_CURRENT", "t9")
+			}
 			t.Setenv("APIKEY_PEPPER", tc.pepper)
 			t.Setenv("TRUSTED_PROXIES", tc.proxies)
 			t.Setenv("DATABASE_URL", "")
@@ -43,6 +66,9 @@ func TestRunRefusesBadConfigBeforeIO(t *testing.T) {
 			}
 			if tc.pepper != "" && strings.Contains(err.Error(), tc.pepper) {
 				t.Fatalf("error echoes the pepper: %v", err)
+			}
+			if strings.Contains(err.Error(), testDataKeys[3:]) {
+				t.Fatalf("error echoes a data key: %v", err)
 			}
 		})
 	}
@@ -63,6 +89,10 @@ func startGateway(t *testing.T, redisURL string) (string, string, context.Contex
 	t.Setenv("NATS_URL", natsURL)
 	t.Setenv("APIKEY_PEPPER", base64.StdEncoding.EncodeToString(testPepper))
 	t.Setenv("TRUSTED_PROXIES", "")
+	t.Setenv("DELIVERIES_RPC_URL", "http://127.0.0.1:1") // never called here
+	t.Setenv("INTERNAL_RPC_TOKEN", testRPCToken)
+	t.Setenv("DATA_KEYS", testDataKeys)
+	t.Setenv("DATA_KEY_CURRENT", "t1")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	addr := make(chan string, 1)

@@ -30,3 +30,12 @@ message ApiKeyRevoked {
   string key_id = 1;
   google.protobuf.Timestamp revoked_at = 2;
 }
+
+// tenant.settings_set
+message TenantSettingsSet {
+  string tenant_id = 1;
+  repeated string allowed_models = 2;
+  string default_model = 3;
+  string pickup_confirmation = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}

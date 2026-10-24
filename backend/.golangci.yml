@@ -92,3 +92,12 @@ linters:
         linters:
           - gosec
           - noctx
+      # Domain property tests may use rapid; it is a test-only dependency.
+      - path: internal/domain/.*_test\.go
+        text: pgregory.net/rapid
+        linters:
+          - depguard
+
+formatters:
+  enable:
+    - gofmt

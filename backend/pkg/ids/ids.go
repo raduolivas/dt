@@ -16,6 +16,9 @@ const (
 	APIKey = "ak"
 	Audit  = "aud"
 	Event  = "evt"
+	// Delivery and Courier identify the deliveries service's entities.
+	Delivery = "del"
+	Courier  = "cou"
 )
 
 var (

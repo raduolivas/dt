@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -48,6 +49,8 @@ func Audit(store app.AuditStore, clock app.Clock, log *slog.Logger) Hook {
 				return
 			}
 			start := clock.Now()
+			holder := &auditTarget{}
+			r = r.WithContext(context.WithValue(r.Context(), auditTargetKey{}, holder))
 			sw := &statusWriter{ResponseWriter: w}
 			record := func(status int) {
 				if status == http.StatusTooManyRequests {
@@ -59,7 +62,10 @@ func Audit(store app.AuditStore, clock app.Clock, log *slog.Logger) Hook {
 					Action: rt.Name, Status: status, IP: ip,
 					UserAgent: auditText(r.UserAgent()), RequestID: httpx.RequestIDFrom(r.Context()), At: start,
 				}
-				if wildcard != "" {
+				switch {
+				case holder.set():
+					e.Target = auditText(holder.get())
+				case wildcard != "":
 					e.Target = auditText(r.PathValue(wildcard))
 				}
 				ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), auditTimeout)
@@ -96,6 +102,51 @@ func Audit(store app.AuditStore, clock app.Clock, log *slog.Logger) Hook {
 			}
 			record(sw.status)
 		})
+	}
+}
+
+type auditTargetKey struct{}
+
+// auditTarget is the target a handler chose for the audit entry.
+type auditTarget struct {
+	mu     sync.Mutex
+	target string
+	ok     bool
+}
+
+func (a *auditTarget) put(t string) {
+	a.mu.Lock()
+	a.target, a.ok = t, true
+	a.mu.Unlock()
+}
+
+func (a *auditTarget) set() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.ok
+}
+
+func (a *auditTarget) get() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.target
+}
+
+// resourceKey holds the *auditTarget the Idempotency hook reads to name the
+// resource a stored response belongs to.
+type resourceKey struct{}
+
+// SetAuditTarget makes the audit entry of r name target instead of the
+// route's path value, and names target as the resource of r's idempotency
+// record (so erasing it purges the record). Create routes use it to record
+// the id they just made. It does nothing when r is neither audited nor
+// idempotent (a GET, or no hook mounted).
+func SetAuditTarget(r *http.Request, target string) {
+	if h, ok := r.Context().Value(auditTargetKey{}).(*auditTarget); ok {
+		h.put(target)
+	}
+	if h, ok := r.Context().Value(resourceKey{}).(*auditTarget); ok {
+		h.put(target)
 	}
 }
 

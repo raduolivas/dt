@@ -17,9 +17,12 @@ type Repo interface {
 // Tx is the transactional view of the accounts store. Publish writes to the
 // outbox in the same transaction as the state change.
 type Tx interface {
+	// InsertTenant stores the tenant with its Settings.
 	InsertTenant(ctx context.Context, t domain.Tenant) error
 	GetTenant(ctx context.Context, id string) (domain.Tenant, error)
 	SetLiveEnabled(ctx context.Context, id string, v bool) error
+	// SetTenantSettings replaces the tenant's settings; domain.ErrNotFound when it does not exist.
+	SetTenantSettings(ctx context.Context, id string, s domain.TenantSettings) error
 	InsertKey(ctx context.Context, k domain.APIKey) error
 	// GetKeyForUpdate locks the row; domain.ErrNotFound when the tenant differs.
 	GetKeyForUpdate(ctx context.Context, tenantID, keyID string) (domain.APIKey, error)

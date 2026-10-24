@@ -42,15 +42,17 @@ func (q *Queries) AbandonIdempotencyRecord(ctx context.Context, arg AbandonIdemp
 const completeIdempotencyRecord = `-- name: CompleteIdempotencyRecord :execrows
 UPDATE idempotency_records
 SET state = 'completed', locked_until = NULL,
-    response_status = $1, response_headers = $2, response_body = $3
-WHERE tenant_id = $4 AND environment = $5 AND idem_key = $6
-  AND state = 'in_progress' AND locked_until = $7
+    response_status = $1, response_headers = $2, response_body = $3,
+    resource_id = $4
+WHERE tenant_id = $5 AND environment = $6 AND idem_key = $7
+  AND state = 'in_progress' AND locked_until = $8
 `
 
 type CompleteIdempotencyRecordParams struct {
 	ResponseStatus  pgtype.Int4
 	ResponseHeaders []byte
 	ResponseBody    []byte
+	ResourceID      pgtype.Text
 	TenantID        string
 	Environment     string
 	IdemKey         string
@@ -62,6 +64,7 @@ func (q *Queries) CompleteIdempotencyRecord(ctx context.Context, arg CompleteIde
 		arg.ResponseStatus,
 		arg.ResponseHeaders,
 		arg.ResponseBody,
+		arg.ResourceID,
 		arg.TenantID,
 		arg.Environment,
 		arg.IdemKey,
@@ -115,6 +118,27 @@ type DeleteExpiredIdempotencyRecordsParams struct {
 // One sweeper batch, oldest first; key-based so concurrent updates are safe.
 func (q *Queries) DeleteExpiredIdempotencyRecords(ctx context.Context, arg DeleteExpiredIdempotencyRecordsParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteExpiredIdempotencyRecords, arg.Before, arg.Batch)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteIdempotencyRecordsForResource = `-- name: DeleteIdempotencyRecordsForResource :execrows
+DELETE FROM idempotency_records
+WHERE tenant_id = $1 AND environment = $2 AND resource_id = $3
+`
+
+type DeleteIdempotencyRecordsForResourceParams struct {
+	TenantID    string
+	Environment string
+	ResourceID  pgtype.Text
+}
+
+// Erasure: drops the stored responses of one resource (they may carry its
+// personal data).
+func (q *Queries) DeleteIdempotencyRecordsForResource(ctx context.Context, arg DeleteIdempotencyRecordsForResourceParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteIdempotencyRecordsForResource, arg.TenantID, arg.Environment, arg.ResourceID)
 	if err != nil {
 		return 0, err
 	}
@@ -261,7 +285,7 @@ func (q *Queries) InsertKey(ctx context.Context, arg InsertKeyParams) error {
 }
 
 const lockIdempotencyRecord = `-- name: LockIdempotencyRecord :one
-SELECT request_hash, state, locked_until, response_status, response_headers, response_body, expires_at
+SELECT request_hash, state, locked_until, response_status, response_headers, response_body, resource_id, expires_at
 FROM idempotency_records
 WHERE tenant_id = $1 AND environment = $2 AND idem_key = $3
 FOR UPDATE
@@ -280,6 +304,7 @@ type LockIdempotencyRecordRow struct {
 	ResponseStatus  pgtype.Int4
 	ResponseHeaders []byte
 	ResponseBody    []byte
+	ResourceID      pgtype.Text
 	ExpiresAt       time.Time
 }
 
@@ -293,6 +318,7 @@ func (q *Queries) LockIdempotencyRecord(ctx context.Context, arg LockIdempotency
 		&i.ResponseStatus,
 		&i.ResponseHeaders,
 		&i.ResponseBody,
+		&i.ResourceID,
 		&i.ExpiresAt,
 	)
 	return i, err
@@ -301,7 +327,7 @@ func (q *Queries) LockIdempotencyRecord(ctx context.Context, arg LockIdempotency
 const reclaimIdempotencyRecord = `-- name: ReclaimIdempotencyRecord :exec
 UPDATE idempotency_records
 SET request_hash = $1, state = 'in_progress', locked_until = $2,
-    response_status = NULL, response_headers = NULL, response_body = NULL,
+    response_status = NULL, response_headers = NULL, response_body = NULL, resource_id = NULL,
     created_at = $3, expires_at = $4
 WHERE tenant_id = $5 AND environment = $6 AND idem_key = $7
 `

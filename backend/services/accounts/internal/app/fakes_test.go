@@ -73,6 +73,16 @@ func (t *fakeTx) SetLiveEnabled(_ context.Context, id string, v bool) error {
 	return nil
 }
 
+func (t *fakeTx) SetTenantSettings(_ context.Context, id string, s domain.TenantSettings) error {
+	x, ok := t.r.tenants[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	x.Settings = s
+	t.r.tenants[id] = x
+	return nil
+}
+
 func (t *fakeTx) InsertKey(_ context.Context, k domain.APIKey) error {
 	t.r.keys[k.ID] = k
 	return nil

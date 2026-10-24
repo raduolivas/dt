@@ -3,6 +3,7 @@ module github.com/raduolivas/dt/backend/services/gateway
 go 1.27.3
 
 require (
+	connectrpc.com/connect/v2 v2.0.1
 	github.com/getkin/kin-openapi v0.151.0
 	github.com/go-redis/redis_rate/v10 v10.0.1
 	github.com/jackc/pgx/v5 v5.11.0

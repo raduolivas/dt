@@ -32,3 +32,12 @@ func CanManage(a Actor, env Environment) error {
 	}
 	return ErrForbiddenRole
 }
+
+// CanSetSettings reports whether the actor may change tenant delivery
+// settings: owner, admin, or the system itself.
+func CanSetSettings(a Actor) error {
+	if a.Type == "system" || a.Role == RoleOwner || a.Role == RoleAdmin {
+		return nil
+	}
+	return ErrForbiddenRole
+}

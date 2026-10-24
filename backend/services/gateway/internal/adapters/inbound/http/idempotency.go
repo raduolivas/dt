@@ -35,7 +35,8 @@ const storeTimeout = 5 * time.Second
 // with app.IdempotencyRequestHash:
 //
 //   - first use: the handler runs; a response below 500 with a body of at
-//     most 64 KiB is stored before it is sent;
+//     most 64 KiB is stored (body sealed, see the store) before it is sent,
+//     naming the resource it belongs to so erasure can purge it;
 //   - same request again: the stored status, body and Content-Type are
 //     replayed with Idempotent-Replayed: true, without running the handler;
 //   - another request with the key: 422 idempotency_mismatch;
@@ -48,7 +49,8 @@ func Idempotency(store app.IdempotencyStore, clock app.Clock, log *slog.Logger) 
 	if log == nil {
 		log = slog.Default()
 	}
-	return func(next http.Handler, _ Route) http.Handler {
+	return func(next http.Handler, rt Route) http.Handler {
+		wildcard := patternWildcard(rt.Pattern)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			values, present := r.Header[http.CanonicalHeaderKey(IdempotencyKeyHeader)]
 			if !present {
@@ -80,7 +82,7 @@ func Idempotency(store app.IdempotencyStore, clock app.Clock, log *slog.Logger) 
 			r.Body = io.NopCloser(bytes.NewReader(body))
 
 			scope := app.IdempotencyScope{TenantID: p.TenantID, Env: p.Env, Key: values[0]}
-			hash := app.IdempotencyRequestHash(r.Method, r.URL.Path, body)
+			hash := app.IdempotencyRequestHash(r.Method, r.URL.Path, r.URL.RawQuery, body)
 			out, err := store.Begin(r.Context(), scope, hash, clock.Now())
 			if err != nil {
 				idempotencyUnavailable(log, w, r, err)
@@ -88,7 +90,7 @@ func Idempotency(store app.IdempotencyStore, clock app.Clock, log *slog.Logger) 
 			}
 			switch out.Kind {
 			case app.OutcomeStarted:
-				runAndRecord(w, r, next, store, scope, out.Lease, log)
+				runAndRecord(w, r, next, store, scope, out.Lease, wildcard, log)
 			case app.OutcomeReplay:
 				replay(w, out.Stored)
 			case app.OutcomeMismatch:
@@ -130,9 +132,14 @@ func replay(w http.ResponseWriter, st app.StoredResponse) {
 // runAndRecord runs next with its response buffered, stores the response
 // under lease and then sends it. A 5xx, an oversized body or a panic abandons
 // the record instead.
+//
+// The record names the resource the request acted on: the id the handler set
+// with SetAuditTarget (create), else the route's path value (wildcard).
 func runAndRecord(w http.ResponseWriter, r *http.Request, next http.Handler, store app.IdempotencyStore,
-	scope app.IdempotencyScope, lease time.Time, log *slog.Logger,
+	scope app.IdempotencyScope, lease time.Time, wildcard string, log *slog.Logger,
 ) {
+	resource := &auditTarget{}
+	r = r.WithContext(context.WithValue(r.Context(), resourceKey{}, resource))
 	rec := &recorder{w: w, status: http.StatusOK}
 	finished := false
 	defer func() {
@@ -156,6 +163,12 @@ func runAndRecord(w http.ResponseWriter, r *http.Request, next http.Handler, sto
 		return
 	}
 	st := app.StoredResponse{Status: rec.status, Body: rec.buf.Bytes()}
+	switch {
+	case resource.set():
+		st.ResourceID = resource.get()
+	case wildcard != "":
+		st.ResourceID = r.PathValue(wildcard)
+	}
 	for _, name := range replayedHeaders {
 		if vs, ok := w.Header()[name]; ok {
 			if st.Header == nil {
