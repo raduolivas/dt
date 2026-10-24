@@ -767,3 +767,29 @@ func TestRealConnectTransportCarriesDtCode(t *testing.T) {
 		wantProblem(t, e.do(r), tc.status, tc.dtCode)
 	}
 }
+
+func TestCoordinatesRoundTripExactly(t *testing.T) {
+	t.Parallel()
+	const lat, lng = -23.56141234567, -46.65591234567
+	g := newGW(t)
+	g.fake.del.Pickup.Location = &eventsv1.LatLng{Lat: lat, Lng: lng}
+	body := `{"external_id":"order-1","pickup":{"location":{"lat":-23.56141234567,"lng":-46.65591234567},"name":"P"},` +
+		`"dropoff":{"location":{"lat":-23.5505,"lng":-46.6333}}}`
+	rec := g.do(t, g.req("POST", "/v1/deliveries", body), http.StatusCreated)
+
+	got := g.fake.last().(*deliveriesv1.CreateDeliveryRequest)
+	if l := got.GetPickup().GetLocation(); l.GetLat() != lat || l.GetLng() != lng {
+		t.Fatalf("rpc pickup = %v, want %v,%v", l, lat, lng)
+	}
+	var resp struct {
+		Pickup struct {
+			Location struct{ Lat, Lng float64 } `json:"location"`
+		} `json:"pickup"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if l := resp.Pickup.Location; l.Lat != lat || l.Lng != lng {
+		t.Fatalf("response pickup = %v, want %v,%v: %s", l, lat, lng, rec.Body.String())
+	}
+}

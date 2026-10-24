@@ -231,7 +231,9 @@ export interface components {
         };
         /** @description WGS84 coordinate. */
         LatLng: {
+            /** Format: double */
             lat: number;
+            /** Format: double */
             lng: number;
         };
         FieldError: {

@@ -850,10 +850,12 @@ components:
       properties:
         lat:
           type: number
+          format: double
           minimum: -90
           maximum: 90
         lng:
           type: number
+          format: double
           minimum: -180
           maximum: 180
     FieldError:
