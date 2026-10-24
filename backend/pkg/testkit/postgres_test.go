@@ -11,12 +11,24 @@ import (
 	"github.com/raduolivas/dt/backend/pkg/testkit"
 )
 
+// connect opens a connection as role's runtime role (svc_<role>, or admin).
 func connect(t *testing.T, pg *testkit.Postgres, role string) *pgx.Conn {
 	t.Helper()
+	return dial(t, pg.URL(role))
+}
+
+// connectMigrator opens a connection as mig_<svc>, the schema owner.
+func connectMigrator(t *testing.T, pg *testkit.Postgres, svc string) *pgx.Conn {
+	t.Helper()
+	return dial(t, pg.MigratorURL(svc))
+}
+
+func dial(t *testing.T, url string) *pgx.Conn {
+	t.Helper()
 	ctx := context.Background()
-	conn, err := pgx.Connect(ctx, pg.URL(role))
+	conn, err := pgx.Connect(ctx, url)
 	if err != nil {
-		t.Fatalf("connect as %s: %v", role, err)
+		t.Fatalf("connect: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close(ctx) })
 	return conn
@@ -44,7 +56,7 @@ func TestSchemaIsolation(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("OwnSchemaIsDefault", func(t *testing.T) {
-		conn := connect(t, pg, "tracking")
+		conn := connectMigrator(t, pg, "tracking")
 		exec(t, conn, "CREATE TABLE y (id int)")
 		// regclass::text drops the schema when it is on search_path, so ask the catalog.
 		var schema string
@@ -56,20 +68,46 @@ func TestSchemaIsolation(t *testing.T) {
 		}
 	})
 
-	t.Run("CrossSchemaReadDenied", func(t *testing.T) {
-		exec(t, connect(t, pg, "deliveries"), "CREATE TABLE t (id int); INSERT INTO t VALUES (1)")
-		_, err := connect(t, pg, "accounts").Exec(ctx, "SELECT * FROM deliveries.t")
+	// Tables are created by mig_<svc>; svc_<svc> gets DML on them through
+	// default privileges but owns none and cannot create any.
+	exec(t, connectMigrator(t, pg, "deliveries"), "CREATE TABLE t (id int); INSERT INTO t VALUES (1)")
+
+	t.Run("RuntimeRoleUsesMigratorTables", func(t *testing.T) {
+		conn := connect(t, pg, "deliveries")
+		exec(t, conn, "INSERT INTO t VALUES (2)")
+		var n int
+		if err := conn.QueryRow(ctx, "SELECT count(*) FROM t").Scan(&n); err != nil || n != 2 {
+			t.Fatalf("count = %d, %v; want 2", n, err)
+		}
+	})
+
+	t.Run("RuntimeRoleCannotCreateOrAlter", func(t *testing.T) {
+		conn := connect(t, pg, "deliveries")
+		_, err := conn.Exec(ctx, "CREATE TABLE u (id int)")
 		wantDenied(t, err)
+		_, err = conn.Exec(ctx, "ALTER TABLE t ADD COLUMN x int")
+		wantDenied(t, err)
+	})
+
+	t.Run("CrossSchemaReadDenied", func(t *testing.T) {
+		for _, conn := range []*pgx.Conn{connect(t, pg, "accounts"), connectMigrator(t, pg, "accounts")} {
+			_, err := conn.Exec(ctx, "SELECT * FROM deliveries.t")
+			wantDenied(t, err)
+		}
 	})
 
 	t.Run("CrossSchemaWriteDenied", func(t *testing.T) {
-		_, err := connect(t, pg, "accounts").Exec(ctx, "CREATE TABLE deliveries.z (id int)")
-		wantDenied(t, err)
+		for _, conn := range []*pgx.Conn{connect(t, pg, "accounts"), connectMigrator(t, pg, "accounts")} {
+			_, err := conn.Exec(ctx, "CREATE TABLE deliveries.z (id int)")
+			wantDenied(t, err)
+		}
 	})
 
 	t.Run("PublicSchemaLocked", func(t *testing.T) {
-		_, err := connect(t, pg, "gateway").Exec(ctx, "CREATE TABLE public.x (id int)")
-		wantDenied(t, err)
+		for _, conn := range []*pgx.Conn{connect(t, pg, "gateway"), connectMigrator(t, pg, "gateway")} {
+			_, err := conn.Exec(ctx, "CREATE TABLE public.x (id int)")
+			wantDenied(t, err)
+		}
 	})
 
 	t.Run("PostGISAvailable", func(t *testing.T) {

@@ -61,7 +61,7 @@ func server(t *testing.T) (*httptest.Server, *pgxpool.Pool) {
 	}()
 	ctx := context.Background()
 	url := pg.URL("accounts")
-	if err := migratex.Up(ctx, url, migrations.FS); err != nil {
+	if err := migratex.Up(ctx, pg.MigratorURL("accounts"), migrations.FS); err != nil {
 		t.Fatal(err)
 	}
 	pool, err := pgxpool.New(ctx, url)

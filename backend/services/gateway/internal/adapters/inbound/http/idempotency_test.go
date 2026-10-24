@@ -42,7 +42,7 @@ func idemStore(t *testing.T) *postgres.IdempotencyStore {
 	}()
 	ctx := context.Background()
 	url := pg.URL("gateway")
-	if err := migratex.Up(ctx, url, migrations.FS); err != nil {
+	if err := migratex.Up(ctx, pg.MigratorURL("gateway"), migrations.FS); err != nil {
 		t.Fatal(err)
 	}
 	pool, err := pgxpool.New(ctx, url)

@@ -122,7 +122,9 @@ func TestReadyzHealthyWithDatabase(t *testing.T) {
 var errBoom = errors.New("boom")
 
 func TestRunAppliesMigrationsBeforeSetup(t *testing.T) {
-	t.Setenv("DATABASE_URL", testkit.StartPostgres(t).URL("gateway"))
+	pg := testkit.StartPostgres(t)
+	t.Setenv("DATABASE_URL", pg.URL("gateway"))
+	t.Setenv("MIGRATIONS_DATABASE_URL", pg.MigratorURL("gateway"))
 	migrations := fstest.MapFS{"0001_t.up.sql": {Data: []byte("CREATE TABLE t (id int)")}}
 	var queryErr error
 	startWith(t, bootstrap.Options{
@@ -139,9 +141,48 @@ func TestRunAppliesMigrationsBeforeSetup(t *testing.T) {
 	}
 }
 
+// Without MIGRATIONS_DATABASE_URL, migrations run as DATABASE_URL (a
+// single-role setup, where that role owns the schema).
+func TestRunMigratesWithRuntimeURLWhenMigrationsURLUnset(t *testing.T) {
+	t.Setenv("DATABASE_URL", testkit.StartPostgres(t).MigratorURL("gateway"))
+	t.Setenv("MIGRATIONS_DATABASE_URL", "")
+	migrations := fstest.MapFS{"0001_t.up.sql": {Data: []byte("CREATE TABLE t (id int)")}}
+	var queryErr error
+	startWith(t, bootstrap.Options{
+		Name:       "gateway",
+		Migrations: migrations,
+		Setup: func(ctx context.Context, d bootstrap.Deps, _ *http.ServeMux) ([]bootstrap.Worker, error) {
+			var n int
+			queryErr = d.DB.QueryRow(ctx, "SELECT count(*) FROM t").Scan(&n)
+			return nil, queryErr
+		},
+	})
+	if queryErr != nil {
+		t.Fatalf("table t missing in Setup: %v", queryErr)
+	}
+}
+
+func TestRunMigrationsErrorHidesURL(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://u:runtime-secret@127.0.0.1:1/dt?connect_timeout=1")
+	t.Setenv("MIGRATIONS_DATABASE_URL", "postgres://mig_x:migration-secret@127.0.0.1:1/dt?connect_timeout=1")
+	t.Setenv("PORT", "0")
+	t.Setenv("LOG_LEVEL", "error")
+	migrations := fstest.MapFS{"0001_t.up.sql": {Data: []byte("CREATE TABLE t (id int)")}}
+	err := bootstrap.Run(context.Background(), bootstrap.Options{Name: "gateway", Migrations: migrations})
+	if err == nil {
+		t.Fatal("want error")
+	}
+	for _, secret := range []string{"runtime-secret", "migration-secret", "127.0.0.1"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("error echoes %q: %v", secret, err)
+		}
+	}
+}
+
 func TestMigrationsStayInServiceSchema(t *testing.T) {
 	pg := testkit.StartPostgres(t)
 	t.Setenv("DATABASE_URL", pg.URL("gateway"))
+	t.Setenv("MIGRATIONS_DATABASE_URL", pg.MigratorURL("gateway"))
 	migrations := fstest.MapFS{"0001_t.up.sql": {Data: []byte("CREATE TABLE t (id int)")}}
 	startWith(t, bootstrap.Options{Name: "gateway", Migrations: migrations})
 

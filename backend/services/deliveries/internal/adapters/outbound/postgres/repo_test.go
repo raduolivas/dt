@@ -47,7 +47,7 @@ type env struct {
 	repo  *postgres.Repo
 }
 
-// setup starts Postgres, applies the migrations as svc_deliveries and
+// setup starts Postgres, applies the migrations as mig_deliveries and
 // returns pools for the service role and the admin, and a repo.
 func setup(t *testing.T) env {
 	t.Helper()
@@ -58,7 +58,7 @@ func setup(t *testing.T) env {
 	}()
 	ctx := context.Background()
 	url := pg.URL("deliveries")
-	if err := migratex.Up(ctx, url, migrations.FS); err != nil {
+	if err := migratex.Up(ctx, pg.MigratorURL("deliveries"), migrations.FS); err != nil {
 		t.Fatal(err)
 	}
 	svc, err := pgxpool.New(ctx, url)

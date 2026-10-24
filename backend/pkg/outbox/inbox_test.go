@@ -68,9 +68,6 @@ func (r *recorder) count() int {
 // consume runs Consume until the test ends and checks it stops cleanly.
 func (e *env) consume(t *testing.T, h outbox.Handler) {
 	t.Helper()
-	if _, err := e.pool.Exec(context.Background(), `CREATE TABLE IF NOT EXISTS applied (event_id text)`); err != nil {
-		t.Fatal(err)
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {

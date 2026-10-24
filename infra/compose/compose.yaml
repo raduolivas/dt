@@ -77,6 +77,7 @@ services:
       PORT: "8080"
       LOG_LEVEL: info
       DATABASE_URL: "postgres://svc_gateway:svc_gateway@postgres:5432/dt?sslmode=disable"
+      MIGRATIONS_DATABASE_URL: "postgres://mig_gateway:mig_gateway@postgres:5432/dt?sslmode=disable"
       REDIS_URL: "redis://redis:6379/0"
       NATS_URL: "nats://nats:4222"
       # Dev-only placeholder, never a real secret: the same value as accounts'.
@@ -109,6 +110,7 @@ services:
       PORT: "8081"
       LOG_LEVEL: info
       DATABASE_URL: "postgres://svc_deliveries:svc_deliveries@postgres:5432/dt?sslmode=disable"
+      MIGRATIONS_DATABASE_URL: "postgres://mig_deliveries:mig_deliveries@postgres:5432/dt?sslmode=disable"
       NATS_URL: "nats://nats:4222"
       # Dev-only placeholders, never real secrets. DATA_KEYS holds one key
       # (id "dev1") that is base64 of "dev-only-not-a-secret-data-key-0".
@@ -128,6 +130,7 @@ services:
       PORT: "8082"
       LOG_LEVEL: info
       DATABASE_URL: "postgres://svc_tracking:svc_tracking@postgres:5432/dt?sslmode=disable"
+      MIGRATIONS_DATABASE_URL: "postgres://mig_tracking:mig_tracking@postgres:5432/dt?sslmode=disable"
     ports:
       - "127.0.0.1:8082:8082"
 
@@ -141,6 +144,7 @@ services:
       PORT: "8083"
       LOG_LEVEL: info
       DATABASE_URL: "postgres://svc_webhooks:svc_webhooks@postgres:5432/dt?sslmode=disable"
+      MIGRATIONS_DATABASE_URL: "postgres://mig_webhooks:mig_webhooks@postgres:5432/dt?sslmode=disable"
     ports:
       - "127.0.0.1:8083:8083"
 
@@ -159,6 +163,7 @@ services:
       PORT: "8084"
       LOG_LEVEL: info
       DATABASE_URL: "postgres://svc_accounts:svc_accounts@postgres:5432/dt?sslmode=disable"
+      MIGRATIONS_DATABASE_URL: "postgres://mig_accounts:mig_accounts@postgres:5432/dt?sslmode=disable"
       NATS_URL: "nats://nats:4222"
       # Dev-only placeholders, never real secrets. APIKEY_PEPPER is base64 of
       # "dev-only-not-a-secret-pepper-000000000000" and must match the gateway's.

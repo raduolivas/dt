@@ -85,6 +85,7 @@ func startGateway(t *testing.T, redisURL string) (string, string, context.Contex
 	t.Setenv("PORT", "0")
 	t.Setenv("LOG_LEVEL", "error")
 	t.Setenv("DATABASE_URL", pg.URL("gateway"))
+	t.Setenv("MIGRATIONS_DATABASE_URL", pg.MigratorURL("gateway"))
 	t.Setenv("REDIS_URL", redisURL)
 	t.Setenv("NATS_URL", natsURL)
 	t.Setenv("APIKEY_PEPPER", base64.StdEncoding.EncodeToString(testPepper))
