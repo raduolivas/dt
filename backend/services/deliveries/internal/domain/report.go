@@ -31,8 +31,8 @@ type HistoryEntry struct {
 
 // Report applies r (spec §4.3–4.4). The checks run in order: duplicate,
 // pickup confirmation, conflict rule, same state (stale), a non-partner
-// repeating a state it already reached after the other side changed it
-// within ConflictWindow (conflict, OQ18), backwards or
+// repeating its own latest state after the other side changed it within
+// ConflictWindow (conflict, OQ18), backwards or
 // final (stale if older than the last applied entry, else
 // ErrInvalidTransition), then the transition table. An error leaves the
 // delivery untouched; any other outcome but duplicate adds one history
@@ -125,17 +125,19 @@ func (d *Delivery) conflicts(r Report, target Status) bool {
 }
 
 // repeatsAfterOverride reports whether a non-partner r re-reports a state
-// its own side already reached, after the latest applied state change by
-// the opposing side within ConflictWindow of r (OQ18).
+// its own side reached most recently (its latest applied state change),
+// after the opposing side's latest applied change and within ConflictWindow
+// of it. A report older than that change is stale, not a conflict (OQ18).
 func (d *Delivery) repeatsAfterOverride(r Report, target Status) bool {
 	if r.Actor == ActorPartner {
 		return false
 	}
 	last := d.lastApplied(func(HistoryEntry) bool { return true })
-	if last == nil || !last.Actor.opposes(r.Actor) || r.OccurredAt.Sub(last.OccurredAt).Abs() > ConflictWindow {
+	if last == nil || !last.Actor.opposes(r.Actor) || r.OccurredAt.Before(last.OccurredAt) || r.OccurredAt.Sub(last.OccurredAt) > ConflictWindow {
 		return false
 	}
-	return d.lastApplied(func(h HistoryEntry) bool { return h.Actor == r.Actor && h.To == target }) != nil
+	own := d.lastApplied(func(h HistoryEntry) bool { return h.Actor == r.Actor })
+	return own != nil && own.To == target
 }
 
 // apply moves the delivery to target and records r as applied.

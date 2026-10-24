@@ -278,3 +278,22 @@ func TestCourierRepeatOutsideWindowStaysInvalid(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestCourierLateRepeatBeforeOverrideStaysStale(t *testing.T) {
+	d, at := courierRepeat(t)
+	o, _ := mustReport(t, d, rep("e3", ReportAtPickup, ActorCourier, at.Add(-5*time.Second)))
+	if o != OutcomeStale || d.Status != StatusPickedUp {
+		t.Fatalf("outcome %s status %s", o, d.Status)
+	}
+}
+
+func TestCourierRepeatOfOlderStateStaysInvalid(t *testing.T) {
+	d := newDel(t, ModelDirect, PolicyAny)
+	at := t0.Add(time.Minute)
+	mustReport(t, d, rep("e1", ReportAtPickup, ActorCourier, at))
+	mustReport(t, d, rep("e2", ReportPickupConfirmed, ActorCourier, at.Add(time.Second)))
+	mustReport(t, d, rep("e3", ReportDelivered, ActorPartner, at.Add(10*time.Second)))
+	if _, _, err := d.Report(rep("e4", ReportAtPickup, ActorCourier, at.Add(20*time.Second))); !isInvalidTransition(err) {
+		t.Fatalf("err = %v", err)
+	}
+}
