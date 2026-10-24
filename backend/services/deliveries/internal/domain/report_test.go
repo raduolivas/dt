@@ -244,3 +244,37 @@ func TestConflictIgnoresOwnSide(t *testing.T) {
 		t.Fatalf("err %v status %s events %v", err, d.Status, evs)
 	}
 }
+
+// courierRepeat sets up courier at_pickup at t0+1m, partner pickup at +10s,
+// then returns the delivery and the time of the partner change.
+func courierRepeat(t *testing.T) (*Delivery, time.Time) {
+	t.Helper()
+	d := newDel(t, ModelDirect, PolicyAny)
+	at := t0.Add(time.Minute)
+	mustReport(t, d, rep("e1", ReportAtPickup, ActorCourier, at))
+	at = at.Add(10 * time.Second)
+	mustReport(t, d, rep("e2", ReportPickupConfirmed, ActorPartner, at))
+	if d.Status != StatusPickedUp {
+		t.Fatalf("status = %s", d.Status)
+	}
+	return d, at
+}
+
+func TestCourierRepeatAfterPartnerOverrideIsConflict(t *testing.T) {
+	d, at := courierRepeat(t)
+	n := len(d.History)
+	o, evs := mustReport(t, d, rep("e3", ReportAtPickup, ActorCourier, at.Add(10*time.Second)))
+	if o != OutcomeConflict || d.Status != StatusPickedUp || len(evs) != 0 || len(d.History) != n+1 {
+		t.Fatalf("outcome %s status %s events %v", o, d.Status, evs)
+	}
+	if h := d.History[n]; h.Outcome != OutcomeConflict || h.To != StatusPickedUp {
+		t.Fatalf("history = %+v", h)
+	}
+}
+
+func TestCourierRepeatOutsideWindowStaysInvalid(t *testing.T) {
+	d, at := courierRepeat(t)
+	if _, _, err := d.Report(rep("e3", ReportAtPickup, ActorCourier, at.Add(ConflictWindow+time.Second))); !isInvalidTransition(err) {
+		t.Fatalf("err = %v", err)
+	}
+}
