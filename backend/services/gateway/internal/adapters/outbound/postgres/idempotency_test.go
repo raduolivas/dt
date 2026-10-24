@@ -409,4 +409,20 @@ func TestBeginStoresResourceID(t *testing.T) {
 	if got := count(t, pool, "idem_key = 'create' AND resource_id = 'del_3'"); got != 1 {
 		t.Fatalf("%d create records name del_3, want 1", got)
 	}
+
+	// A completed {id} record keeps the id Begin stored when the handler
+	// names none, so erasure still purges its sealed response.
+	assign := app.IdempotencyScope{TenantID: "ten_a", Env: domain.EnvTest, Key: "assign", ResourceID: "del_4"}
+	o = begin(t, s, assign, hash1, t0)
+	resp = stored
+	resp.ResourceID = ""
+	if err := s.Complete(ctx, assign, o.Lease, resp); err != nil {
+		t.Fatal(err)
+	}
+	if got := count(t, pool, "idem_key = 'assign' AND resource_id = 'del_4'"); got != 1 {
+		t.Fatalf("%d completed records name del_4, want 1", got)
+	}
+	if n, err := s.PurgeResource(ctx, "ten_a", domain.EnvTest, "del_4"); err != nil || n != 1 {
+		t.Fatalf("PurgeResource = %d, %v; want 1", n, err)
+	}
 }
