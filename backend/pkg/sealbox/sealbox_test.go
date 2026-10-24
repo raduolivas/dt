@@ -152,3 +152,11 @@ func FuzzOpen(f *testing.F) {
 		}
 	})
 }
+
+func TestSealRejectsOversizedPlaintext(t *testing.T) {
+	b := newBox(t)
+	_, err := b.Seal(make([]byte, sealbox.MaxPlaintext), nil)
+	require.NoError(t, err)
+	_, err = b.Seal(make([]byte, sealbox.MaxPlaintext+1), nil)
+	require.ErrorIs(t, err, sealbox.ErrTooLarge)
+}

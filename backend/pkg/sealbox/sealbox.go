@@ -22,9 +22,17 @@ const (
 	maxIDLen  = 16
 )
 
+// MaxPlaintext is the largest value Seal accepts (1 MiB). Sealed fields are
+// small (the largest is a stored gateway response of at most 64 KiB); the
+// bound also keeps the output size computation from overflowing.
+const MaxPlaintext = 1 << 20
+
 // ErrOpen covers every failure to open a sealed value: tampering, an unknown
 // key id, a wrong AAD or a malformed blob.
 var ErrOpen = errors.New("sealbox: cannot open sealed value")
+
+// ErrTooLarge is returned by Seal for a plaintext over MaxPlaintext.
+var ErrTooLarge = errors.New("sealbox: plaintext too large")
 
 var idPattern = regexp.MustCompile(`^[a-z0-9]{1,16}$`)
 
@@ -87,8 +95,12 @@ func ParseKeys(spec, current string) (*Box, error) {
 	return b, nil
 }
 
-// Seal encrypts plaintext under the current key, binding aad.
+// Seal encrypts plaintext under the current key, binding aad. A plaintext
+// over MaxPlaintext is ErrTooLarge.
 func (b *Box) Seal(plaintext, aad []byte) ([]byte, error) {
+	if len(plaintext) > MaxPlaintext {
+		return nil, ErrTooLarge
+	}
 	aead := b.aeads[b.currentID]
 	out := make([]byte, 0, 2+len(b.currentID)+nonceSize+len(plaintext)+aead.Overhead())
 	out = append(out, version, b.currentIDLen)
