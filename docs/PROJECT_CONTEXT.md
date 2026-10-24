@@ -4,7 +4,7 @@
 > **Last updated:** 2026-10-24
 > **Open questions (shareable on their own):** [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md)
 > **MVP spec:** [`superpowers/specs/2026-10-18-dt-mvp-design.md`](superpowers/specs/2026-10-18-dt-mvp-design.md) (approved 2026-10-19)
-> **Current plan:** M2 deliveries: [`superpowers/plans/2026-10-22-m2-deliveries.md`](superpowers/plans/2026-10-22-m2-deliveries.md). **Status: implemented on branch `m2-deliveries` (all 11 tasks, `make ci` + `make smoke` pass locally); PR pending.** Decisions C1–C12 were made by Claude at the owner's request (recorded as D22). Previous: M1 [`superpowers/plans/2026-10-20-m1-accounts-gateway.md`](superpowers/plans/2026-10-20-m1-accounts-gateway.md) (merged 2026-10-21, PR #8). Previous: [`superpowers/plans/2026-10-19-m0-foundations.md`](superpowers/plans/2026-10-19-m0-foundations.md) (M0, merged 2026-10-20)
+> **Current plan:** M2 deliveries: [`superpowers/plans/2026-10-22-m2-deliveries.md`](superpowers/plans/2026-10-22-m2-deliveries.md). **Status: merged to `main` 2026-10-24 (PR #12).** Next plan: M2 follow-ups (D23) [`superpowers/plans/2026-10-24-m2-followups.md`](superpowers/plans/2026-10-24-m2-followups.md) on branch `m2-followups`. Decisions C1–C12 were made by Claude at the owner's request (recorded as D22). Previous: M1 [`superpowers/plans/2026-10-20-m1-accounts-gateway.md`](superpowers/plans/2026-10-20-m1-accounts-gateway.md) (merged 2026-10-21, PR #8). Previous: [`superpowers/plans/2026-10-19-m0-foundations.md`](superpowers/plans/2026-10-19-m0-foundations.md) (M0, merged 2026-10-20)
 > **Architecture draft:** [`ARCHITECTURE.md`](ARCHITECTURE.md) (v0.1, under review)
 
 ## 1. What DT is
@@ -133,7 +133,7 @@ DT is a **SaaS that gives delivery apps a videogame-like 2D/3D live-tracking exp
 2. ~~Write the M0 implementation plan~~ → done 2026-10-19.
 3. ~~**M0 Foundations**~~ → merged to `main` 2026-10-20 (PR #1, CI green on GitHub).
 4. ~~**M1 accounts + gateway**~~ (tenants, API keys, authn/scopes, rate limits, idempotency, audit log, NATS + outbox) → all 14 tasks done 2026-10-21 on branch `m1-accounts-gateway` (`make ci` + `make smoke` pass locally); merged to `main` 2026-10-21 (PR #8; Go 1.27.3, grpc v1.83.2, rate-limit test flake fixed). PR #9 restored sqlc in the contracts job (lost in a merge) and pinned TypeScript 6.0.3 (dependabot #5 bumped it to 7, merged with red checks). Branch protection on `main` applied 2026-10-21 (PR required, 12 CI checks required, no force-push/deletion, conversation resolution). Plan: `docs/superpowers/plans/2026-10-20-m1-accounts-gateway.md`.
-5. ~~**M2 deliveries**~~ (models, state machine, pickup policy, couriers, outbox events, RLS) -> implemented 2026-10-22 on branch `m2-deliveries`; PR pending. Plan: `docs/superpowers/plans/2026-10-22-m2-deliveries.md`.
+5. ~~**M2 deliveries**~~ (models, state machine, pickup policy, couriers, outbox events, RLS) -> implemented 2026-10-22 on branch `m2-deliveries`; merged to `main` 2026-10-24 (PR #12, all 13 checks green; a CodeQL finding in `sealbox.Seal` fixed with a 1 MiB plaintext limit). Plan: `docs/superpowers/plans/2026-10-22-m2-deliveries.md`.
 5b. **Next: M3** (tracking, courier sessions, tracking link). Each milestone gets its own plan the same way.
 5c. **After the MVP (M9): M10 dispatch-lite** (D26): open deliveries offered to nearby couriers, first accept wins, timeout → partner webhook. End-to-end plan only.
 6. **Follow-ups from the M1 reviews** (not blocking; pick up in the milestone named):
