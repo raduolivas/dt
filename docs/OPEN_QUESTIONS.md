@@ -1,7 +1,7 @@
 # DT: Open Questions
 
 > Standalone file for sharing with another AI or a person. It's self-contained, so it can be read without the other files.
-> **Last updated:** 2026-10-24 (product name decided, see R24; OQ16–OQ24 answered 2026-10-23, see R22; cloud provider chosen, see R23; OQ14 tech part and OQ15 answered 2026-10-20) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+> **Last updated:** 2026-10-24 (pricing decided, see R25; product name decided, see R24; OQ16–OQ24 answered 2026-10-23, see R22; cloud provider chosen, see R23; OQ14 tech part and OQ15 answered 2026-10-20) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
 ## Context in 30 seconds
 
@@ -9,20 +9,9 @@
 
 ---
 
-## Suggested order to answer
-
-1. **OQ12**: business (plans and pricing), can be answered later
-
----
-
 ## Open
 
-### OQ12. Plans and pricing *(new, business)*
-Two plans exist: **Direct** and **End-to-end**. Still to define:
-- Prices and what they're based on (per delivery, per month, tiers)
-- A free test (sandbox) tier
-- Limits
-- The price of paid integration support
+*No open questions right now.*
 
 ---
 
@@ -54,3 +43,4 @@ Two plans exist: **Direct** and **End-to-end**. Still to define:
 | R22 | M2 follow-ups (OQ16–OQ24)? | **Claude's recommendations accepted.** **OQ16** a separate `migrator` role owns the tables and is used only by the deploy pipeline; runtime roles get DML grants only, so they can't weaken RLS. **OQ17** the contract declares `format: double` for `lat`/`lng`; regenerate the models and drop the gateway's own `float64` wire structs. **OQ18** a courier repeating its state after a partner override is `200 conflict` (recorded and ignored). **OQ19** delivery events carry a per-delivery `version`, incremented under the row lock; consumers drop events with an older version. **OQ20** `reason` is sealed and cleared on erasure. **OQ21** stale/recorded reports are capped per delivery (e.g. 200); past the cap only a counter goes up; state-changing entries are always stored. **OQ22** only `accounts` defines the `ACCOUNTS` stream; `deliveries` waits for it and is not ready until it exists. **OQ23** `{id}` routes set `resource_id` when the idempotency record starts, and the erasure purge also deletes in-progress records. **OQ24** a retired gateway data key stays in `DATA_KEYS` for 24 h after rotation (written into the key-rotation procedure). | 2026-10-23 |
 | R23 | Cloud provider (OQ14 part)? | **AWS `eu-central-1` (Frankfurt)** for staging and production (RDS Postgres + PostGIS, KMS for wrapping `DATA_KEYS`, Secrets Manager). | 2026-10-23 |
 | R24 | Product name and domain (OQ14)? | **DeliveryOnTrack**, domain **`deliveryontrack.io`** (decided by the owner 2026-10-24). **`deliveryontrack.io` registered by the owner 2026-10-24.** On 2026-10-24, .com, .eu, .dev and .app also had no name servers (worth registering to protect the name). Considered and dropped: Arrivo and any "arriv-" name (too close to Arriva, a European transport operator with class 39 trademarks), plus Tinyroute, TrackCity, DeliveryKit and the generic `deliverytracking.io`. Still to do: an EUIPO/WIPO trademark search (classes 9, 39, 42). "DT" stays the internal code name (repo, `dt_sk_` key prefix, `dtctl`) until a rename is decided. | 2026-10-24 |
+| R25 | Plans and pricing (OQ12)? | **Decided by Claude at the owner's request ("just decide"); please review. The prices are hypotheses to test with the pilot partners.** All prices in EUR, excluding VAT, billed through Stripe (R16). **Billable unit:** a *live* delivery that reaches `courier_assigned` (or any later state); a delivery cancelled before a courier is assigned, and every test-mode delivery, is free. **Sandbox (test environment):** free, no card, unlimited test deliveries with simulated couriers, 10 req/s, tracking page shows a "Test" badge. **Direct:** €149/month, includes 2,000 live deliveries, then €0.06 per delivery; 50 req/s; Direct model only. **End-to-end:** €249/month, includes 2,000 live deliveries, then €0.09 per delivery; 100 req/s; allows both models per delivery (R10), each delivery billed against the same allowance. **Scale (custom):** from ~50,000 deliveries/month: volume pricing, SLA, enterprise SSO, custom DPA. **Annual billing:** 2 months free. **Integration support (R4):** onboarding package €1,500 one-off (up to 10 h of engineering, help with the first integration and go-live), extra hours €120/h, a custom adapter for a non-standard partner (R5) from €4,000. **Pilot partners:** first 3 months free, then 50% off for 6 months, in exchange for feedback on the API contract. **Engineering impact (M7):** meter the billable unit as a Stripe usage record when a live delivery first reaches `courier_assigned`; per-plan rate limits replace the current single limit. | 2026-10-24 |
