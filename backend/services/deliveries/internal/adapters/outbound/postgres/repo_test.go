@@ -807,4 +807,18 @@ func TestReasonSealedAtRest(t *testing.T) {
 			t.Fatalf("history keeps reason %q after erasure", h.Reason)
 		}
 	}
+
+	// A reason reported after erasure is not stored either.
+	mutate(t, e, scopeA, d.ID, report(domain.Report{
+		EventID: "late", Type: domain.ReportFailed, Actor: domain.ActorCourier,
+		OccurredAt: t0.Add(30 * time.Second), ReceivedAt: t0.Add(2 * time.Hour), Reason: "customer Ana called",
+	}))
+	if err := e.admin.QueryRow(ctx,
+		`SELECT count(*) FROM deliveries.delivery_history WHERE delivery_id = $1 AND reason_sealed IS NOT NULL`,
+		d.ID).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 0 {
+		t.Fatalf("%d sealed reasons after a post-erasure report", left)
+	}
 }

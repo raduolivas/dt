@@ -156,6 +156,9 @@ func (d *Delivery) recordReport(r Report, from Status, o Outcome) {
 		From: from, To: d.Status, Outcome: o,
 		OccurredAt: r.OccurredAt, ReceivedAt: r.ReceivedAt, Reason: r.Reason,
 	}
+	if d.ErasedAt != nil {
+		h.Reason = "" // erased deliveries take no new personal data
+	}
 	if isNoise(h) && d.noiseEntries() >= MaxNoiseEntries {
 		d.DroppedReports++
 	} else {

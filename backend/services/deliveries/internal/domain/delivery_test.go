@@ -516,3 +516,18 @@ func TestErasureClearsHistoryReasons(t *testing.T) {
 		}
 	}
 }
+
+func TestReasonAfterErasureIsDropped(t *testing.T) {
+	d := atState(ModelDirect, StatusDelivered, PolicyAny)
+	if _, err := d.ErasePersonalData(t0.Add(2 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	r := rep("late", ReportDelivered, ActorCourier, t0.Add(3*time.Hour))
+	r.Reason = "customer Ana called"
+	if o, _ := mustReport(t, d, r); o != OutcomeStale {
+		t.Fatalf("outcome = %s", o)
+	}
+	if last := d.History[len(d.History)-1]; last.EventID != "late" || last.Reason != "" {
+		t.Fatalf("last entry = %+v", last)
+	}
+}
