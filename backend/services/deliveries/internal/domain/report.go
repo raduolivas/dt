@@ -145,7 +145,7 @@ func (d *Delivery) apply(r Report, target Status, overrode bool) (Outcome, []Eve
 	from := d.Status
 	d.Status = target
 	d.recordReport(r, from, OutcomeApplied)
-	return OutcomeApplied, []Event{d.statusChanged(from, r.Actor, r.OccurredAt, r.Reason, overrode)}, nil
+	return OutcomeApplied, []Event{d.statusChanged(from, r.Actor, r.OccurredAt, overrode)}, nil
 }
 
 // recordReport appends r to the history with the state it found (from) and

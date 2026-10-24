@@ -46,7 +46,7 @@ func toProto(e domain.Event) (proto.Message, *eventsv1.Subject, time.Time, error
 	case domain.StatusChanged:
 		return &eventsv1.DeliveryStatusChanged{
 			DeliveryId: p.DeliveryID, From: string(p.From), To: string(p.To), Actor: string(p.Actor),
-			OccurredAt: timestamppb.New(p.OccurredAt), Reason: p.Reason, Overrode: p.Overrode,
+			OccurredAt: timestamppb.New(p.OccurredAt), Overrode: p.Overrode,
 		}, deliverySubject(p.DeliveryID), p.OccurredAt, nil
 	case domain.PickupConfirmed:
 		return &eventsv1.DeliveryPickupConfirmed{

@@ -124,7 +124,7 @@ func (r *Repo) Create(ctx context.Context, s app.Scope, d *domain.Delivery, evts
 		if err != nil {
 			return fmt.Errorf("insert delivery: %w", err)
 		}
-		if err := insertHistory(ctx, q, s, d.ID, 0, d.NewHistory()); err != nil {
+		if err := insertHistory(ctx, r.box, q, s, d.ID, 0, d.NewHistory()); err != nil {
 			return err
 		}
 		return enqueue(ctx, tx, s, evts, d.UpdatedAt)
@@ -214,10 +214,12 @@ func (r *Repo) Mutate(ctx context.Context, s app.Scope, id string, fn func(*doma
 			return err
 		}
 		loaded := len(d.History)
+		wasErased := d.ErasedAt != nil
 		evts, err := fn(d)
 		if err != nil {
 			return err
 		}
+		erasedNow := !wasErased && d.ErasedAt != nil
 		sealed, err := r.seal(d)
 		if err != nil {
 			return err
@@ -234,7 +236,12 @@ func (r *Repo) Mutate(ctx context.Context, s app.Scope, id string, fn func(*doma
 		if n == 0 {
 			return app.ErrNotFound
 		}
-		if err := insertHistory(ctx, q, s, d.ID, loaded, d.NewHistory()); err != nil {
+		if erasedNow {
+			if err := q.ClearHistoryReasons(ctx, d.ID); err != nil {
+				return fmt.Errorf("clear history reasons: %w", err)
+			}
+		}
+		if err := insertHistory(ctx, r.box, q, s, d.ID, loaded, d.NewHistory()); err != nil {
 			return err
 		}
 		if err := syncPickupWatch(ctx, q, s, d); err != nil {
@@ -401,11 +408,15 @@ func (r *Repo) toDelivery(row db.GetDeliveryRow, hist []db.ListHistoryRow) (*dom
 	}
 	d.History = make([]domain.HistoryEntry, len(hist))
 	for i, h := range hist {
+		reason, err := sl.openString(reasonField(h.Seq), h.ReasonSealed)
+		if err != nil {
+			return nil, err
+		}
 		d.History[i] = domain.HistoryEntry{
 			EventID: deref(h.EventID), Type: h.Type, Actor: domain.ActorKind(h.Actor),
 			By: domain.ConfirmedBy(deref(h.By)), From: domain.Status(deref(h.FromStatus)),
 			To: domain.Status(h.ToStatus), Outcome: domain.Outcome(h.Outcome),
-			OccurredAt: h.OccurredAt.UTC(), ReceivedAt: h.ReceivedAt.UTC(), Reason: deref(h.Reason),
+			OccurredAt: h.OccurredAt.UTC(), ReceivedAt: h.ReceivedAt.UTC(), Reason: deref(reason),
 		}
 	}
 	return d, nil
@@ -432,13 +443,23 @@ func (r *Repo) seal(d *domain.Delivery) (sealedFields, error) {
 
 // insertHistory appends entries after the first `after` ones (seq is
 // 1-based and gap-free; the delivery row lock serialises writers).
-func insertHistory(ctx context.Context, q *db.Queries, s app.Scope, deliveryID string, after int, entries []domain.HistoryEntry) error {
+func insertHistory(ctx context.Context, box *sealbox.Box, q *db.Queries, s app.Scope, deliveryID string, after int, entries []domain.HistoryEntry) error {
+	sl := sealer{box: box, deliveryID: deliveryID}
 	for i, h := range entries {
-		err := q.InsertHistory(ctx, db.InsertHistoryParams{
-			DeliveryID: deliveryID, Seq: int32(after + i + 1), // #nosec G115 -- history length
+		seq := int32(after + i + 1) // #nosec G115 -- history length
+		var reason *string
+		if h.Reason != "" {
+			reason = &h.Reason
+		}
+		reasonSealed, err := sl.sealString(reasonField(seq), reason)
+		if err != nil {
+			return err
+		}
+		err = q.InsertHistory(ctx, db.InsertHistoryParams{
+			DeliveryID: deliveryID, Seq: seq,
 			EventID: nilIfEmpty(h.EventID), Type: h.Type, Actor: string(h.Actor), By: nilIfEmpty(string(h.By)),
 			FromStatus: nilIfEmpty(string(h.From)), ToStatus: string(h.To), Outcome: string(h.Outcome),
-			OccurredAt: h.OccurredAt, ReceivedAt: h.ReceivedAt, Reason: nilIfEmpty(h.Reason),
+			OccurredAt: h.OccurredAt, ReceivedAt: h.ReceivedAt, ReasonSealed: reasonSealed,
 			TenantID: s.TenantID, Environment: s.Env,
 		})
 		if err != nil {

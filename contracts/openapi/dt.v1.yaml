@@ -1105,6 +1105,7 @@ components:
         reason:
           type: string
           maxLength: 200
+          description: Why. Stored encrypted and erased with the delivery's personal data; never included in events.
     CancelDeliveryRequest:
       type: object
       additionalProperties: false
@@ -1112,6 +1113,7 @@ components:
         reason:
           type: string
           maxLength: 200
+          description: Why. Stored encrypted and erased with the delivery's personal data; never included in events.
     UpsertCourierRequest:
       type: object
       additionalProperties: false

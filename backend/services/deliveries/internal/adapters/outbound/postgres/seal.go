@@ -13,6 +13,7 @@ const (
 	fieldCustomerFirstName = "customer_first_name"
 	fieldNotes             = "notes"
 	fieldMetadata          = "metadata"
+	fieldReason            = "reason"
 )
 
 // sealer seals and opens one delivery's personal data, binding each value
@@ -87,6 +88,10 @@ func (s sealer) open(field string, b []byte) ([]byte, error) {
 	}
 	return pt, nil
 }
+
+// reasonField is the field of a history row's reason: the sequence number
+// binds each reason to its row.
+func reasonField(seq int32) string { return fmt.Sprintf("%s|%d", fieldReason, seq) }
 
 // sealedFields are a delivery's four sealed columns.
 type sealedFields struct {

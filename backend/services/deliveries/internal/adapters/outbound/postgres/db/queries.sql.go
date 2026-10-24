@@ -39,6 +39,15 @@ func (q *Queries) ApplySettings(ctx context.Context, arg ApplySettingsParams) er
 	return err
 }
 
+const clearHistoryReasons = `-- name: ClearHistoryReasons :exec
+UPDATE delivery_history SET reason_sealed = NULL WHERE delivery_id = $1
+`
+
+func (q *Queries) ClearHistoryReasons(ctx context.Context, deliveryID string) error {
+	_, err := q.db.Exec(ctx, clearHistoryReasons, deliveryID)
+	return err
+}
+
 const deletePickupWatch = `-- name: DeletePickupWatch :exec
 DELETE FROM pickup_watch WHERE delivery_id = $1
 `
@@ -278,25 +287,25 @@ func (q *Queries) InsertDelivery(ctx context.Context, arg InsertDeliveryParams) 
 
 const insertHistory = `-- name: InsertHistory :exec
 INSERT INTO delivery_history (delivery_id, seq, event_id, type, actor, "by", from_status, to_status,
-  outcome, occurred_at, received_at, reason, tenant_id, environment)
+  outcome, occurred_at, received_at, reason_sealed, tenant_id, environment)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 `
 
 type InsertHistoryParams struct {
-	DeliveryID  string
-	Seq         int32
-	EventID     *string
-	Type        string
-	Actor       string
-	By          *string
-	FromStatus  *string
-	ToStatus    string
-	Outcome     string
-	OccurredAt  time.Time
-	ReceivedAt  time.Time
-	Reason      *string
-	TenantID    string
-	Environment string
+	DeliveryID   string
+	Seq          int32
+	EventID      *string
+	Type         string
+	Actor        string
+	By           *string
+	FromStatus   *string
+	ToStatus     string
+	Outcome      string
+	OccurredAt   time.Time
+	ReceivedAt   time.Time
+	ReasonSealed []byte
+	TenantID     string
+	Environment  string
 }
 
 func (q *Queries) InsertHistory(ctx context.Context, arg InsertHistoryParams) error {
@@ -312,7 +321,7 @@ func (q *Queries) InsertHistory(ctx context.Context, arg InsertHistoryParams) er
 		arg.Outcome,
 		arg.OccurredAt,
 		arg.ReceivedAt,
-		arg.Reason,
+		arg.ReasonSealed,
 		arg.TenantID,
 		arg.Environment,
 	)
@@ -462,24 +471,24 @@ func (q *Queries) ListDeliveries(ctx context.Context, arg ListDeliveriesParams) 
 
 const listHistory = `-- name: ListHistory :many
 SELECT delivery_id, seq, event_id, type, actor, "by", from_status, to_status, outcome,
-  occurred_at, received_at, reason
+  occurred_at, received_at, reason_sealed
 FROM delivery_history WHERE delivery_id = ANY($1::text[])
 ORDER BY delivery_id, seq
 `
 
 type ListHistoryRow struct {
-	DeliveryID string
-	Seq        int32
-	EventID    *string
-	Type       string
-	Actor      string
-	By         *string
-	FromStatus *string
-	ToStatus   string
-	Outcome    string
-	OccurredAt time.Time
-	ReceivedAt time.Time
-	Reason     *string
+	DeliveryID   string
+	Seq          int32
+	EventID      *string
+	Type         string
+	Actor        string
+	By           *string
+	FromStatus   *string
+	ToStatus     string
+	Outcome      string
+	OccurredAt   time.Time
+	ReceivedAt   time.Time
+	ReasonSealed []byte
 }
 
 func (q *Queries) ListHistory(ctx context.Context, deliveryIds []string) ([]ListHistoryRow, error) {
@@ -503,7 +512,7 @@ func (q *Queries) ListHistory(ctx context.Context, deliveryIds []string) ([]List
 			&i.Outcome,
 			&i.OccurredAt,
 			&i.ReceivedAt,
-			&i.Reason,
+			&i.ReasonSealed,
 		); err != nil {
 			return nil, err
 		}

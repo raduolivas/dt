@@ -45,20 +45,20 @@ type Delivery struct {
 }
 
 type DeliveryHistory struct {
-	DeliveryID  string
-	Seq         int32
-	EventID     *string
-	Type        string
-	Actor       string
-	By          *string
-	FromStatus  *string
-	ToStatus    string
-	Outcome     string
-	OccurredAt  time.Time
-	ReceivedAt  time.Time
-	Reason      *string
-	TenantID    string
-	Environment string
+	DeliveryID   string
+	Seq          int32
+	EventID      *string
+	Type         string
+	Actor        string
+	By           *string
+	FromStatus   *string
+	ToStatus     string
+	Outcome      string
+	OccurredAt   time.Time
+	ReceivedAt   time.Time
+	TenantID     string
+	Environment  string
+	ReasonSealed []byte
 }
 
 type Inbox struct {

@@ -758,3 +758,53 @@ func TestDroppedReportsPersist(t *testing.T) {
 		t.Fatalf("history = %d", len(got.History))
 	}
 }
+
+func TestReasonSealedAtRest(t *testing.T) {
+	t.Parallel()
+	e := setup(t)
+	ctx := context.Background()
+	const reason = "customer Ana moved"
+	d := create(t, e, scopeA, fullInput("ord-reason"), domain.DefaultTenantSettings(), t0)
+	mutate(t, e, scopeA, d.ID, func(d *domain.Delivery) ([]domain.Event, error) {
+		return d.Cancel(reason, t0.Add(time.Minute))
+	})
+
+	var pos, sealed int
+	if err := e.admin.QueryRow(ctx,
+		`SELECT coalesce(max(position(convert_to($1, 'UTF8') in reason_sealed)), 0), count(reason_sealed)
+		 FROM deliveries.delivery_history WHERE delivery_id = $2`, reason, d.ID).Scan(&pos, &sealed); err != nil {
+		t.Fatal(err)
+	}
+	if pos != 0 || sealed != 1 {
+		t.Fatalf("plaintext position %d, sealed rows %d; want 0 and 1", pos, sealed)
+	}
+	got, err := e.repo.Get(ctx, scopeA, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := got.History[len(got.History)-1]; h.Reason != reason {
+		t.Fatalf("reason = %q", h.Reason)
+	}
+
+	mutate(t, e, scopeA, d.ID, func(d *domain.Delivery) ([]domain.Event, error) {
+		return d.ErasePersonalData(t0.Add(time.Hour))
+	})
+	var left int
+	if err := e.admin.QueryRow(ctx,
+		`SELECT count(*) FROM deliveries.delivery_history WHERE delivery_id = $1 AND reason_sealed IS NOT NULL`,
+		d.ID).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 0 {
+		t.Fatalf("%d sealed reasons left after erasure", left)
+	}
+	got, err = e.repo.Get(ctx, scopeA, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range got.History {
+		if h.Reason != "" {
+			t.Fatalf("history keeps reason %q after erasure", h.Reason)
+		}
+	}
+}

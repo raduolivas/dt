@@ -41,7 +41,6 @@ type StatusChanged struct {
 	From, To   Status
 	Actor      ActorKind
 	OccurredAt time.Time
-	Reason     string
 	// Overrode is set when a partner report overrode the other side's state
 	// under the conflict rule.
 	Overrode bool

@@ -159,7 +159,7 @@ func (d *Delivery) Assign(c CourierRef, at time.Time) ([]Event, error) {
 	})
 	evs := []Event{{Type: EventCourierAssigned, Payload: CourierAssigned{DeliveryID: d.ID, CourierID: c.ID, AssignedAt: at}}}
 	if to != from {
-		evs = append(evs, d.statusChanged(from, ActorPartner, at, "", false))
+		evs = append(evs, d.statusChanged(from, ActorPartner, at, false))
 	}
 	return evs, nil
 }
@@ -179,7 +179,7 @@ func (d *Delivery) Cancel(reason string, at time.Time) ([]Event, error) {
 		Type: HistoryCancelled, Actor: ActorPartner, From: from, To: StatusCancelled,
 		Outcome: OutcomeApplied, OccurredAt: at, ReceivedAt: at, Reason: reason,
 	})
-	return []Event{d.statusChanged(from, ActorPartner, at, reason, false)}, nil
+	return []Event{d.statusChanged(from, ActorPartner, at, false)}, nil
 }
 
 // Update applies p. The dropoff location is locked from picked_up on; the
@@ -245,8 +245,8 @@ func (d *Delivery) Update(p Patch, at time.Time) ([]Event, error) {
 	return []Event{{Type: EventDeliveryUpdated, Payload: ev}}, nil
 }
 
-// ErasePersonalData clears the customer first name, notes, dropoff label and
-// metadata of a finished delivery. A second call is a no-op.
+// ErasePersonalData clears the customer first name, notes, dropoff label,
+// metadata and history reasons of a finished delivery. A second call is a no-op.
 func (d *Delivery) ErasePersonalData(at time.Time) ([]Event, error) {
 	if !d.Status.Final() {
 		return nil, ErrDeliveryActive
@@ -255,6 +255,9 @@ func (d *Delivery) ErasePersonalData(at time.Time) ([]Event, error) {
 		return nil, nil
 	}
 	d.CustomerFirstName, d.Notes, d.DropoffLabel, d.Metadata = nil, nil, nil, nil
+	for i := range d.History {
+		d.History[i].Reason = ""
+	}
 	erased := at
 	d.ErasedAt = &erased
 	d.UpdatedAt = at
@@ -263,10 +266,10 @@ func (d *Delivery) ErasePersonalData(at time.Time) ([]Event, error) {
 
 // statusChanged builds the delivery.status_changed event for a move from
 // from to the current state.
-func (d *Delivery) statusChanged(from Status, a ActorKind, at time.Time, reason string, overrode bool) Event {
+func (d *Delivery) statusChanged(from Status, a ActorKind, at time.Time, overrode bool) Event {
 	return Event{Type: EventStatusChanged, Payload: StatusChanged{
 		DeliveryID: d.ID, From: from, To: d.Status, Actor: a,
-		OccurredAt: at, Reason: reason, Overrode: overrode,
+		OccurredAt: at, Overrode: overrode,
 	}}
 }
 

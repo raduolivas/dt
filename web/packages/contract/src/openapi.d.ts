@@ -348,9 +348,11 @@ export interface components {
              * @enum {string}
              */
             by?: "partner" | "store";
+            /** @description Why. Stored encrypted and erased with the delivery's personal data; never included in events. */
             reason?: string;
         };
         CancelDeliveryRequest: {
+            /** @description Why. Stored encrypted and erased with the delivery's personal data; never included in events. */
             reason?: string;
         };
         UpsertCourierRequest: {

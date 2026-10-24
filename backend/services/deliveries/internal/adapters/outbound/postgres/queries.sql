@@ -70,14 +70,17 @@ WHERE id = @id;
 
 -- name: ListHistory :many
 SELECT delivery_id, seq, event_id, type, actor, "by", from_status, to_status, outcome,
-  occurred_at, received_at, reason
+  occurred_at, received_at, reason_sealed
 FROM delivery_history WHERE delivery_id = ANY(@delivery_ids::text[])
 ORDER BY delivery_id, seq;
 
 -- name: InsertHistory :exec
 INSERT INTO delivery_history (delivery_id, seq, event_id, type, actor, "by", from_status, to_status,
-  outcome, occurred_at, received_at, reason, tenant_id, environment)
+  outcome, occurred_at, received_at, reason_sealed, tenant_id, environment)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14);
+
+-- name: ClearHistoryReasons :exec
+UPDATE delivery_history SET reason_sealed = NULL WHERE delivery_id = $1;
 
 -- name: GetCourier :one
 SELECT * FROM couriers WHERE id = $1;
