@@ -202,6 +202,9 @@ func Run(ctx context.Context, opts Options) (err error) {
 	}
 
 	for name, check := range opts.Checks {
+		if _, dup := checks[name]; dup {
+			return fmt.Errorf("%s: check %q is built in and cannot be replaced", opts.Name, name)
+		}
 		checks[name] = check
 	}
 	mux := http.NewServeMux()

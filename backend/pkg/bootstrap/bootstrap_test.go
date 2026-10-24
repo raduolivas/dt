@@ -382,3 +382,19 @@ func TestExtraReadinessCheck(t *testing.T) {
 		t.Fatalf("livez once passing: %d", l.status)
 	}
 }
+
+func TestExtraCheckCannotReplaceBuiltIn(t *testing.T) {
+	t.Setenv("DATABASE_URL", testkit.StartPostgres(t).URL("gateway"))
+	t.Setenv("PORT", "0")
+	t.Setenv("LOG_LEVEL", "error")
+	// Bounded: without the guard Run would serve until ctx ends.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := bootstrap.Run(ctx, bootstrap.Options{
+		Name:   "test",
+		Checks: map[string]httpx.Check{"db": func(context.Context) error { return nil }},
+	})
+	if err == nil || !strings.Contains(err.Error(), `"db"`) {
+		t.Fatalf("Run = %v, want an error naming the duplicate check \"db\"", err)
+	}
+}

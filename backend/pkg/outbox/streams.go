@@ -73,6 +73,9 @@ func WaitForStream(ctx context.Context, js jetstream.JetStream, name string, log
 	defer poll.Stop()
 	warn := time.NewTicker(streamWarnInterval)
 	defer warn.Stop()
+	// lastErr is the latest failure other than not-found (e.g. permissions),
+	// so the periodic warning says why the wait may not be the owner's fault.
+	var lastErr error
 	for {
 		err := StreamExists(ctx, js, name)
 		if err == nil {
@@ -82,13 +85,18 @@ func WaitForStream(ctx context.Context, js jetstream.JetStream, name string, log
 			return nil
 		}
 		if !errors.Is(err, jetstream.ErrStreamNotFound) {
+			lastErr = err
 			log.DebugContext(ctx, "stream check failed", "stream", name, "err", err)
 		}
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-warn.C:
-			log.WarnContext(ctx, "waiting for stream to be created by its owner", "stream", name)
+			if lastErr != nil {
+				log.WarnContext(ctx, "waiting for stream to be created by its owner", "stream", name, "last_err", lastErr)
+			} else {
+				log.WarnContext(ctx, "waiting for stream to be created by its owner", "stream", name)
+			}
 		case <-poll.C:
 		}
 	}
