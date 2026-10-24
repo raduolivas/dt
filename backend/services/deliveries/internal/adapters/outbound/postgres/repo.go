@@ -115,7 +115,7 @@ func (r *Repo) Create(ctx context.Context, s app.Scope, d *domain.Delivery, evts
 			DropoffLabelSealed: sealed.dropoffLabel, CustomerFirstNameSealed: sealed.customerFirstName,
 			NotesSealed: sealed.notes, MetadataSealed: sealed.metadata,
 			ItemsSummary: d.ItemsSummary, ItemCount: itemCount(d.ItemCount), CourierID: courierID(d),
-			ErasedAt: d.ErasedAt, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
+			ErasedAt: d.ErasedAt, DroppedReports: droppedReports(d), CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 		})
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == externalIDKey {
@@ -226,7 +226,7 @@ func (r *Repo) Mutate(ctx context.Context, s app.Scope, id string, fn func(*doma
 			ID: d.ID, Status: string(d.Status), DropoffLat: d.Dropoff.Lat, DropoffLng: d.Dropoff.Lng,
 			DropoffLabelSealed: sealed.dropoffLabel, CustomerFirstNameSealed: sealed.customerFirstName,
 			NotesSealed: sealed.notes, MetadataSealed: sealed.metadata,
-			CourierID: courierID(d), ErasedAt: d.ErasedAt, UpdatedAt: d.UpdatedAt,
+			CourierID: courierID(d), ErasedAt: d.ErasedAt, DroppedReports: droppedReports(d), UpdatedAt: d.UpdatedAt,
 		})
 		if err != nil {
 			return fmt.Errorf("update delivery: %w", err)
@@ -374,7 +374,7 @@ func (r *Repo) toDelivery(row db.GetDeliveryRow, hist []db.ListHistoryRow) (*dom
 		Model: domain.Model(row.Model), Status: domain.Status(row.Status), Policy: domain.PickupPolicy(row.PickupPolicy),
 		Pickup: domain.Location{Lat: row.PickupLat, Lng: row.PickupLng}, PickupName: row.PickupName,
 		Dropoff:      domain.Location{Lat: row.DropoffLat, Lng: row.DropoffLng},
-		ItemsSummary: row.ItemsSummary, ErasedAt: utc(row.ErasedAt),
+		ItemsSummary: row.ItemsSummary, ErasedAt: utc(row.ErasedAt), DroppedReports: int(row.DroppedReports),
 		CreatedAt: row.CreatedAt.UTC(), UpdatedAt: row.UpdatedAt.UTC(),
 	}
 	var err error
@@ -576,4 +576,8 @@ func utc(t *time.Time) *time.Time {
 		return nil
 	}
 	return new(t.UTC())
+}
+
+func droppedReports(d *domain.Delivery) int32 {
+	return int32(d.DroppedReports) // #nosec G115 -- a delivery receives far fewer than 2^31 reports
 }

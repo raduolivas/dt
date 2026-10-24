@@ -151,14 +151,46 @@ func (d *Delivery) apply(r Report, target Status, overrode bool) (Outcome, []Eve
 // recordReport appends r to the history with the state it found (from) and
 // the current state.
 func (d *Delivery) recordReport(r Report, from Status, o Outcome) {
-	d.record(HistoryEntry{
+	h := HistoryEntry{
 		EventID: r.EventID, Type: string(r.Type), Actor: r.Actor, By: r.By,
 		From: from, To: d.Status, Outcome: o,
 		OccurredAt: r.OccurredAt, ReceivedAt: r.ReceivedAt, Reason: r.Reason,
-	})
+	}
+	if isNoise(h) && d.noiseEntries() >= MaxNoiseEntries {
+		d.DroppedReports++
+	} else {
+		d.record(h)
+	}
 	if !r.ReceivedAt.IsZero() {
 		d.UpdatedAt = r.ReceivedAt
 	}
+}
+
+// MaxNoiseEntries is how many noise history entries a delivery stores; later
+// ones are counted in DroppedReports instead (OQ21).
+const MaxNoiseEntries = 200
+
+// isNoise reports whether h changed nothing and the policy does not need it:
+// a stale or conflict entry, or a confirmation recorded once the delivery was
+// already picked up. Pickup confirmations before picked_up are never noise.
+func isNoise(h HistoryEntry) bool {
+	switch h.Outcome {
+	case OutcomeStale, OutcomeConflict:
+		return true
+	case OutcomeRecorded:
+		return h.Type == string(ReportPickupConfirmed) && h.From.rank() >= StatusPickedUp.rank()
+	}
+	return false
+}
+
+func (d *Delivery) noiseEntries() int {
+	n := 0
+	for _, h := range d.History {
+		if isNoise(h) {
+			n++
+		}
+	}
+	return n
 }
 
 // lastApplied returns the latest history entry that changed the state and

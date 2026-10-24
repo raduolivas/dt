@@ -149,7 +149,7 @@ func exported(d *domain.Delivery) domain.Delivery {
 		Status: d.Status, Policy: d.Policy, Pickup: d.Pickup, PickupName: d.PickupName, Dropoff: d.Dropoff,
 		DropoffLabel: d.DropoffLabel, CustomerFirstName: d.CustomerFirstName, ItemsSummary: d.ItemsSummary,
 		Notes: d.Notes, ItemCount: d.ItemCount, Metadata: d.Metadata, Courier: d.Courier, History: d.History,
-		ErasedAt: d.ErasedAt, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
+		ErasedAt: d.ErasedAt, DroppedReports: d.DroppedReports, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 	}
 }
 
@@ -728,5 +728,33 @@ func TestApplySettingsIgnoresOlder(t *testing.T) {
 	apply(domain.DefaultTenantSettings(), t0.Add(2*time.Minute))
 	if got, _ := e.repo.Settings(ctx, "ten_a"); !reflect.DeepEqual(got, domain.DefaultTenantSettings()) {
 		t.Errorf("after a newer update settings = %+v, want defaults", got)
+	}
+}
+
+func TestDroppedReportsPersist(t *testing.T) {
+	t.Parallel()
+	e := setup(t)
+	d := create(t, e, scopeA, fullInput("ord-cap"), domain.DefaultTenantSettings(), t0)
+	mutate(t, e, scopeA, d.ID, report(domain.Report{
+		EventID: "p1", Type: domain.ReportPickupConfirmed, Actor: domain.ActorCourier,
+		OccurredAt: t0.Add(time.Minute), ReceivedAt: t0.Add(time.Minute),
+	}))
+	for i := 0; i < domain.MaxNoiseEntries+3; i++ {
+		at := t0.Add(2 * time.Minute)
+		mutate(t, e, scopeA, d.ID, report(domain.Report{
+			EventID: fmt.Sprintf("a%d", i), Type: domain.ReportArriving, Actor: domain.ActorCourier,
+			OccurredAt: at, ReceivedAt: at,
+		}))
+	}
+	got, err := e.repo.Get(context.Background(), scopeA, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One arriving applied, the rest stale: the first 200 stored, 2 dropped.
+	if got.DroppedReports != 2 {
+		t.Fatalf("DroppedReports = %d, want 2", got.DroppedReports)
+	}
+	if len(got.History) != 1+1+1+domain.MaxNoiseEntries {
+		t.Fatalf("history = %d", len(got.History))
 	}
 }

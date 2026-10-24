@@ -41,6 +41,7 @@ type Delivery struct {
 	ErasedAt                *time.Time
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
+	DroppedReports          int32
 }
 
 type DeliveryHistory struct {

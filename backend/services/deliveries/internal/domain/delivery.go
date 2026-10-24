@@ -43,7 +43,10 @@ type Delivery struct {
 	Courier                                              *CourierRef
 	// History is the full event log, oldest first. Report needs all of it
 	// (duplicates, pickup confirmations, the conflict rule).
-	History              []HistoryEntry
+	History []HistoryEntry
+	// DroppedReports counts noise reports not stored once the history held
+	// MaxNoiseEntries of them. It is internal: no API exposes it.
+	DroppedReports       int
 	ErasedAt             *time.Time
 	CreatedAt, UpdatedAt time.Time
 
