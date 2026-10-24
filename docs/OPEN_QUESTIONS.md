@@ -27,7 +27,7 @@ Two plans exist: **Direct** and **End-to-end**. Still to define:
 
 ### OQ14. Product name and domain *(from the MVP spec §17; tech part answered 2026-10-20 (R20), cloud provider 2026-10-23 (R23))*
 - **Product name and domain.** "DT" is the working name until then.
-- **Leading candidate (2026-10-23): "Arrivo".** A DNS check found the short domains already registered: .com, .io, .app, .eu, .nl, .co, .dev, .to (several of them parked, so they may be for sale). Free in that check: `arrivo.delivery`, `arrivomap.com`, `arrivo3d.com`, `playarrivo.com`. An unrelated US transport-tech company called Arrivo (arrivo-loop.com, 2016) exists. Still to do: an EUIPO/WIPO trademark search in classes 9, 39 and 42, and choosing the domain.
+- **Dropped (2026-10-24): "Arrivo" and any "arriv-" name.** They are too close to Arriva, a large European bus and rail operator with class 39 (transport) trademarks. Also dropped: generic game words that are likely taken (e.g. Overworld). The brainstorm continues.
 
 
 ---
