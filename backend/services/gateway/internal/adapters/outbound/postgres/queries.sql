@@ -17,8 +17,8 @@ FROM api_keys WHERE lookup = $1;
 
 -- name: InsertIdempotencyRecord :one
 -- Claims a new key; no row comes back when the key already has a record.
-INSERT INTO idempotency_records (tenant_id, environment, idem_key, request_hash, state, locked_until, created_at, expires_at)
-VALUES (@tenant_id, @environment, @idem_key, @request_hash, 'in_progress', @locked_until, @created_at, @expires_at)
+INSERT INTO idempotency_records (tenant_id, environment, idem_key, request_hash, state, locked_until, resource_id, created_at, expires_at)
+VALUES (@tenant_id, @environment, @idem_key, @request_hash, 'in_progress', @locked_until, sqlc.narg(resource_id), @created_at, @expires_at)
 ON CONFLICT (tenant_id, environment, idem_key) DO NOTHING
 RETURNING idem_key;
 
@@ -32,7 +32,7 @@ FOR UPDATE;
 -- Restarts an expired record or a stale in-progress one as a new claim.
 UPDATE idempotency_records
 SET request_hash = @request_hash, state = 'in_progress', locked_until = @locked_until,
-    response_status = NULL, response_headers = NULL, response_body = NULL, resource_id = NULL,
+    response_status = NULL, response_headers = NULL, response_body = NULL, resource_id = sqlc.narg(resource_id),
     created_at = @created_at, expires_at = @expires_at
 WHERE tenant_id = @tenant_id AND environment = @environment AND idem_key = @idem_key;
 
@@ -40,7 +40,7 @@ WHERE tenant_id = @tenant_id AND environment = @environment AND idem_key = @idem
 UPDATE idempotency_records
 SET state = 'completed', locked_until = NULL,
     response_status = @response_status, response_headers = @response_headers, response_body = @response_body,
-    resource_id = sqlc.narg(resource_id)
+    resource_id = COALESCE(sqlc.narg(resource_id), resource_id)
 WHERE tenant_id = @tenant_id AND environment = @environment AND idem_key = @idem_key
   AND state = 'in_progress' AND locked_until = @lease;
 

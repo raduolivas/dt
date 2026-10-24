@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,8 @@ import (
 
 	"connectrpc.com/connect/v2"
 
+	deliveriesv1 "github.com/raduolivas/dt/backend/gen/dt/deliveries/v1"
+	"github.com/raduolivas/dt/backend/gen/dt/deliveries/v1/deliveriesv1connect"
 	"github.com/raduolivas/dt/backend/pkg/apikey"
 	"github.com/raduolivas/dt/backend/pkg/logx"
 	httpapi "github.com/raduolivas/dt/backend/services/gateway/internal/adapters/inbound/http"
@@ -31,9 +34,12 @@ func (m *memIdem) Begin(_ context.Context, _ app.IdempotencyScope, _ []byte, now
 	return app.IdempotencyOutcome{Kind: app.OutcomeStarted, Lease: now.Add(time.Minute)}, nil
 }
 
-func (m *memIdem) Complete(_ context.Context, _ app.IdempotencyScope, _ time.Time, resp app.StoredResponse) error {
+func (m *memIdem) Complete(_ context.Context, sc app.IdempotencyScope, _ time.Time, resp app.StoredResponse) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if resp.ResourceID == "" { // the record keeps the resource Begin named
+		resp.ResourceID = sc.ResourceID
+	}
 	m.completed = append(m.completed, resp)
 	return nil
 }
@@ -71,12 +77,20 @@ func (m *memPurger) all() []purgeCall {
 // Idempotency hook over store and purger as the erasure purger.
 func idemGW(t *testing.T, store app.IdempotencyStore, purger app.IdempotencyPurger) *gw {
 	t.Helper()
-	k := mint(t, apikey.Test, actor, domain.AllScopes...)
 	f := newFake()
+	return idemGWOver(t, f, f, store, purger)
+}
+
+// idemGWOver is idemGW over client, which answers from f.
+func idemGWOver(t *testing.T, f *fakeDeliveries, client deliveriesv1connect.DeliveriesServiceClient,
+	store app.IdempotencyStore, purger app.IdempotencyPurger,
+) *gw {
+	t.Helper()
+	k := mint(t, apikey.Test, actor, domain.AllScopes...)
 	rpcLogs := &bytes.Buffer{}
 	e := newEdge(t, []testKey{k},
 		withRoutes(httpapi.Routes(httpapi.Deps{
-			Deliveries: f, Idempotency: purger, Log: logx.New(rpcLogs, slog.LevelDebug, "gateway"),
+			Deliveries: client, Idempotency: purger, Log: logx.New(rpcLogs, slog.LevelDebug, "gateway"),
 		})...),
 		withMiddleware(func(m *httpapi.Middleware) {
 			m.Idempotency = httpapi.Idempotency(store, fixedClock{}, m.Log)
@@ -134,6 +148,61 @@ func TestErasureDropsStoredResponses(t *testing.T) {
 	}
 	if n := g.fake.count(); n != 3 { // create, erase, create
 		t.Fatalf("deliveries called %d times, want 3", n)
+	}
+}
+
+// blockingCancel is a deliveries client whose CancelDelivery signals started
+// (on its first call) and waits for release.
+type blockingCancel struct {
+	*fakeDeliveries
+	once    sync.Once
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingCancel) CancelDelivery(ctx context.Context, r *deliveriesv1.CancelDeliveryRequest) (*deliveriesv1.CancelDeliveryResponse, error) {
+	b.once.Do(func() { close(b.started) })
+	<-b.release
+	return b.fakeDeliveries.CancelDelivery(ctx, r)
+}
+
+func TestErasureDuringInFlightWriteStoresNothing(t *testing.T) {
+	t.Parallel()
+	store := idemStore(t)
+	f := newFake()
+	b := &blockingCancel{fakeDeliveries: f, started: make(chan struct{}), release: make(chan struct{})}
+	g := idemGWOver(t, f, b, store, store)
+
+	cancelReq := func() *http.Request {
+		r := g.req("POST", "/v1/deliveries/"+delID+"/cancel", "")
+		r.Header.Set("Idempotency-Key", "cancel-in-flight")
+		return r
+	}
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- g.edge.do(cancelReq()) }()
+	<-b.started
+
+	// The cancel is in progress (its record not yet completed): erasing the
+	// delivery purges that record too.
+	g.do(t, g.req("DELETE", "/v1/deliveries/"+delID+"/personal-data", ""), http.StatusOK)
+	close(b.release)
+
+	// The client still gets its response; its Complete lost the lease.
+	if rec := <-done; rec.Code != http.StatusOK {
+		t.Fatalf("in-flight cancel = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(g.logs.String(), "idempotency_complete_failed") {
+		t.Fatalf("Complete did not report a lost lease: %s", g.logs.String())
+	}
+
+	// Nothing was stored: the same key runs the request again.
+	before := f.count()
+	rec := g.edge.do(cancelReq())
+	if rec.Code != http.StatusOK || rec.Header().Get("Idempotent-Replayed") != "" {
+		t.Fatalf("retry = %d replayed=%q, want a fresh 200", rec.Code, rec.Header().Get("Idempotent-Replayed"))
+	}
+	if f.count() != before+1 {
+		t.Fatalf("deliveries calls %d -> %d, want the retry to run", before, f.count())
 	}
 }
 

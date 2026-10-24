@@ -39,6 +39,11 @@ type IdempotencyScope struct {
 	TenantID string
 	Env      domain.Environment
 	Key      string
+	// ResourceID is the resource the request acts on (the route's {id}), ""
+	// if the route has none. Begin records it, so erasing the resource
+	// purges the record even while the request is in progress. Complete may
+	// replace it with the id the handler chose (create routes).
+	ResourceID string
 }
 
 // StoredResponse is the response kept for replay. Header holds only the
@@ -48,8 +53,9 @@ type StoredResponse struct {
 	Status int
 	Header map[string][]string
 	Body   []byte
-	// ResourceID is the resource the request acted on (a delivery id), ""
-	// if none. Erasing that resource's personal data purges the record.
+	// ResourceID is the resource the request acted on when the handler chose
+	// it (a created delivery's id), "" to keep the one in the scope. Erasing
+	// that resource's personal data purges the record.
 	ResourceID string
 }
 
@@ -99,10 +105,13 @@ type IdempotencyStore interface {
 	// key, an expired record or an in-progress record whose lock has passed
 	// is (re)claimed: OutcomeStarted with a lease until now +
 	// IdempotencyLockTTL. Otherwise a different hash is OutcomeMismatch, a
-	// completed record OutcomeReplay and a live lock OutcomeInProgress.
+	// completed record OutcomeReplay and a live lock OutcomeInProgress. A
+	// claimed record names scope.ResourceID, so PurgeResource finds it while
+	// it is in progress.
 	Begin(ctx context.Context, scope IdempotencyScope, hash []byte, now time.Time) (IdempotencyOutcome, error)
-	// Complete stores resp for replay. ErrIdempotencyLeaseLost if lease no
-	// longer owns the record.
+	// Complete stores resp for replay; a non-empty resp.ResourceID replaces
+	// the one Begin recorded. ErrIdempotencyLeaseLost if lease no longer owns
+	// the record, e.g. because PurgeResource deleted it.
 	Complete(ctx context.Context, scope IdempotencyScope, lease time.Time, resp StoredResponse) error
 	// Abandon deletes the record so the client may retry (5xx, panics,
 	// unstorable responses). ErrIdempotencyLeaseLost if lease no longer owns
