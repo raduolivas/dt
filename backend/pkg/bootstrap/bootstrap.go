@@ -83,6 +83,9 @@ type Options struct {
 	Migrations fs.FS
 	// Setup mounts routes and returns background workers. Optional.
 	Setup func(ctx context.Context, d Deps, mux *http.ServeMux) ([]Worker, error)
+	// Checks are extra /readyz checks, by name. They run alongside the
+	// built-in ones; /livez is unaffected.
+	Checks map[string]httpx.Check
 	// Ready is a test hook called with the bound address once listening.
 	Ready func(addr string)
 }
@@ -198,6 +201,9 @@ func Run(ctx context.Context, opts Options) (err error) {
 		}
 	}
 
+	for name, check := range opts.Checks {
+		checks[name] = check
+	}
 	mux := http.NewServeMux()
 	mux.Handle("GET /livez", httpx.Livez())
 	mux.Handle("GET /readyz", httpx.Readyz(checks, readyTimeout))

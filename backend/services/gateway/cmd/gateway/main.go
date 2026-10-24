@@ -11,8 +11,11 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/nats-io/nats.go/jetstream"
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/connecthttp"
@@ -20,6 +23,7 @@ import (
 	"github.com/raduolivas/dt/backend/gen/dt/deliveries/v1/deliveriesv1connect"
 	"github.com/raduolivas/dt/backend/pkg/apikey"
 	"github.com/raduolivas/dt/backend/pkg/bootstrap"
+	"github.com/raduolivas/dt/backend/pkg/httpx"
 	"github.com/raduolivas/dt/backend/pkg/outbox"
 	"github.com/raduolivas/dt/backend/pkg/rpcauth"
 	"github.com/raduolivas/dt/backend/pkg/sealbox"
@@ -66,6 +70,9 @@ func run(ctx context.Context, ready func(addr string)) error {
 		return fmt.Errorf("gateway: config: %w", err)
 	}
 
+	// js is set by Setup; the accounts_stream check reads it per probe.
+	var js atomic.Pointer[jetstream.JetStream]
+
 	return bootstrap.Run(ctx, bootstrap.Options{
 		Name: "gateway",
 		// Redis is non-fatal for /readyz: the limiter fails open without it
@@ -73,10 +80,16 @@ func run(ctx context.Context, ready func(addr string)) error {
 		Needs:      bootstrap.Needs{Redis: true, RedisNonFatal: true, NATS: true},
 		Migrations: migrations.FS,
 		Ready:      ready,
-		Setup: func(ctx context.Context, d bootstrap.Deps, mux *http.ServeMux) ([]bootstrap.Worker, error) {
-			if err := outbox.EnsureStream(ctx, d.JS, outbox.StreamAccounts); err != nil {
-				return nil, err
+		Checks: map[string]httpx.Check{"accounts_stream": func(ctx context.Context) error {
+			j := js.Load()
+			if j == nil {
+				return errors.New("jetstream not ready")
 			}
+			return outbox.StreamExists(ctx, *j, consumer.APIKeysStream)
+		}},
+		Setup: func(ctx context.Context, d bootstrap.Deps, mux *http.ServeMux) ([]bootstrap.Worker, error) {
+			// ACCOUNTS belongs to the accounts service; the consumer waits for it.
+			js.Store(&d.JS)
 			clock := systemClock{}
 			keys := postgres.New(d.DB)
 			limiter := redislimit.NewLimiter(d.Redis)
@@ -94,6 +107,9 @@ func run(ctx context.Context, ready func(addr string)) error {
 			})
 
 			consume := func(ctx context.Context) error {
+				if err := outbox.WaitForStream(ctx, d.JS, consumer.APIKeysStream, d.Log); err != nil {
+					return err
+				}
 				return outbox.Consume(ctx, d.JS, d.DB, d.Log, consumer.APIKeysStream, consumer.APIKeysConfig, consumer.APIKeys(keys))
 			}
 			sweeper := &app.IdempotencySweeper{Store: idem, Clock: clock, Log: d.Log}

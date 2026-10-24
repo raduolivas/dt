@@ -96,6 +96,20 @@ func startGateway(t *testing.T, redisURL string) (string, string, context.Contex
 	t.Setenv("DATA_KEY_CURRENT", "t1")
 
 	ctx, cancel := context.WithCancel(context.Background())
+	// Play accounts' side: it owns ACCOUNTS and creates it before the
+	// gateway's consumer starts waiting for it.
+	nc, err := nats.Connect(natsURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(nc.Close)
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := outbox.EnsureStream(ctx, js, outbox.StreamAccounts); err != nil {
+		t.Fatal(err)
+	}
 	addr := make(chan string, 1)
 	done := make(chan error, 1)
 	go func() { done <- run(ctx, func(a string) { addr <- a }) }()

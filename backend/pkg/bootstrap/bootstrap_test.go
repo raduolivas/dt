@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -351,5 +352,33 @@ func TestNonFatalRedisDoesNotHideDatabase(t *testing.T) {
 	}
 	if resp.status != http.StatusServiceUnavailable || p.Detail != "failing: db" {
 		t.Fatalf("readyz: %d %+v, want 503 failing: db only", resp.status, p)
+	}
+}
+
+func TestExtraReadinessCheck(t *testing.T) {
+	t.Setenv("DATABASE_URL", testkit.StartPostgres(t).URL("gateway"))
+	var ready atomic.Bool
+	base, _, _ := startWith(t, bootstrap.Options{
+		Name: "test",
+		Checks: map[string]httpx.Check{"accounts_stream": func(context.Context) error {
+			if !ready.Load() {
+				return errors.New("stream not found")
+			}
+			return nil
+		}},
+	})
+	resp := httpGet(t, base+"/readyz")
+	if resp.status != http.StatusServiceUnavailable || !strings.Contains(string(resp.body), "accounts_stream") {
+		t.Fatalf("readyz while failing: %d %s", resp.status, resp.body)
+	}
+	if l := httpGet(t, base+"/livez"); l.status != http.StatusOK {
+		t.Fatalf("livez while failing: %d", l.status)
+	}
+	ready.Store(true)
+	if resp := httpGet(t, base+"/readyz"); resp.status != http.StatusOK {
+		t.Fatalf("readyz once passing: %d %s", resp.status, resp.body)
+	}
+	if l := httpGet(t, base+"/livez"); l.status != http.StatusOK {
+		t.Fatalf("livez once passing: %d", l.status)
 	}
 }

@@ -10,12 +10,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/raduolivas/dt/backend/pkg/bootstrap"
+	"github.com/raduolivas/dt/backend/pkg/httpx"
 	"github.com/raduolivas/dt/backend/pkg/ids"
 	"github.com/raduolivas/dt/backend/pkg/outbox"
 	"github.com/raduolivas/dt/backend/pkg/rpcauth"
@@ -47,15 +49,25 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("deliveries: config: DATA_KEYS/DATA_KEY_CURRENT: %w", err)
 	}
 
+	// js is set by Setup; the accounts_stream check reads it per probe.
+	var js atomic.Pointer[jetstream.JetStream]
+
 	return bootstrap.Run(ctx, bootstrap.Options{
 		Name:       "deliveries",
 		Needs:      bootstrap.Needs{NATS: true},
 		Migrations: migrations.FS,
+		Checks: map[string]httpx.Check{"accounts_stream": func(ctx context.Context) error {
+			j := js.Load()
+			if j == nil {
+				return errors.New("jetstream not ready")
+			}
+			return outbox.StreamExists(ctx, *j, outbox.StreamAccounts.Name)
+		}},
 		Setup: func(ctx context.Context, d bootstrap.Deps, mux *http.ServeMux) ([]bootstrap.Worker, error) {
-			for _, cfg := range []jetstream.StreamConfig{outbox.StreamDeliveries, outbox.StreamAccounts} {
-				if err := outbox.EnsureStream(ctx, d.JS, cfg); err != nil {
-					return nil, err
-				}
+			// deliveries owns DELIVERIES; ACCOUNTS belongs to the accounts service.
+			js.Store(&d.JS)
+			if err := outbox.EnsureStream(ctx, d.JS, outbox.StreamDeliveries); err != nil {
+				return nil, err
 			}
 			repo := postgres.New(d.DB, box)
 			svc := &app.Service{Repo: repo, Clock: systemClock{}, IDs: idGen{}}
@@ -65,6 +77,9 @@ func run(ctx context.Context) error {
 			relay := &outbox.Relay{Pool: d.DB, JS: d.JS, Log: d.Log}
 			sweeper := &app.PickupSweeper{Repo: repo, Clock: systemClock{}, Log: d.Log}
 			settings := func(ctx context.Context) error {
+				if err := outbox.WaitForStream(ctx, d.JS, outbox.StreamAccounts.Name, d.Log); err != nil {
+					return err
+				}
 				return outbox.Consume(ctx, d.JS, d.DB, d.Log, consumer.SettingsStream,
 					consumer.SettingsConfig, consumer.Settings(repo.ApplySettings, d.Log))
 			}
