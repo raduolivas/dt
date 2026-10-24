@@ -73,11 +73,17 @@ func (Environment) EnumDescriptor() ([]byte, []int) {
 }
 
 type Subject struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	DeliveryId    string                 `protobuf:"bytes,1,opt,name=delivery_id,json=deliveryId,proto3" json:"delivery_id,omitempty"`
-	CourierId     string                 `protobuf:"bytes,2,opt,name=courier_id,json=courierId,proto3" json:"courier_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	DeliveryId string                 `protobuf:"bytes,1,opt,name=delivery_id,json=deliveryId,proto3" json:"delivery_id,omitempty"`
+	CourierId  string                 `protobuf:"bytes,2,opt,name=courier_id,json=courierId,proto3" json:"courier_id,omitempty"`
+	// delivery_version increases by one with each change to the delivery;
+	// events about no delivery (courier.upserted) carry 0. Consumers apply an
+	// event only if its delivery_version is greater than or equal to the last
+	// one they applied for that delivery; events with the same version belong
+	// to the same change and arrive in order.
+	DeliveryVersion uint64 `protobuf:"varint,3,opt,name=delivery_version,json=deliveryVersion,proto3" json:"delivery_version,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Subject) Reset() {
@@ -122,6 +128,13 @@ func (x *Subject) GetCourierId() string {
 		return x.CourierId
 	}
 	return ""
+}
+
+func (x *Subject) GetDeliveryVersion() uint64 {
+	if x != nil {
+		return x.DeliveryVersion
+	}
+	return 0
 }
 
 type Envelope struct {
@@ -244,12 +257,13 @@ var File_dt_events_v1_envelope_proto protoreflect.FileDescriptor
 
 const file_dt_events_v1_envelope_proto_rawDesc = "" +
 	"\n" +
-	"\x1bdt/events/v1/envelope.proto\x12\fdt.events.v1\x1a\x19google/protobuf/any.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"I\n" +
+	"\x1bdt/events/v1/envelope.proto\x12\fdt.events.v1\x1a\x19google/protobuf/any.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"t\n" +
 	"\aSubject\x12\x1f\n" +
 	"\vdelivery_id\x18\x01 \x01(\tR\n" +
 	"deliveryId\x12\x1d\n" +
 	"\n" +
-	"courier_id\x18\x02 \x01(\tR\tcourierId\"\xad\x03\n" +
+	"courier_id\x18\x02 \x01(\tR\tcourierId\x12)\n" +
+	"\x10delivery_version\x18\x03 \x01(\x04R\x0fdeliveryVersion\"\xad\x03\n" +
 	"\bEnvelope\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12%\n" +

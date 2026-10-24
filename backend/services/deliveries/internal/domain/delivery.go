@@ -46,7 +46,11 @@ type Delivery struct {
 	History []HistoryEntry
 	// DroppedReports counts noise reports not stored once the history held
 	// MaxNoiseEntries of them. It is internal: no API exposes it.
-	DroppedReports       int
+	DroppedReports int
+	// Version is the storage sequence of the delivery's changes: 1 when
+	// created, plus one per change that emits events. The repository
+	// maintains it; every event of a change carries it.
+	Version              int64
 	ErasedAt             *time.Time
 	CreatedAt, UpdatedAt time.Time
 

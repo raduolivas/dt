@@ -149,7 +149,8 @@ func exported(d *domain.Delivery) domain.Delivery {
 		Status: d.Status, Policy: d.Policy, Pickup: d.Pickup, PickupName: d.PickupName, Dropoff: d.Dropoff,
 		DropoffLabel: d.DropoffLabel, CustomerFirstName: d.CustomerFirstName, ItemsSummary: d.ItemsSummary,
 		Notes: d.Notes, ItemCount: d.ItemCount, Metadata: d.Metadata, Courier: d.Courier, History: d.History,
-		ErasedAt: d.ErasedAt, DroppedReports: d.DroppedReports, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
+		ErasedAt: d.ErasedAt, DroppedReports: d.DroppedReports, Version: d.Version,
+		CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 	}
 }
 

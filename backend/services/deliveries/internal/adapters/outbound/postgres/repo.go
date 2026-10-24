@@ -107,6 +107,7 @@ func (r *Repo) Create(ctx context.Context, s app.Scope, d *domain.Delivery, evts
 		if err != nil {
 			return err
 		}
+		d.Version = 1
 		err = q.InsertDelivery(ctx, db.InsertDeliveryParams{
 			ID: d.ID, TenantID: s.TenantID, Environment: s.Env, ExternalID: d.ExternalID,
 			Model: string(d.Model), Status: string(d.Status), PickupPolicy: string(d.Policy),
@@ -115,7 +116,8 @@ func (r *Repo) Create(ctx context.Context, s app.Scope, d *domain.Delivery, evts
 			DropoffLabelSealed: sealed.dropoffLabel, CustomerFirstNameSealed: sealed.customerFirstName,
 			NotesSealed: sealed.notes, MetadataSealed: sealed.metadata,
 			ItemsSummary: d.ItemsSummary, ItemCount: itemCount(d.ItemCount), CourierID: courierID(d),
-			ErasedAt: d.ErasedAt, DroppedReports: droppedReports(d), CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
+			ErasedAt: d.ErasedAt, DroppedReports: droppedReports(d), Version: d.Version,
+			CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 		})
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == externalIDKey {
@@ -127,7 +129,7 @@ func (r *Repo) Create(ctx context.Context, s app.Scope, d *domain.Delivery, evts
 		if err := insertHistory(ctx, r.box, q, s, d.ID, 0, d.NewHistory()); err != nil {
 			return err
 		}
-		return enqueue(ctx, tx, s, evts, d.UpdatedAt)
+		return enqueue(ctx, tx, s, d.Version, evts, d.UpdatedAt)
 	})
 }
 
@@ -202,7 +204,9 @@ func (r *Repo) List(ctx context.Context, s app.Scope, f app.ListFilter) ([]*doma
 }
 
 // Mutate locks the delivery, runs fn on it and stores the result, its new
-// history entries and fn's events, keeping the pickup watch in step.
+// history entries and fn's events, keeping the pickup watch in step. A
+// change with events increments the delivery's version, which all its
+// events carry.
 func (r *Repo) Mutate(ctx context.Context, s app.Scope, id string, fn func(*domain.Delivery) ([]domain.Event, error)) (*domain.Delivery, error) {
 	var d *domain.Delivery
 	err := r.inTenant(ctx, s, func(tx pgx.Tx, q *db.Queries) error {
@@ -220,6 +224,9 @@ func (r *Repo) Mutate(ctx context.Context, s app.Scope, id string, fn func(*doma
 			return err
 		}
 		erasedNow := !wasErased && d.ErasedAt != nil
+		if len(evts) > 0 {
+			d.Version++
+		}
 		sealed, err := r.seal(d)
 		if err != nil {
 			return err
@@ -228,7 +235,8 @@ func (r *Repo) Mutate(ctx context.Context, s app.Scope, id string, fn func(*doma
 			ID: d.ID, Status: string(d.Status), DropoffLat: d.Dropoff.Lat, DropoffLng: d.Dropoff.Lng,
 			DropoffLabelSealed: sealed.dropoffLabel, CustomerFirstNameSealed: sealed.customerFirstName,
 			NotesSealed: sealed.notes, MetadataSealed: sealed.metadata,
-			CourierID: courierID(d), ErasedAt: d.ErasedAt, DroppedReports: droppedReports(d), UpdatedAt: d.UpdatedAt,
+			CourierID: courierID(d), ErasedAt: d.ErasedAt, DroppedReports: droppedReports(d), Version: d.Version,
+			UpdatedAt: d.UpdatedAt,
 		})
 		if err != nil {
 			return fmt.Errorf("update delivery: %w", err)
@@ -247,7 +255,7 @@ func (r *Repo) Mutate(ctx context.Context, s app.Scope, id string, fn func(*doma
 		if err := syncPickupWatch(ctx, q, s, d); err != nil {
 			return err
 		}
-		return enqueue(ctx, tx, s, evts, d.UpdatedAt)
+		return enqueue(ctx, tx, s, d.Version, evts, d.UpdatedAt)
 	})
 	if err != nil {
 		return nil, err
@@ -295,7 +303,7 @@ func (r *Repo) UpsertCourier(ctx context.Context, s app.Scope, c domain.Courier,
 			}
 			out[i] = e
 		}
-		return enqueue(ctx, tx, s, out, stored.UpdatedAt)
+		return enqueue(ctx, tx, s, 0, out, stored.UpdatedAt)
 	})
 	if err != nil {
 		return domain.Courier{}, false, err
@@ -321,8 +329,8 @@ func (r *Repo) DuePickupWatches(ctx context.Context, now time.Time, limit int) (
 
 // WarnPickupPending re-checks w's delivery in its tenant. If the pickup is
 // still waiting for the other side, it marks the watch warned and enqueues
-// delivery.pickup_confirmation_pending, at most once; otherwise it drops
-// the watch.
+// delivery.pickup_confirmation_pending, at most once, as a change of the
+// delivery's version; otherwise it drops the watch.
 func (r *Repo) WarnPickupPending(ctx context.Context, w app.PickupWatch, now time.Time) error {
 	s := app.Scope{TenantID: w.TenantID, Env: w.Env}
 	return r.inTenant(ctx, s, func(tx pgx.Tx, q *db.Queries) error {
@@ -352,7 +360,12 @@ func (r *Repo) WarnPickupPending(ctx context.Context, w app.PickupWatch, now tim
 		if err := q.MarkPickupWatchWarned(ctx, db.MarkPickupWatchWarnedParams{DeliveryID: w.DeliveryID, WarnedAt: &now}); err != nil {
 			return fmt.Errorf("mark pickup watch warned: %w", err)
 		}
-		return enqueue(ctx, tx, s, []domain.Event{{
+		// The delivery row lock taken above serializes this with Mutate.
+		version, err := q.BumpDeliveryVersion(ctx, d.ID)
+		if err != nil {
+			return fmt.Errorf("bump delivery version: %w", err)
+		}
+		return enqueue(ctx, tx, s, version, []domain.Event{{
 			Type: domain.EventPickupConfirmationPending,
 			Payload: domain.PickupConfirmationPending{
 				DeliveryID: d.ID, ConfirmedBy: confirmedBy(d), Since: watch.Since.UTC(),
@@ -382,7 +395,7 @@ func (r *Repo) toDelivery(row db.GetDeliveryRow, hist []db.ListHistoryRow) (*dom
 		Pickup: domain.Location{Lat: row.PickupLat, Lng: row.PickupLng}, PickupName: row.PickupName,
 		Dropoff:      domain.Location{Lat: row.DropoffLat, Lng: row.DropoffLng},
 		ItemsSummary: row.ItemsSummary, ErasedAt: utc(row.ErasedAt), DroppedReports: int(row.DroppedReports),
-		CreatedAt: row.CreatedAt.UTC(), UpdatedAt: row.UpdatedAt.UTC(),
+		Version: row.Version, CreatedAt: row.CreatedAt.UTC(), UpdatedAt: row.UpdatedAt.UTC(),
 	}
 	var err error
 	if d.DropoffLabel, err = sl.openString(fieldDropoffLabel, row.DropoffLabelSealed); err != nil {
@@ -536,10 +549,11 @@ func confirmedBy(d *domain.Delivery) []domain.ConfirmedBy {
 	return out
 }
 
-// enqueue writes evts, in order, to the outbox on deliveries.<type>.
-func enqueue(ctx context.Context, tx pgx.Tx, s app.Scope, evts []domain.Event, fallback time.Time) error {
+// enqueue writes evts, in order, to the outbox on deliveries.<type>, each
+// carrying delivery version (0 for events about no delivery).
+func enqueue(ctx context.Context, tx pgx.Tx, s app.Scope, version int64, evts []domain.Event, fallback time.Time) error {
 	for _, e := range evts {
-		env, err := envelope(s.TenantID, s.Env, e, fallback)
+		env, err := envelope(s.TenantID, s.Env, version, e, fallback)
 		if err != nil {
 			return err
 		}

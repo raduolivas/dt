@@ -13,6 +13,12 @@ enum Environment {
 message Subject {
   string delivery_id = 1;
   string courier_id = 2;
+  // delivery_version increases by one with each change to the delivery;
+  // events about no delivery (courier.upserted) carry 0. Consumers apply an
+  // event only if its delivery_version is greater than or equal to the last
+  // one they applied for that delivery; events with the same version belong
+  // to the same change and arrive in order.
+  uint64 delivery_version = 3;
 }
 
 message Envelope {
