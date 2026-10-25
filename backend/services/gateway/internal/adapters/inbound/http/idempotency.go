@@ -81,7 +81,12 @@ func Idempotency(store app.IdempotencyStore, clock app.Clock, log *slog.Logger) 
 			}
 			r.Body = io.NopCloser(bytes.NewReader(body))
 
+			// The record names its resource from the start, so erasure
+			// purges it even while the request is in progress.
 			scope := app.IdempotencyScope{TenantID: p.TenantID, Env: p.Env, Key: values[0]}
+			if wildcard != "" {
+				scope.ResourceID = r.PathValue(wildcard)
+			}
 			hash := app.IdempotencyRequestHash(r.Method, r.URL.Path, r.URL.RawQuery, body)
 			out, err := store.Begin(r.Context(), scope, hash, clock.Now())
 			if err != nil {
@@ -90,7 +95,7 @@ func Idempotency(store app.IdempotencyStore, clock app.Clock, log *slog.Logger) 
 			}
 			switch out.Kind {
 			case app.OutcomeStarted:
-				runAndRecord(w, r, next, store, scope, out.Lease, wildcard, log)
+				runAndRecord(w, r, next, store, scope, out.Lease, log)
 			case app.OutcomeReplay:
 				replay(w, out.Stored)
 			case app.OutcomeMismatch:
@@ -133,10 +138,11 @@ func replay(w http.ResponseWriter, st app.StoredResponse) {
 // under lease and then sends it. A 5xx, an oversized body or a panic abandons
 // the record instead.
 //
-// The record names the resource the request acted on: the id the handler set
-// with SetAuditTarget (create), else the route's path value (wildcard).
+// The record names the resource the request acts on: the route's path value
+// from Begin (scope.ResourceID), replaced on Complete by the id the handler
+// set with SetAuditTarget (create).
 func runAndRecord(w http.ResponseWriter, r *http.Request, next http.Handler, store app.IdempotencyStore,
-	scope app.IdempotencyScope, lease time.Time, wildcard string, log *slog.Logger,
+	scope app.IdempotencyScope, lease time.Time, log *slog.Logger,
 ) {
 	resource := &auditTarget{}
 	r = r.WithContext(context.WithValue(r.Context(), resourceKey{}, resource))
@@ -163,11 +169,8 @@ func runAndRecord(w http.ResponseWriter, r *http.Request, next http.Handler, sto
 		return
 	}
 	st := app.StoredResponse{Status: rec.status, Body: rec.buf.Bytes()}
-	switch {
-	case resource.set():
+	if resource.set() { // create: the id the handler made
 		st.ResourceID = resource.get()
-	case wildcard != "":
-		st.ResourceID = r.PathValue(wildcard)
 	}
 	for _, name := range replayedHeaders {
 		if vs, ok := w.Header()[name]; ok {

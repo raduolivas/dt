@@ -15,10 +15,10 @@ import (
 // Source is the envelope source of every event this service publishes.
 const Source = "deliveries"
 
-// envelope converts domain event e of tenant/env into an outbox envelope.
-// Events without a time of their own (delivery.updated, courier.upserted)
-// occur at fallback.
-func envelope(tenantID, env string, e domain.Event, fallback time.Time) (*eventsv1.Envelope, error) {
+// envelope converts domain event e of tenant/env into an outbox envelope
+// whose subject carries the delivery's version. Events without a time of
+// their own (delivery.updated, courier.upserted) occur at fallback.
+func envelope(tenantID, env string, version int64, e domain.Event, fallback time.Time) (*eventsv1.Envelope, error) {
 	penv, err := protoEnv(env)
 	if err != nil {
 		return nil, err
@@ -26,6 +26,12 @@ func envelope(tenantID, env string, e domain.Event, fallback time.Time) (*events
 	msg, subj, at, err := toProto(e)
 	if err != nil {
 		return nil, err
+	}
+	if version < 0 {
+		return nil, fmt.Errorf("event %s: negative delivery version %d", e.Type, version)
+	}
+	if subj.GetDeliveryId() != "" {
+		subj.DeliveryVersion = uint64(version) // #nosec G115 -- checked non-negative above
 	}
 	if at.IsZero() {
 		at = fallback
@@ -46,7 +52,7 @@ func toProto(e domain.Event) (proto.Message, *eventsv1.Subject, time.Time, error
 	case domain.StatusChanged:
 		return &eventsv1.DeliveryStatusChanged{
 			DeliveryId: p.DeliveryID, From: string(p.From), To: string(p.To), Actor: string(p.Actor),
-			OccurredAt: timestamppb.New(p.OccurredAt), Reason: p.Reason, Overrode: p.Overrode,
+			OccurredAt: timestamppb.New(p.OccurredAt), Overrode: p.Overrode,
 		}, deliverySubject(p.DeliveryID), p.OccurredAt, nil
 	case domain.PickupConfirmed:
 		return &eventsv1.DeliveryPickupConfirmed{

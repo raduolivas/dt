@@ -95,7 +95,11 @@ stored responses when its personal data is erased. `scripts/smoke-m2.sh` walks t
 
 ## Service configuration
 
-Besides `PORT`, `LOG_LEVEL` and `DATABASE_URL`, M1 adds:
+Every service reads `PORT`, `LOG_LEVEL`, `DATABASE_URL` (the runtime role, `svc_<svc>` locally) and
+`MIGRATIONS_DATABASE_URL` (the role that owns the service's schema and runs its migrations, `mig_<svc>`
+locally). The runtime role owns no table, so it cannot weaken row-level security. Staging and production
+always set `MIGRATIONS_DATABASE_URL`; without it, migrations run as `DATABASE_URL` and the service logs the
+warning `migrations_with_runtime_role`. M1 adds:
 
 | Variable | Service | Rule |
 |---|---|---|
@@ -153,6 +157,11 @@ to watch the snapshot update live.
 - [`docs/superpowers/specs/`](docs/superpowers/specs/): the MVP spec; [`docs/superpowers/plans/`](docs/superpowers/plans/): milestone plans
 
 ## Troubleshooting
+
+- **A service exits with `migratex: cannot open database for migrations (does the migration role
+  exist? ...)`:** your local Postgres volume was created before the `mig_<svc>` roles existed (the init
+  script only runs on an empty volume). Reset the dev database with `make down` (that is,
+  `docker compose down -v`), then `make dev`.
 
 - **`make dev` fails with `lookup proxy.golang.org ... i/o timeout`:** the Docker build containers have no
   network access. This happens with some rootless Docker setups. Fix Docker's networking (for example, the

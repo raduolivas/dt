@@ -36,20 +36,28 @@ type env struct {
 	log  *slog.Logger
 }
 
-// setup starts Postgres and NATS, creates the outbox and inbox tables in the
-// gateway schema, and creates the ACCOUNTS stream.
+// setup starts Postgres and NATS, creates the outbox and inbox tables (and
+// the handlers' applied table) in the gateway schema as mig_gateway, as a
+// migration would, and creates the ACCOUNTS stream. The returned pool
+// connects as svc_gateway.
 func setup(t *testing.T) *env {
 	t.Helper()
 	pg, nurl := startContainers(t)
 	ctx := context.Background()
+	mig, err := pgx.Connect(ctx, pg.MigratorURL("gateway"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = mig.Exec(ctx, outbox.SchemaSQL+"; CREATE TABLE applied (event_id text)")
+	_ = mig.Close(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	pool, err := pgxpool.New(ctx, pg.URL("gateway"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	if _, err := pool.Exec(ctx, outbox.SchemaSQL); err != nil {
-		t.Fatal(err)
-	}
 	nc, err := nats.Connect(nurl)
 	if err != nil {
 		t.Fatal(err)

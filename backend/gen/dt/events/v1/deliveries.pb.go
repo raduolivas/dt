@@ -191,7 +191,6 @@ type DeliveryStatusChanged struct {
 	To            string                 `protobuf:"bytes,3,opt,name=to,proto3" json:"to,omitempty"`
 	Actor         string                 `protobuf:"bytes,4,opt,name=actor,proto3" json:"actor,omitempty"` // "partner" | "courier" | "system"
 	OccurredAt    *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=occurred_at,json=occurredAt,proto3" json:"occurred_at,omitempty"`
-	Reason        string                 `protobuf:"bytes,6,opt,name=reason,proto3" json:"reason,omitempty"`
 	Overrode      bool                   `protobuf:"varint,7,opt,name=overrode,proto3" json:"overrode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -260,13 +259,6 @@ func (x *DeliveryStatusChanged) GetOccurredAt() *timestamppb.Timestamp {
 		return x.OccurredAt
 	}
 	return nil
-}
-
-func (x *DeliveryStatusChanged) GetReason() string {
-	if x != nil {
-		return x.Reason
-	}
-	return ""
 }
 
 func (x *DeliveryStatusChanged) GetOverrode() bool {
@@ -671,7 +663,7 @@ const file_dt_events_v1_deliveries_proto_rawDesc = "" +
 	"pickupName\x12.\n" +
 	"\adropoff\x18\b \x01(\v2\x14.dt.events.v1.LatLngR\adropoff\x129\n" +
 	"\n" +
-	"created_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\xe3\x01\n" +
+	"created_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\xd9\x01\n" +
 	"\x15DeliveryStatusChanged\x12\x1f\n" +
 	"\vdelivery_id\x18\x01 \x01(\tR\n" +
 	"deliveryId\x12\x12\n" +
@@ -679,9 +671,8 @@ const file_dt_events_v1_deliveries_proto_rawDesc = "" +
 	"\x02to\x18\x03 \x01(\tR\x02to\x12\x14\n" +
 	"\x05actor\x18\x04 \x01(\tR\x05actor\x12;\n" +
 	"\voccurred_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"occurredAt\x12\x16\n" +
-	"\x06reason\x18\x06 \x01(\tR\x06reason\x12\x1a\n" +
-	"\boverrode\x18\a \x01(\bR\boverrode\"\x87\x01\n" +
+	"occurredAt\x12\x1a\n" +
+	"\boverrode\x18\a \x01(\bR\boverrodeJ\x04\b\x06\x10\aR\x06reason\"\x87\x01\n" +
 	"\x17DeliveryPickupConfirmed\x12\x1f\n" +
 	"\vdelivery_id\x18\x01 \x01(\tR\n" +
 	"deliveryId\x12\x0e\n" +

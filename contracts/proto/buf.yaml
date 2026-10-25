@@ -7,3 +7,8 @@ lint:
 breaking:
   use:
     - FILE
+    # A field may be removed once its number and name are reserved.
+    - FIELD_NO_DELETE_UNLESS_NUMBER_RESERVED
+    - FIELD_NO_DELETE_UNLESS_NAME_RESERVED
+  except:
+    - FIELD_NO_DELETE

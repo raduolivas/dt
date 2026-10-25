@@ -75,7 +75,7 @@ func realServer(t *testing.T) (*httptest.Server, *bytes.Buffer) {
 	}()
 	ctx := context.Background()
 	url := pg.URL("deliveries")
-	if err := migratex.Up(ctx, url, migrations.FS); err != nil {
+	if err := migratex.Up(ctx, pg.MigratorURL("deliveries"), migrations.FS); err != nil {
 		t.Fatal(err)
 	}
 	pool, err := pgxpool.New(ctx, url)

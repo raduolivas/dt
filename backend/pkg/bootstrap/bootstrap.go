@@ -41,8 +41,13 @@ type Config struct {
 	Port        int    `env:"PORT" envDefault:"8080"`
 	LogLevel    string `env:"LOG_LEVEL" envDefault:"info"`
 	DatabaseURL string `env:"DATABASE_URL,required,notEmpty"`
-	RedisURL    string `env:"REDIS_URL"`
-	NATSURL     string `env:"NATS_URL"`
+	// MigrationsDatabaseURL connects as the role that owns the service's
+	// schema and runs its migrations, so the runtime role (DATABASE_URL)
+	// owns no table and cannot weaken row-level security. Staging and
+	// production always set it; when empty, migrations run as DATABASE_URL.
+	MigrationsDatabaseURL string `env:"MIGRATIONS_DATABASE_URL"`
+	RedisURL              string `env:"REDIS_URL"`
+	NATSURL               string `env:"NATS_URL"`
 }
 
 // Needs names the optional dependencies a service uses. Each one needs its
@@ -78,6 +83,9 @@ type Options struct {
 	Migrations fs.FS
 	// Setup mounts routes and returns background workers. Optional.
 	Setup func(ctx context.Context, d Deps, mux *http.ServeMux) ([]Worker, error)
+	// Checks are extra /readyz checks, by name. They run alongside the
+	// built-in ones; /livez is unaffected.
+	Checks map[string]httpx.Check
 	// Ready is a test hook called with the bound address once listening.
 	Ready func(addr string)
 }
@@ -140,7 +148,12 @@ func Run(ctx context.Context, opts Options) (err error) {
 	}()
 
 	if opts.Migrations != nil {
-		if err := migratex.Up(ctx, cfg.DatabaseURL, opts.Migrations); err != nil {
+		migURL := cfg.MigrationsDatabaseURL
+		if migURL == "" {
+			log.Warn("migrations_with_runtime_role")
+			migURL = cfg.DatabaseURL
+		}
+		if err := migratex.Up(ctx, migURL, opts.Migrations); err != nil {
 			return fmt.Errorf("%s: %w", opts.Name, err)
 		}
 	}
@@ -188,6 +201,12 @@ func Run(ctx context.Context, opts Options) (err error) {
 		}
 	}
 
+	for name, check := range opts.Checks {
+		if _, dup := checks[name]; dup {
+			return fmt.Errorf("%s: check %q is built in and cannot be replaced", opts.Name, name)
+		}
+		checks[name] = check
+	}
 	mux := http.NewServeMux()
 	mux.Handle("GET /livez", httpx.Livez())
 	mux.Handle("GET /readyz", httpx.Readyz(checks, readyTimeout))

@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -242,5 +243,104 @@ func TestConflictIgnoresOwnSide(t *testing.T) {
 	_, evs, err := d.Report(rep("e3", ReportAtPickup, ActorPartner, at.Add(20*time.Second)))
 	if !isInvalidTransition(err) || d.Status != StatusDelivered || len(evs) != 0 || len(d.History) != n {
 		t.Fatalf("err %v status %s events %v", err, d.Status, evs)
+	}
+}
+
+// courierRepeat sets up courier at_pickup at t0+1m, partner pickup at +10s,
+// then returns the delivery and the time of the partner change.
+func courierRepeat(t *testing.T) (*Delivery, time.Time) {
+	t.Helper()
+	d := newDel(t, ModelDirect, PolicyAny)
+	at := t0.Add(time.Minute)
+	mustReport(t, d, rep("e1", ReportAtPickup, ActorCourier, at))
+	at = at.Add(10 * time.Second)
+	mustReport(t, d, rep("e2", ReportPickupConfirmed, ActorPartner, at))
+	if d.Status != StatusPickedUp {
+		t.Fatalf("status = %s", d.Status)
+	}
+	return d, at
+}
+
+func TestCourierRepeatAfterPartnerOverrideIsConflict(t *testing.T) {
+	d, at := courierRepeat(t)
+	n := len(d.History)
+	o, evs := mustReport(t, d, rep("e3", ReportAtPickup, ActorCourier, at.Add(10*time.Second)))
+	if o != OutcomeConflict || d.Status != StatusPickedUp || len(evs) != 0 || len(d.History) != n+1 {
+		t.Fatalf("outcome %s status %s events %v", o, d.Status, evs)
+	}
+	if h := d.History[n]; h.Outcome != OutcomeConflict || h.To != StatusPickedUp {
+		t.Fatalf("history = %+v", h)
+	}
+}
+
+func TestCourierRepeatOutsideWindowStaysInvalid(t *testing.T) {
+	d, at := courierRepeat(t)
+	if _, _, err := d.Report(rep("e3", ReportAtPickup, ActorCourier, at.Add(ConflictWindow+time.Second))); !isInvalidTransition(err) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCourierLateRepeatBeforeOverrideStaysStale(t *testing.T) {
+	d, at := courierRepeat(t)
+	o, _ := mustReport(t, d, rep("e3", ReportAtPickup, ActorCourier, at.Add(-5*time.Second)))
+	if o != OutcomeStale || d.Status != StatusPickedUp {
+		t.Fatalf("outcome %s status %s", o, d.Status)
+	}
+}
+
+func TestCourierRepeatOfOlderStateStaysInvalid(t *testing.T) {
+	d := newDel(t, ModelDirect, PolicyAny)
+	at := t0.Add(time.Minute)
+	mustReport(t, d, rep("e1", ReportAtPickup, ActorCourier, at))
+	mustReport(t, d, rep("e2", ReportPickupConfirmed, ActorCourier, at.Add(time.Second)))
+	mustReport(t, d, rep("e3", ReportDelivered, ActorPartner, at.Add(10*time.Second)))
+	if _, _, err := d.Report(rep("e4", ReportAtPickup, ActorCourier, at.Add(20*time.Second))); !isInvalidTransition(err) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// atNoiseCap returns a delivery in arriving with MaxNoiseEntries stale
+// entries stored.
+func atNoiseCap(t *testing.T) *Delivery {
+	t.Helper()
+	d := pickedUp(t)
+	mustReport(t, d, rep("e1", ReportArriving, ActorCourier, t0.Add(5*time.Minute)))
+	for i := 0; i < MaxNoiseEntries; i++ {
+		o, _ := mustReport(t, d, rep(fmt.Sprintf("s%d", i), ReportArriving, ActorCourier, t0.Add(6*time.Minute)))
+		if o != OutcomeStale {
+			t.Fatalf("report %d: %s", i, o)
+		}
+	}
+	if d.DroppedReports != 0 {
+		t.Fatalf("dropped %d before the cap", d.DroppedReports)
+	}
+	return d
+}
+
+func TestNoiseEntriesAreCapped(t *testing.T) {
+	d := atNoiseCap(t)
+	n, newN := len(d.History), len(d.NewHistory())
+	r := rep("over", ReportArriving, ActorCourier, t0.Add(7*time.Minute))
+	r.ReceivedAt = t0.Add(8 * time.Minute)
+	o, evs := mustReport(t, d, r)
+	if o != OutcomeStale || len(evs) != 0 || len(d.History) != n || len(d.NewHistory()) != newN || d.DroppedReports != 1 {
+		t.Fatalf("outcome %s events %v history %d/%d dropped %d", o, evs, len(d.History), n, d.DroppedReports)
+	}
+	if !d.UpdatedAt.Equal(r.ReceivedAt) {
+		t.Errorf("UpdatedAt %v, want %v", d.UpdatedAt, r.ReceivedAt)
+	}
+	// Resent with the same event_id it is classified again, not a duplicate.
+	o, _ = mustReport(t, d, r)
+	if o != OutcomeStale || d.DroppedReports != 2 || len(d.History) != n {
+		t.Fatalf("resend: outcome %s dropped %d", o, d.DroppedReports)
+	}
+}
+
+func TestAppliedEntriesIgnoreCap(t *testing.T) {
+	d := atNoiseCap(t)
+	n := len(d.History)
+	o, evs := mustReport(t, d, rep("done", ReportDelivered, ActorCourier, t0.Add(9*time.Minute)))
+	if o != OutcomeApplied || len(evs) != 1 || len(d.History) != n+1 || d.DroppedReports != 0 || d.Status != StatusDelivered {
+		t.Fatalf("outcome %s events %v history %d dropped %d status %s", o, evs, len(d.History), d.DroppedReports, d.Status)
 	}
 }

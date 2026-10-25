@@ -30,7 +30,9 @@ type HistoryEntry struct {
 }
 
 // Report applies r (spec §4.3–4.4). The checks run in order: duplicate,
-// pickup confirmation, conflict rule, same state (stale), backwards or
+// pickup confirmation, conflict rule, same state (stale), a non-partner
+// repeating its own latest state after the other side changed it within
+// ConflictWindow (conflict, OQ18), backwards or
 // final (stale if older than the last applied entry, else
 // ErrInvalidTransition), then the transition table. An error leaves the
 // delivery untouched; any other outcome but duplicate adds one history
@@ -58,6 +60,10 @@ func (d *Delivery) Report(r Report) (Outcome, []Event, error) {
 	if target == d.Status {
 		d.recordReport(r, d.Status, OutcomeStale)
 		return OutcomeStale, nil, nil
+	}
+	if d.repeatsAfterOverride(r, target) {
+		d.recordReport(r, d.Status, OutcomeConflict)
+		return OutcomeConflict, nil, nil
 	}
 	if d.Status.Final() || target.rank() < d.Status.rank() {
 		if last := d.lastApplied(func(HistoryEntry) bool { return true }); last != nil && r.OccurredAt.Before(last.OccurredAt) {
@@ -118,25 +124,76 @@ func (d *Delivery) conflicts(r Report, target Status) bool {
 	return allowed(d.Model, r.Actor, last.From, target)
 }
 
+// repeatsAfterOverride reports whether a non-partner r re-reports a state
+// its own side reached most recently (its latest applied state change),
+// after the opposing side's latest applied change and within ConflictWindow
+// of it. A report older than that change is stale, not a conflict (OQ18).
+func (d *Delivery) repeatsAfterOverride(r Report, target Status) bool {
+	if r.Actor == ActorPartner {
+		return false
+	}
+	last := d.lastApplied(func(HistoryEntry) bool { return true })
+	if last == nil || !last.Actor.opposes(r.Actor) || r.OccurredAt.Before(last.OccurredAt) || r.OccurredAt.Sub(last.OccurredAt) > ConflictWindow {
+		return false
+	}
+	own := d.lastApplied(func(h HistoryEntry) bool { return h.Actor == r.Actor })
+	return own != nil && own.To == target
+}
+
 // apply moves the delivery to target and records r as applied.
 func (d *Delivery) apply(r Report, target Status, overrode bool) (Outcome, []Event, error) {
 	from := d.Status
 	d.Status = target
 	d.recordReport(r, from, OutcomeApplied)
-	return OutcomeApplied, []Event{d.statusChanged(from, r.Actor, r.OccurredAt, r.Reason, overrode)}, nil
+	return OutcomeApplied, []Event{d.statusChanged(from, r.Actor, r.OccurredAt, overrode)}, nil
 }
 
 // recordReport appends r to the history with the state it found (from) and
 // the current state.
 func (d *Delivery) recordReport(r Report, from Status, o Outcome) {
-	d.record(HistoryEntry{
+	h := HistoryEntry{
 		EventID: r.EventID, Type: string(r.Type), Actor: r.Actor, By: r.By,
 		From: from, To: d.Status, Outcome: o,
 		OccurredAt: r.OccurredAt, ReceivedAt: r.ReceivedAt, Reason: r.Reason,
-	})
+	}
+	if d.ErasedAt != nil {
+		h.Reason = "" // erased deliveries take no new personal data
+	}
+	if isNoise(h) && d.noiseEntries() >= MaxNoiseEntries {
+		d.DroppedReports++
+	} else {
+		d.record(h)
+	}
 	if !r.ReceivedAt.IsZero() {
 		d.UpdatedAt = r.ReceivedAt
 	}
+}
+
+// MaxNoiseEntries is how many noise history entries a delivery stores; later
+// ones are counted in DroppedReports instead (OQ21).
+const MaxNoiseEntries = 200
+
+// isNoise reports whether h changed nothing and the policy does not need it:
+// a stale or conflict entry, or a confirmation recorded once the delivery was
+// already picked up. Pickup confirmations before picked_up are never noise.
+func isNoise(h HistoryEntry) bool {
+	switch h.Outcome {
+	case OutcomeStale, OutcomeConflict:
+		return true
+	case OutcomeRecorded:
+		return h.Type == string(ReportPickupConfirmed) && h.From.rank() >= StatusPickedUp.rank()
+	}
+	return false
+}
+
+func (d *Delivery) noiseEntries() int {
+	n := 0
+	for _, h := range d.History {
+		if isNoise(h) {
+			n++
+		}
+	}
+	return n
 }
 
 // lastApplied returns the latest history entry that changed the state and

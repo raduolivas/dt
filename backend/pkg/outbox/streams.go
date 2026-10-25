@@ -2,7 +2,9 @@ package outbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -44,4 +46,58 @@ func EnsureStream(ctx context.Context, js jetstream.JetStream, cfg jetstream.Str
 		return fmt.Errorf("outbox: ensure stream %s: %w", cfg.Name, err)
 	}
 	return nil
+}
+
+const (
+	// streamPollInterval is how often WaitForStream looks for the stream.
+	streamPollInterval = 2 * time.Second
+	// streamWarnInterval is how often WaitForStream says it is still waiting.
+	streamWarnInterval = 30 * time.Second
+)
+
+// StreamExists returns nil when the stream exists, or an error wrapping
+// jetstream.ErrStreamNotFound when it does not. It never creates the stream:
+// only the owning service does.
+func StreamExists(ctx context.Context, js jetstream.JetStream, name string) error {
+	if _, err := js.Stream(ctx, name); err != nil {
+		return fmt.Errorf("outbox: stream %s: %w", name, err)
+	}
+	return nil
+}
+
+// WaitForStream blocks until the stream exists, polling every 2 s and logging
+// a warning every 30 s. It returns nil when the stream exists or ctx ends
+// (shutdown is not an error).
+func WaitForStream(ctx context.Context, js jetstream.JetStream, name string, log *slog.Logger) error {
+	poll := time.NewTicker(streamPollInterval)
+	defer poll.Stop()
+	warn := time.NewTicker(streamWarnInterval)
+	defer warn.Stop()
+	// lastErr is the latest failure other than not-found (e.g. permissions),
+	// so the periodic warning says why the wait may not be the owner's fault.
+	var lastErr error
+	for {
+		err := StreamExists(ctx, js, name)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return nil
+		}
+		if !errors.Is(err, jetstream.ErrStreamNotFound) {
+			lastErr = err
+			log.DebugContext(ctx, "stream check failed", "stream", name, "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-warn.C:
+			if lastErr != nil {
+				log.WarnContext(ctx, "waiting for stream to be created by its owner", "stream", name, "last_err", lastErr)
+			} else {
+				log.WarnContext(ctx, "waiting for stream to be created by its owner", "stream", name)
+			}
+		case <-poll.C:
+		}
+	}
 }

@@ -294,7 +294,7 @@ func TestCancelOnlyBeforePickup(t *testing.T) {
 			t.Fatalf("%s: status = %s", pre, d.Status)
 		}
 		p := evs[0].Payload.(StatusChanged)
-		if p.From != pre || p.To != StatusCancelled || p.Actor != ActorPartner || p.Reason != "customer changed mind" {
+		if p.From != pre || p.To != StatusCancelled || p.Actor != ActorPartner {
 			t.Fatalf("payload = %+v", p)
 		}
 	}
@@ -496,5 +496,38 @@ func TestEventsNeverCarryPersonalData(t *testing.T) {
 	for _, p := range payloads {
 		typ := reflect.TypeOf(p)
 		walk(t, typ, typ.Name(), seen)
+	}
+}
+
+func TestErasureClearsHistoryReasons(t *testing.T) {
+	d := atState(ModelEndToEnd, StatusConfirmed, PolicyAny)
+	if _, err := d.Cancel("customer Ana moved", t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if d.History[len(d.History)-1].Reason != "customer Ana moved" {
+		t.Fatalf("history = %+v", d.History)
+	}
+	if _, err := d.ErasePersonalData(t0.Add(2 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for i, h := range d.History {
+		if h.Reason != "" {
+			t.Errorf("History[%d].Reason = %q after erasure", i, h.Reason)
+		}
+	}
+}
+
+func TestReasonAfterErasureIsDropped(t *testing.T) {
+	d := atState(ModelDirect, StatusDelivered, PolicyAny)
+	if _, err := d.ErasePersonalData(t0.Add(2 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	r := rep("late", ReportDelivered, ActorCourier, t0.Add(3*time.Hour))
+	r.Reason = "customer Ana called"
+	if o, _ := mustReport(t, d, r); o != OutcomeStale {
+		t.Fatalf("outcome = %s", o)
+	}
+	if last := d.History[len(d.History)-1]; last.EventID != "late" || last.Reason != "" {
+		t.Fatalf("last entry = %+v", last)
 	}
 }

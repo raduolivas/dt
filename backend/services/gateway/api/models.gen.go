@@ -270,6 +270,7 @@ type AssignCourierRequest struct {
 
 // CancelDeliveryRequest defines model for CancelDeliveryRequest.
 type CancelDeliveryRequest struct {
+	// Reason Why. Stored encrypted and erased with the delivery's personal data; never included in events.
 	Reason *string `json:"reason,omitempty"`
 }
 
@@ -434,8 +435,8 @@ type FieldError struct {
 
 // LatLng WGS84 coordinate.
 type LatLng struct {
-	Lat float32 `json:"lat"`
-	Lng float32 `json:"lng"`
+	Lat float64 `json:"lat"`
+	Lng float64 `json:"lng"`
 }
 
 // Me The credential a request authenticated with.
@@ -501,9 +502,11 @@ type ReportDeliveryEventRequest struct {
 	EventId string `json:"event_id"`
 
 	// OccurredAt When it happened. At most 5 minutes after receipt; defaults to receipt time.
-	OccurredAt *time.Time        `json:"occurred_at,omitempty"`
-	Reason     *string           `json:"reason,omitempty"`
-	Type       DeliveryEventType `json:"type"`
+	OccurredAt *time.Time `json:"occurred_at,omitempty"`
+
+	// Reason Why. Stored encrypted and erased with the delivery's personal data; never included in events.
+	Reason *string           `json:"reason,omitempty"`
+	Type   DeliveryEventType `json:"type"`
 }
 
 // ReportDeliveryEventRequestBy Who confirms. Only meaningful for `pickup_confirmed`; defaults to `partner`.

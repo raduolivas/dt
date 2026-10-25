@@ -31,7 +31,8 @@ message DeliveryStatusChanged {
   string to = 3;
   string actor = 4; // "partner" | "courier" | "system"
   google.protobuf.Timestamp occurred_at = 5;
-  string reason = 6;
+  reserved 6;
+  reserved "reason";
   bool overrode = 7;
 }
 

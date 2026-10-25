@@ -371,3 +371,58 @@ func TestIdempotencyPurgeResource(t *testing.T) {
 	// The purged key is free: the request runs again instead of replaying.
 	wantKind(t, begin(t, s, app.IdempotencyScope{TenantID: "ten_a", Env: domain.EnvTest, Key: "create"}, hash1, t0), app.OutcomeStarted)
 }
+
+func TestBeginStoresResourceID(t *testing.T) {
+	t.Parallel()
+	pool, s := idemSetup(t)
+	ctx := context.Background()
+	sc := app.IdempotencyScope{TenantID: "ten_a", Env: domain.EnvTest, Key: "cancel", ResourceID: "del_1"}
+
+	// An in-progress record already names its resource, so erasure purges it.
+	wantKind(t, begin(t, s, sc, hash1, t0), app.OutcomeStarted)
+	if got := count(t, pool, "idem_key = 'cancel' AND resource_id = 'del_1'"); got != 1 {
+		t.Fatalf("%d in-progress records name del_1, want 1", got)
+	}
+	if n, err := s.PurgeResource(ctx, "ten_a", domain.EnvTest, "del_1"); err != nil || n != 1 {
+		t.Fatalf("PurgeResource = %d, %v; want 1", n, err)
+	}
+
+	// A takeover of a stale lock names the new request's resource.
+	wantKind(t, begin(t, s, sc, hash1, t0), app.OutcomeStarted)
+	sc.ResourceID = "del_2"
+	wantKind(t, begin(t, s, sc, hash1, t0.Add(app.IdempotencyLockTTL+time.Second)), app.OutcomeStarted)
+	if got := count(t, pool, "idem_key = 'cancel' AND resource_id = 'del_2'"); got != 1 {
+		t.Fatalf("%d reclaimed records name del_2, want 1", got)
+	}
+
+	// Without a path id the record names nothing until the handler does.
+	none := app.IdempotencyScope{TenantID: "ten_a", Env: domain.EnvTest, Key: "create"}
+	o := begin(t, s, none, hash1, t0)
+	if got := count(t, pool, "idem_key = 'create' AND resource_id IS NULL"); got != 1 {
+		t.Fatalf("%d create records without a resource, want 1", got)
+	}
+	resp := stored
+	resp.ResourceID = "del_3"
+	if err := s.Complete(ctx, none, o.Lease, resp); err != nil {
+		t.Fatal(err)
+	}
+	if got := count(t, pool, "idem_key = 'create' AND resource_id = 'del_3'"); got != 1 {
+		t.Fatalf("%d create records name del_3, want 1", got)
+	}
+
+	// A completed {id} record keeps the id Begin stored when the handler
+	// names none, so erasure still purges its sealed response.
+	assign := app.IdempotencyScope{TenantID: "ten_a", Env: domain.EnvTest, Key: "assign", ResourceID: "del_4"}
+	o = begin(t, s, assign, hash1, t0)
+	resp = stored
+	resp.ResourceID = ""
+	if err := s.Complete(ctx, assign, o.Lease, resp); err != nil {
+		t.Fatal(err)
+	}
+	if got := count(t, pool, "idem_key = 'assign' AND resource_id = 'del_4'"); got != 1 {
+		t.Fatalf("%d completed records name del_4, want 1", got)
+	}
+	if n, err := s.PurgeResource(ctx, "ten_a", domain.EnvTest, "del_4"); err != nil || n != 1 {
+		t.Fatalf("PurgeResource = %d, %v; want 1", n, err)
+	}
+}

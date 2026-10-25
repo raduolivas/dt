@@ -45,6 +45,11 @@ func bodyAAD(sc app.IdempotencyScope) []byte {
 	return []byte(sc.TenantID + "|" + string(sc.Env) + "|" + sc.Key)
 }
 
+// resourceText is id as a nullable column: "" is NULL.
+func resourceText(id string) pgtype.Text {
+	return pgtype.Text{String: id, Valid: id != ""}
+}
+
 // beginAttempts bounds the insert/lock loop: a conflicting row can vanish
 // (abandoned or swept) between the INSERT and the SELECT FOR UPDATE, and then
 // the INSERT is tried again.
@@ -65,7 +70,7 @@ func (s *IdempotencyStore) Begin(ctx context.Context, sc app.IdempotencyScope, h
 		for range beginAttempts {
 			_, err := q.InsertIdempotencyRecord(ctx, db.InsertIdempotencyRecordParams{
 				TenantID: sc.TenantID, Environment: string(sc.Env), IdemKey: sc.Key, RequestHash: hash,
-				LockedUntil: &lease, CreatedAt: now, ExpiresAt: expires,
+				LockedUntil: &lease, ResourceID: resourceText(sc.ResourceID), CreatedAt: now, ExpiresAt: expires,
 			})
 			if err == nil {
 				out = app.IdempotencyOutcome{Kind: app.OutcomeStarted, Lease: lease}
@@ -91,7 +96,7 @@ func (s *IdempotencyStore) Begin(ctx context.Context, sc app.IdempotencyScope, h
 			case app.OutcomeStarted:
 				if err := q.ReclaimIdempotencyRecord(ctx, db.ReclaimIdempotencyRecordParams{
 					TenantID: sc.TenantID, Environment: string(sc.Env), IdemKey: sc.Key, RequestHash: hash,
-					LockedUntil: &lease, CreatedAt: now, ExpiresAt: expires,
+					LockedUntil: &lease, ResourceID: resourceText(sc.ResourceID), CreatedAt: now, ExpiresAt: expires,
 				}); err != nil {
 					return fmt.Errorf("reclaim idempotency record: %w", err)
 				}
@@ -187,7 +192,7 @@ func (s *IdempotencyStore) Complete(ctx context.Context, sc app.IdempotencyScope
 	n, err := s.q.CompleteIdempotencyRecord(ctx, db.CompleteIdempotencyRecordParams{
 		ResponseStatus:  pgtype.Int4{Int32: int32(resp.Status), Valid: true}, //nolint:gosec // HTTP status, 100–599
 		ResponseHeaders: h, ResponseBody: body,
-		ResourceID: pgtype.Text{String: resp.ResourceID, Valid: resp.ResourceID != ""},
+		ResourceID: resourceText(resp.ResourceID),
 		TenantID:   sc.TenantID, Environment: string(sc.Env), IdemKey: sc.Key, Lease: &lease,
 	})
 	if err != nil {

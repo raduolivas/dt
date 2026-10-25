@@ -27,7 +27,7 @@ var t0 = time.Date(2026, 10, 20, 12, 0, 0, 123456000, time.UTC)
 // forwarder fails with "address already in use" when many start at once.
 var starting = make(chan struct{}, 2)
 
-// setup starts Postgres, applies the accounts migrations as svc_accounts and
+// setup starts Postgres, applies the accounts migrations as mig_accounts and
 // returns a pool and a repo over it.
 func setup(t *testing.T) (*pgxpool.Pool, *postgres.Repo) {
 	t.Helper()
@@ -38,7 +38,7 @@ func setup(t *testing.T) (*pgxpool.Pool, *postgres.Repo) {
 	}()
 	ctx := context.Background()
 	url := pg.URL("accounts")
-	if err := migratex.Up(ctx, url, migrations.FS); err != nil {
+	if err := migratex.Up(ctx, pg.MigratorURL("accounts"), migrations.FS); err != nil {
 		t.Fatal(err)
 	}
 	pool, err := pgxpool.New(ctx, url)

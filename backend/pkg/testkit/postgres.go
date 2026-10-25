@@ -67,12 +67,22 @@ func StartPostgres(t testing.TB) *Postgres {
 	return &Postgres{host: host, port: port.Port()}
 }
 
-// URL returns a DSN for database dt as role: "admin" or a service name.
+// URL returns a DSN for database dt as role: "admin" or a service name
+// (its runtime role svc_<svc>).
 func (p *Postgres) URL(role string) string {
-	user, pass := adminUser, adminPass
-	if role != "admin" {
-		user, pass = "svc_"+role, "svc_"+role
+	if role == "admin" {
+		return p.dsn(adminUser, adminPass)
 	}
+	return p.dsn("svc_"+role, "svc_"+role)
+}
+
+// MigratorURL returns a DSN for database dt as mig_<svc>, the role that owns
+// the service's schema and runs its migrations.
+func (p *Postgres) MigratorURL(svc string) string {
+	return p.dsn("mig_"+svc, "mig_"+svc)
+}
+
+func (p *Postgres) dsn(user, pass string) string {
 	u := url.URL{
 		Scheme:   "postgres",
 		User:     url.UserPassword(user, pass),

@@ -17,6 +17,7 @@ import (
 	"github.com/raduolivas/dt/backend/gen/dt/deliveries/v1/deliveriesv1connect"
 	eventsv1 "github.com/raduolivas/dt/backend/gen/dt/events/v1"
 	"github.com/raduolivas/dt/backend/pkg/httpx"
+	"github.com/raduolivas/dt/backend/services/gateway/api"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/domain"
 )
@@ -30,17 +31,9 @@ type deliveriesAPI struct {
 	log    *slog.Logger
 }
 
-// The wire shapes are local rather than the generated models because those
-// carry coordinates as float32, which would move a point by about a metre.
-
-type latLngJSON struct {
-	Lat float64 `json:"lat"`
-	Lng float64 `json:"lng"`
-}
-
-type locationJSON struct {
-	Location latLngJSON `json:"location"`
-}
+// Coordinates use the generated api.LatLng (float64, format: double in the
+// contract). The response and request shapes below stay local where they
+// differ from the generated models (nullable fields, internal mapping).
 
 type deliveryJSON struct {
 	ID            string `json:"id"`
@@ -49,11 +42,11 @@ type deliveryJSON struct {
 	DeliveryModel string `json:"delivery_model"`
 	Status        string `json:"status"`
 	Pickup        struct {
-		Location latLngJSON `json:"location"`
+		Location api.LatLng `json:"location"`
 		Name     string     `json:"name"`
 	} `json:"pickup"`
 	Dropoff struct {
-		Location latLngJSON `json:"location"`
+		Location api.LatLng `json:"location"`
 		Label    *string    `json:"label"`
 	} `json:"dropoff"`
 	Customer struct {
@@ -104,8 +97,8 @@ func toDeliveryJSON(d *deliveriesv1.Delivery) deliveryJSON {
 		out.Metadata = map[string]string{}
 	}
 	out.Pickup.Name = d.GetPickup().GetName()
-	out.Pickup.Location = latLngJSON{d.GetPickup().GetLocation().GetLat(), d.GetPickup().GetLocation().GetLng()}
-	out.Dropoff.Location = latLngJSON{d.GetDropoff().GetLocation().GetLat(), d.GetDropoff().GetLocation().GetLng()}
+	out.Pickup.Location = api.LatLng{Lat: d.GetPickup().GetLocation().GetLat(), Lng: d.GetPickup().GetLocation().GetLng()}
+	out.Dropoff.Location = api.LatLng{Lat: d.GetDropoff().GetLocation().GetLat(), Lng: d.GetDropoff().GetLocation().GetLng()}
 	out.Dropoff.Label = d.GetDropoff().Label
 	out.Customer.FirstName = d.GetCustomer().FirstName
 	if c := d.GetCourier(); c != nil {
@@ -117,7 +110,7 @@ func toDeliveryJSON(d *deliveriesv1.Delivery) deliveryJSON {
 	return out
 }
 
-func toLatLng(l latLngJSON) *eventsv1.LatLng { return &eventsv1.LatLng{Lat: l.Lat, Lng: l.Lng} }
+func toLatLng(l api.LatLng) *eventsv1.LatLng { return &eventsv1.LatLng{Lat: l.Lat, Lng: l.Lng} }
 
 // scopeFor is the RPC scope of the authenticated principal.
 func scopeFor(w http.ResponseWriter, r *http.Request) (*deliveriesv1.Scope, bool) {
@@ -162,11 +155,11 @@ func (a *deliveriesAPI) create(w http.ResponseWriter, r *http.Request) {
 		ExternalID    string `json:"external_id"`
 		DeliveryModel string `json:"delivery_model"`
 		Pickup        struct {
-			Location latLngJSON `json:"location"`
+			Location api.LatLng `json:"location"`
 			Name     string     `json:"name"`
 		} `json:"pickup"`
 		Dropoff struct {
-			Location latLngJSON `json:"location"`
+			Location api.LatLng `json:"location"`
 			Label    *string    `json:"label"`
 		} `json:"dropoff"`
 		Customer struct {
@@ -275,7 +268,9 @@ func (a *deliveriesAPI) update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if m, present := raw["dropoff"]; present {
-		var d locationJSON
+		var d struct {
+			Location api.LatLng `json:"location"`
+		}
 		if err := json.Unmarshal(m, &d); err != nil {
 			bad()
 			return

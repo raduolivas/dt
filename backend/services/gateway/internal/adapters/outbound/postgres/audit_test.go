@@ -88,10 +88,18 @@ func TestAuditRecordRoundTrip(t *testing.T) {
 
 func TestAuditLogIsAppendOnly(t *testing.T) {
 	t.Parallel()
-	pool, s := auditSetup(t) // the pool connects as svc_gateway, the table owner
+	pool, s := auditSetup(t) // the pool connects as svc_gateway, not the table owner
 	ctx := context.Background()
 	if err := s.Record(ctx, auditEntry(t0)); err != nil {
 		t.Fatal(err)
+	}
+	// Not the owner, the role cannot grant itself UPDATE back (PostgreSQL only
+	// warns), so the UPDATE below is still refused.
+	if _, err := pool.Exec(ctx, "GRANT UPDATE, TRUNCATE ON audit_log TO CURRENT_USER"); err != nil {
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+			t.Fatalf("GRANT = %v", err)
+		}
 	}
 	for _, stmt := range []string{"UPDATE audit_log SET status = 200", "TRUNCATE audit_log"} {
 		_, err := pool.Exec(ctx, stmt)

@@ -43,7 +43,7 @@ const completeIdempotencyRecord = `-- name: CompleteIdempotencyRecord :execrows
 UPDATE idempotency_records
 SET state = 'completed', locked_until = NULL,
     response_status = $1, response_headers = $2, response_body = $3,
-    resource_id = $4
+    resource_id = COALESCE($4, resource_id)
 WHERE tenant_id = $5 AND environment = $6 AND idem_key = $7
   AND state = 'in_progress' AND locked_until = $8
 `
@@ -218,8 +218,8 @@ func (q *Queries) InsertAuditEntry(ctx context.Context, arg InsertAuditEntryPara
 }
 
 const insertIdempotencyRecord = `-- name: InsertIdempotencyRecord :one
-INSERT INTO idempotency_records (tenant_id, environment, idem_key, request_hash, state, locked_until, created_at, expires_at)
-VALUES ($1, $2, $3, $4, 'in_progress', $5, $6, $7)
+INSERT INTO idempotency_records (tenant_id, environment, idem_key, request_hash, state, locked_until, resource_id, created_at, expires_at)
+VALUES ($1, $2, $3, $4, 'in_progress', $5, $6, $7, $8)
 ON CONFLICT (tenant_id, environment, idem_key) DO NOTHING
 RETURNING idem_key
 `
@@ -230,6 +230,7 @@ type InsertIdempotencyRecordParams struct {
 	IdemKey     string
 	RequestHash []byte
 	LockedUntil *time.Time
+	ResourceID  pgtype.Text
 	CreatedAt   time.Time
 	ExpiresAt   time.Time
 }
@@ -242,6 +243,7 @@ func (q *Queries) InsertIdempotencyRecord(ctx context.Context, arg InsertIdempot
 		arg.IdemKey,
 		arg.RequestHash,
 		arg.LockedUntil,
+		arg.ResourceID,
 		arg.CreatedAt,
 		arg.ExpiresAt,
 	)
@@ -327,14 +329,15 @@ func (q *Queries) LockIdempotencyRecord(ctx context.Context, arg LockIdempotency
 const reclaimIdempotencyRecord = `-- name: ReclaimIdempotencyRecord :exec
 UPDATE idempotency_records
 SET request_hash = $1, state = 'in_progress', locked_until = $2,
-    response_status = NULL, response_headers = NULL, response_body = NULL, resource_id = NULL,
-    created_at = $3, expires_at = $4
-WHERE tenant_id = $5 AND environment = $6 AND idem_key = $7
+    response_status = NULL, response_headers = NULL, response_body = NULL, resource_id = $3,
+    created_at = $4, expires_at = $5
+WHERE tenant_id = $6 AND environment = $7 AND idem_key = $8
 `
 
 type ReclaimIdempotencyRecordParams struct {
 	RequestHash []byte
 	LockedUntil *time.Time
+	ResourceID  pgtype.Text
 	CreatedAt   time.Time
 	ExpiresAt   time.Time
 	TenantID    string
@@ -347,6 +350,7 @@ func (q *Queries) ReclaimIdempotencyRecord(ctx context.Context, arg ReclaimIdemp
 	_, err := q.db.Exec(ctx, reclaimIdempotencyRecord,
 		arg.RequestHash,
 		arg.LockedUntil,
+		arg.ResourceID,
 		arg.CreatedAt,
 		arg.ExpiresAt,
 		arg.TenantID,

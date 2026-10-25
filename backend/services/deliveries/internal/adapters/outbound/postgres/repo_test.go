@@ -47,7 +47,7 @@ type env struct {
 	repo  *postgres.Repo
 }
 
-// setup starts Postgres, applies the migrations as svc_deliveries and
+// setup starts Postgres, applies the migrations as mig_deliveries and
 // returns pools for the service role and the admin, and a repo.
 func setup(t *testing.T) env {
 	t.Helper()
@@ -58,7 +58,7 @@ func setup(t *testing.T) env {
 	}()
 	ctx := context.Background()
 	url := pg.URL("deliveries")
-	if err := migratex.Up(ctx, url, migrations.FS); err != nil {
+	if err := migratex.Up(ctx, pg.MigratorURL("deliveries"), migrations.FS); err != nil {
 		t.Fatal(err)
 	}
 	svc, err := pgxpool.New(ctx, url)
@@ -149,7 +149,8 @@ func exported(d *domain.Delivery) domain.Delivery {
 		Status: d.Status, Policy: d.Policy, Pickup: d.Pickup, PickupName: d.PickupName, Dropoff: d.Dropoff,
 		DropoffLabel: d.DropoffLabel, CustomerFirstName: d.CustomerFirstName, ItemsSummary: d.ItemsSummary,
 		Notes: d.Notes, ItemCount: d.ItemCount, Metadata: d.Metadata, Courier: d.Courier, History: d.History,
-		ErasedAt: d.ErasedAt, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
+		ErasedAt: d.ErasedAt, DroppedReports: d.DroppedReports, Version: d.Version,
+		CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 	}
 }
 
@@ -728,5 +729,97 @@ func TestApplySettingsIgnoresOlder(t *testing.T) {
 	apply(domain.DefaultTenantSettings(), t0.Add(2*time.Minute))
 	if got, _ := e.repo.Settings(ctx, "ten_a"); !reflect.DeepEqual(got, domain.DefaultTenantSettings()) {
 		t.Errorf("after a newer update settings = %+v, want defaults", got)
+	}
+}
+
+func TestDroppedReportsPersist(t *testing.T) {
+	t.Parallel()
+	e := setup(t)
+	d := create(t, e, scopeA, fullInput("ord-cap"), domain.DefaultTenantSettings(), t0)
+	mutate(t, e, scopeA, d.ID, report(domain.Report{
+		EventID: "p1", Type: domain.ReportPickupConfirmed, Actor: domain.ActorCourier,
+		OccurredAt: t0.Add(time.Minute), ReceivedAt: t0.Add(time.Minute),
+	}))
+	for i := 0; i < domain.MaxNoiseEntries+3; i++ {
+		at := t0.Add(2 * time.Minute)
+		mutate(t, e, scopeA, d.ID, report(domain.Report{
+			EventID: fmt.Sprintf("a%d", i), Type: domain.ReportArriving, Actor: domain.ActorCourier,
+			OccurredAt: at, ReceivedAt: at,
+		}))
+	}
+	got, err := e.repo.Get(context.Background(), scopeA, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One arriving applied, the rest stale: the first 200 stored, 2 dropped.
+	if got.DroppedReports != 2 {
+		t.Fatalf("DroppedReports = %d, want 2", got.DroppedReports)
+	}
+	if len(got.History) != 1+1+1+domain.MaxNoiseEntries {
+		t.Fatalf("history = %d", len(got.History))
+	}
+}
+
+func TestReasonSealedAtRest(t *testing.T) {
+	t.Parallel()
+	e := setup(t)
+	ctx := context.Background()
+	const reason = "customer Ana moved"
+	d := create(t, e, scopeA, fullInput("ord-reason"), domain.DefaultTenantSettings(), t0)
+	mutate(t, e, scopeA, d.ID, func(d *domain.Delivery) ([]domain.Event, error) {
+		return d.Cancel(reason, t0.Add(time.Minute))
+	})
+
+	var pos, sealed int
+	if err := e.admin.QueryRow(ctx,
+		`SELECT coalesce(max(position(convert_to($1, 'UTF8') in reason_sealed)), 0), count(reason_sealed)
+		 FROM deliveries.delivery_history WHERE delivery_id = $2`, reason, d.ID).Scan(&pos, &sealed); err != nil {
+		t.Fatal(err)
+	}
+	if pos != 0 || sealed != 1 {
+		t.Fatalf("plaintext position %d, sealed rows %d; want 0 and 1", pos, sealed)
+	}
+	got, err := e.repo.Get(ctx, scopeA, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := got.History[len(got.History)-1]; h.Reason != reason {
+		t.Fatalf("reason = %q", h.Reason)
+	}
+
+	mutate(t, e, scopeA, d.ID, func(d *domain.Delivery) ([]domain.Event, error) {
+		return d.ErasePersonalData(t0.Add(time.Hour))
+	})
+	var left int
+	if err := e.admin.QueryRow(ctx,
+		`SELECT count(*) FROM deliveries.delivery_history WHERE delivery_id = $1 AND reason_sealed IS NOT NULL`,
+		d.ID).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 0 {
+		t.Fatalf("%d sealed reasons left after erasure", left)
+	}
+	got, err = e.repo.Get(ctx, scopeA, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range got.History {
+		if h.Reason != "" {
+			t.Fatalf("history keeps reason %q after erasure", h.Reason)
+		}
+	}
+
+	// A reason reported after erasure is not stored either.
+	mutate(t, e, scopeA, d.ID, report(domain.Report{
+		EventID: "late", Type: domain.ReportFailed, Actor: domain.ActorCourier,
+		OccurredAt: t0.Add(30 * time.Second), ReceivedAt: t0.Add(2 * time.Hour), Reason: "customer Ana called",
+	}))
+	if err := e.admin.QueryRow(ctx,
+		`SELECT count(*) FROM deliveries.delivery_history WHERE delivery_id = $1 AND reason_sealed IS NOT NULL`,
+		d.ID).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 0 {
+		t.Fatalf("%d sealed reasons after a post-erasure report", left)
 	}
 }

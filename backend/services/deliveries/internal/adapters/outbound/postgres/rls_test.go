@@ -5,12 +5,18 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/raduolivas/dt/backend/pkg/migratex"
+	"github.com/raduolivas/dt/backend/pkg/testkit"
 	"github.com/raduolivas/dt/backend/services/deliveries/internal/app"
 	"github.com/raduolivas/dt/backend/services/deliveries/internal/domain"
+	"github.com/raduolivas/dt/backend/services/deliveries/migrations"
 )
 
-// TestRLSHidesOtherTenantAndEnvironment runs as svc_deliveries, the owner of
-// the tables: only FORCE ROW LEVEL SECURITY makes the policy apply to it.
+// TestRLSHidesOtherTenantAndEnvironment runs as svc_deliveries, which does
+// not own the tables (mig_deliveries does), so the policy applies to it.
 // The queries do not filter on tenant themselves, so this test fails if the
 // policy is dropped.
 func TestRLSHidesOtherTenantAndEnvironment(t *testing.T) {
@@ -76,5 +82,61 @@ func TestRLSHidesOtherTenantAndEnvironment(t *testing.T) {
 		if err := tx.Commit(ctx); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// TestRuntimeRoleCannotWeakenRLS pins OQ16: migrations run as mig_deliveries,
+// the tables' owner, so svc_deliveries can use the tables but cannot turn
+// row-level security off.
+func TestRuntimeRoleCannotWeakenRLS(t *testing.T) {
+	t.Parallel()
+	pg := func() *testkit.Postgres {
+		starting <- struct{}{}
+		defer func() { <-starting }()
+		return testkit.StartPostgres(t)
+	}()
+	ctx := context.Background()
+	if err := migratex.Up(ctx, pg.MigratorURL("deliveries"), migrations.FS); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := pgx.Connect(ctx, pg.URL("deliveries"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	for _, table := range []string{"couriers", "deliveries", "delivery_history"} {
+		for _, stmt := range []string{
+			"ALTER TABLE " + table + " NO FORCE ROW LEVEL SECURITY",
+			"ALTER TABLE " + table + " DISABLE ROW LEVEL SECURITY",
+		} {
+			_, err := conn.Exec(ctx, stmt)
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+				t.Errorf("%s = %v, want insufficient privilege (42501)", stmt, err)
+			}
+		}
+	}
+
+	// The runtime role still reads and writes inside a tenant transaction.
+	err = pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT set_config('dt.tenant_id', 'ten_a', true), set_config('dt.environment', 'test', true)`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO couriers (id, tenant_id, environment, external_id, display_name, vehicle, created_at, updated_at)
+			VALUES ('cour_1', 'ten_a', 'test', 'ext-1', 'Ana', 'bicycle', now(), now())`); err != nil {
+			return err
+		}
+		var n int
+		if err := tx.QueryRow(ctx, "SELECT count(*) FROM couriers").Scan(&n); err != nil {
+			return err
+		}
+		if n != 1 {
+			t.Errorf("couriers visible in the tenant transaction = %d, want 1", n)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("tenant transaction: %v", err)
 	}
 }
