@@ -31,8 +31,8 @@ func (s Status) IsFinal() bool {
 	return s == StatusDelivered || s == StatusCancelled || s == StatusFailed
 }
 
-// beforePickup reports whether the parcel has not left the store yet.
-func (s Status) beforePickup() bool {
+// BeforePickup reports whether the parcel has not left the store yet.
+func (s Status) BeforePickup() bool {
 	return s == StatusConfirmed || s == StatusCourierAssigned || s == StatusAtPickup
 }
 
@@ -90,7 +90,30 @@ type Route struct {
 	ToDropoffSec int
 	// Estimated is true when the legs are a fallback (straight line or last known route).
 	Estimated bool
+
+	// Bookkeeping of the routing in tracking/internal/app.
+
+	// DropoffStage says where ToDropoff starts: RouteFromStore or RouteFromCourier.
+	DropoffStage string
+	// DropoffEstimated and PickupEstimated say a leg is a fallback.
+	DropoffEstimated, PickupEstimated bool
+	// Profile is the routing profile the legs were built for (car or bike).
+	Profile string
+	// BaseDropoffSec and BasePickupSec are the router's drive time for the
+	// whole of each leg as built; the live seconds scale them by the share
+	// of the leg left.
+	BaseDropoffSec, BasePickupSec int
+	// RoutedAt is when the router was last asked (also after a failure).
+	RoutedAt time.Time
+	// ComputedAt is when the drive times were last recomputed.
+	ComputedAt time.Time
 }
+
+// Where the dropoff leg starts.
+const (
+	RouteFromStore   = "store"
+	RouteFromCourier = "courier"
+)
 
 // TimelineEntry is one status change.
 type TimelineEntry struct {

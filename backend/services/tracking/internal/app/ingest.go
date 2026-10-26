@@ -113,7 +113,9 @@ func (s *Service) reportLocation(ctx context.Context, sc Scope, courierID string
 		}
 		return
 	}
-	err = s.Events.Enqueue(ctx, EventLocationReported, sc.TenantID, sc.Env, Subject{CourierID: courierID},
+	ectx, cancel := context.WithTimeout(ctx, enqueueTimeout)
+	defer cancel()
+	err = s.Events.Enqueue(ectx, EventLocationReported, sc.TenantID, sc.Env, Subject{CourierID: courierID},
 		&eventsv1.CourierLocationReported{CourierId: courierID, Fixes: toInt32(n)})
 	if err != nil {
 		s.log().WarnContext(ctx, "location_reported_enqueue_failed", "courier_id", courierID, "error", err)

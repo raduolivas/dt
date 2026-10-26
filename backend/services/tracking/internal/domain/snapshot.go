@@ -162,7 +162,7 @@ func buildCommon(st State, now time.Time, showToPickup bool) common {
 		w = &EtaWindowDTO{MinSeconds: win[0], MaxSeconds: win[1]}
 	}
 	r := RouteDTO{ToDropoff: pairs(st.Route.ToDropoff)}
-	if showToPickup && st.Model == ModelEndToEnd && st.Status.beforePickup() && len(st.Route.ToPickup) > 0 {
+	if showToPickup && st.Model == ModelEndToEnd && st.Status.BeforePickup() && len(st.Route.ToPickup) > 0 {
 		r.ToPickup = pairs(st.Route.ToPickup)
 	}
 	d, p := distanceAndProgress(st)

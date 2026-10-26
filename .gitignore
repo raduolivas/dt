@@ -12,3 +12,5 @@ backend/**/bin/
 backend/tools/dtctl/dtctl
 # dev mTLS material (scripts/dev-certs.sh)
 infra/compose/certs/
+# OSRM routing data (scripts/osrm-prepare.sh)
+infra/compose/osrm/

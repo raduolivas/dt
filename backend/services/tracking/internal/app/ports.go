@@ -144,3 +144,12 @@ type Events interface {
 type Sampler interface {
 	Allow(ctx context.Context, courierID string) (bool, error)
 }
+
+// Router finds roads. Profile is "car" or "bike".
+type Router interface {
+	// Route returns the path through pts in order and its drive time in
+	// seconds.
+	Route(ctx context.Context, profile string, pts ...domain.LatLng) (path []domain.LatLng, seconds int, err error)
+	// Match snaps fixes to the road network and returns the matched path.
+	Match(ctx context.Context, profile string, fixes []domain.Fix) ([]domain.LatLng, error)
+}

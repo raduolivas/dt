@@ -277,6 +277,45 @@ func (f *fakePub) forDelivery(id string) []domain.TrackingSnapshot {
 	return out
 }
 
+// fakeRouter routes in a straight line between its points at mps metres per
+// second and counts its calls.
+type fakeRouter struct {
+	mu       sync.Mutex
+	calls    int
+	profiles []string
+	err      error
+	mps      float64
+}
+
+func (r *fakeRouter) Route(_ context.Context, profile string, pts ...domain.LatLng) ([]domain.LatLng, int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls++
+	r.profiles = append(r.profiles, profile)
+	if r.err != nil {
+		return nil, 0, r.err
+	}
+	mps := r.mps
+	if mps == 0 {
+		mps = 5
+	}
+	return slices.Clone(pts), int(domain.PathLengthM(pts) / mps), nil
+}
+
+func (r *fakeRouter) Match(_ context.Context, _ string, fixes []domain.Fix) ([]domain.LatLng, error) {
+	out := make([]domain.LatLng, len(fixes))
+	for i, f := range fixes {
+		out[i] = f.Pos
+	}
+	return out, nil
+}
+
+func (r *fakeRouter) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
+}
+
 type enqueued struct {
 	typ     string
 	subject Subject
@@ -287,9 +326,14 @@ type fakeEvents struct {
 	mu   sync.Mutex
 	got  []enqueued
 	fail error // when set, every Enqueue fails with it
+	hang bool  // when set, Enqueue blocks until its context ends
 }
 
-func (f *fakeEvents) Enqueue(_ context.Context, typ, _, _ string, subj Subject, msg proto.Message) error {
+func (f *fakeEvents) Enqueue(ctx context.Context, typ, _, _ string, subj Subject, msg proto.Message) error {
+	if f.hang {
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.fail != nil {

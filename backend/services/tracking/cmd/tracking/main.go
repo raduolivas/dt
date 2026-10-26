@@ -28,6 +28,7 @@ import (
 	"github.com/raduolivas/dt/backend/pkg/rpcauth"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/adapters/inbound/consumer"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/adapters/inbound/rpc"
+	"github.com/raduolivas/dt/backend/services/tracking/internal/adapters/outbound/osrm"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/adapters/outbound/postgres"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/adapters/outbound/redis"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/app"
@@ -106,6 +107,13 @@ func run(ctx context.Context) error {
 				States: states, Reads: repo, Trail: trail, Pub: redis.NewPublisher(d.Redis),
 				Events: repo, Sampler: states, Clock: systemClock{}, Log: d.Log,
 			}
+			// Without OSRM URLs no routes are built (and the ETA stays
+			// unknown): the service still tracks and shows the courier.
+			if urls := osrmURLs(); len(urls) > 0 {
+				svc.Router = osrm.New(urls, osrm.DefaultTimeout)
+			} else {
+				d.Log.Warn("OSRM_CAR_URL and OSRM_BIKE_URL are unset: routes and ETAs are off")
+			}
 
 			rpcSrv, err := internalServer(svc, token, rpcPort, rpcTLS, d.Log)
 			if err != nil {
@@ -148,6 +156,18 @@ func internalServer(svc *app.Service, token string, port int, tlsCfg *tls.Config
 	}
 	log.Info("internal rpc listening", "addr", srv.Addr(), "tls", tlsCfg != nil)
 	return srv, nil
+}
+
+// osrmURLs returns the configured OSRM base URLs by profile.
+func osrmURLs() map[string]string {
+	urls := map[string]string{}
+	if u := os.Getenv("OSRM_CAR_URL"); u != "" {
+		urls["car"] = u
+	}
+	if u := os.Getenv("OSRM_BIKE_URL"); u != "" {
+		urls["bike"] = u
+	}
+	return urls
 }
 
 type systemClock struct{}

@@ -79,7 +79,7 @@ test: test-go test-web ## Run every test
 lint: lint-go lint-web lint-contracts ## Run every linter
 
 # ---- local stack ------------------------------------------------------------
-.PHONY: dev down logs dtctl seed smoke
+.PHONY: dev down logs dtctl seed smoke osrm-data
 
 # COMPOSE_OVERRIDE optionally names an extra Compose file (for example one that sets
 # build.network: host on machines whose Docker build containers have no network). Empty by default.
@@ -97,7 +97,10 @@ export DT_INTERNAL_RPC_TLS_CERT ?= $(CERTS)/dtctl.pem
 export DT_INTERNAL_RPC_TLS_KEY ?= $(CERTS)/dtctl.key
 export DT_INTERNAL_RPC_TLS_CA ?= $(CERTS)/ca.pem
 
-dev: ## Build and start the local stack, then wait until every service is ready
+osrm-data: ## Download and preprocess the Amsterdam OSRM routing data (idempotent; needs Docker and curl)
+	scripts/osrm-prepare.sh
+
+dev: osrm-data ## Build and start the local stack, then wait until every service is ready
 	scripts/dev-certs.sh
 	$(COMPOSE) up --build -d
 	scripts/wait-ready.sh

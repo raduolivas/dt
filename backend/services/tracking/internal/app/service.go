@@ -33,6 +33,9 @@ const (
 	etaEventMinInterval = time.Minute
 )
 
+// enqueueTimeout bounds the outbox writes of one Apply.
+const enqueueTimeout = 300 * time.Millisecond
+
 // Service holds the tracking use cases.
 type Service struct {
 	States  StateStore
@@ -41,8 +44,11 @@ type Service struct {
 	Pub     Publisher
 	Events  Events
 	Sampler Sampler
-	Clock   Clock
-	Log     *slog.Logger
+	// Router is optional: without one no routes are built and the ETA
+	// stays unknown until a route is known.
+	Router Router
+	Clock  Clock
+	Log    *slog.Logger
 }
 
 func (s *Service) log() *slog.Logger {
@@ -65,8 +71,11 @@ func (s *Service) Apply(ctx context.Context, sc Scope, deliveryID string, mutate
 // ApplyWith is Apply with the read model used for a rebuild, such as a
 // consumer's transaction-bound projection.
 func (s *Service) ApplyWith(ctx context.Context, reads ReadModel, sc Scope, deliveryID string, mutate func(*domain.State) error) error {
+	// The router is asked outside the compare-and-set: its answers are kept
+	// for the retries.
+	memo := &routeMemo{}
 	for range casAttempts {
-		done, err := s.applyOnce(ctx, reads, sc, deliveryID, mutate)
+		done, err := s.applyOnce(ctx, reads, memo, sc, deliveryID, mutate)
 		if err != nil || done {
 			return err
 		}
@@ -82,7 +91,7 @@ type pendingEvent struct {
 	undo func(*domain.State)
 }
 
-func (s *Service) applyOnce(ctx context.Context, reads ReadModel, sc Scope, id string, mutate func(*domain.State) error) (bool, error) {
+func (s *Service) applyOnce(ctx context.Context, reads ReadModel, memo *routeMemo, sc Scope, id string, mutate func(*domain.State) error) (bool, error) {
 	st, ok, err := s.States.Get(ctx, id)
 	if err != nil {
 		return false, fmt.Errorf("get state %s: %w", id, err)
@@ -108,6 +117,7 @@ func (s *Service) applyOnce(ctx context.Context, reads ReadModel, sc Scope, id s
 	} else if err != nil && !errors.Is(err, ErrNoChange) {
 		return false, err
 	}
+	s.refreshRoute(ctx, memo, &st, now)
 	st.Version = domain.NextVersion(prevVersion, now)
 	after, err := viewerContent(st, now)
 	if err != nil {
@@ -129,8 +139,12 @@ func (s *Service) applyOnce(ctx context.Context, reads ReadModel, sc Scope, id s
 	// outbox is Postgres, which must never hold up the viewer path: an
 	// event that cannot be enqueued has its bookkeeping undone and is due
 	// again on the next Apply, while the state is stored and published.
+	// The whole enqueue is bounded, so a hung Postgres delays the store and
+	// the publish by at most enqueueTimeout.
+	ectx, cancel := context.WithTimeout(ctx, enqueueTimeout)
+	defer cancel()
 	for _, e := range events {
-		if err := s.Events.Enqueue(ctx, e.typ, st.TenantID, st.Env, Subject{DeliveryID: id}, e.msg); err != nil {
+		if err := s.Events.Enqueue(ectx, e.typ, st.TenantID, st.Env, Subject{DeliveryID: id}, e.msg); err != nil {
 			e.undo(&st)
 			s.log().WarnContext(ctx, "tracking_event_enqueue_failed", "delivery_id", id, "event_type", e.typ, "error", err)
 		}
@@ -142,6 +156,8 @@ func (s *Service) applyOnce(ctx context.Context, reads ReadModel, sc Scope, id s
 	if !stored {
 		return false, nil
 	}
+	// From here on Apply never fails: the state advanced, and an error would
+	// make Ingest drop the trail rows of fixes that were accepted.
 	if viewerChanged {
 		// Best effort: a missed publish is repaired by the next change and
 		// by viewers reading the snapshot on (re)connect.

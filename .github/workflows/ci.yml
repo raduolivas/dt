@@ -143,6 +143,14 @@ jobs:
           cache-dependency-path: backend/**/go.sum
       - name: Check jq
         run: jq --version
+      # The OSRM data takes minutes to download and preprocess; the key is
+      # the script's checksum, so editing the script (region, images) rebuilds it.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            infra/compose/osrm/car
+            infra/compose/osrm/bike
+          key: osrm-${{ hashFiles('scripts/osrm-prepare.sh') }}
       - run: make dev
       - run: make smoke
       - name: Show logs on failure

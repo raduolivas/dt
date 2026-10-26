@@ -562,3 +562,61 @@ func TestProofPointIgnoresPreviousCourierFixes(t *testing.T) {
 		t.Fatalf("pickup_confirmed proof = %+v", got)
 	}
 }
+
+func TestEnqueueTimeoutDoesNotDelayPublish(t *testing.T) {
+	f := newFixture(t)
+	f.courier(t, "cou_1")
+	f.delivery(t, "del_to", domain.ModelDirect, "cou_1", domain.StatusPickedUp)
+	f.events.hang = true
+	n0 := len(f.pub.forDelivery("del_to"))
+	f.clock.Advance(time.Second)
+	start := time.Now()
+	// Near the dropoff: the arrival event is due, and Postgres hangs.
+	acc, _, err := f.svc.Ingest(context.Background(), sc, "cou_1", []domain.Fix{fixAt(f.clock.Now(), 52.3739, 4.889)}, "relay")
+	if err != nil || acc != 1 {
+		t.Fatalf("Ingest = %d, %v", acc, err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("Apply took %v with a hung outbox", d)
+	}
+	if st := f.state(t, "del_to"); st.ArrivalSent || st.LastFix == nil || !st.LastFix.T.Equal(f.clock.Now()) {
+		t.Fatalf("state = arrivalSent %v lastFix %+v", st.ArrivalSent, st.LastFix)
+	}
+	if n := len(f.pub.forDelivery("del_to")); n != n0+1 {
+		t.Fatalf("published %d snapshots, want 1", n-n0)
+	}
+}
+
+type failingPub struct{ n int }
+
+func (p *failingPub) Snapshot(context.Context, string, domain.TrackingSnapshot) error {
+	p.n++
+	return errors.New("redis pubsub down")
+}
+
+func TestPublishFailureAfterPutIsNotAnError(t *testing.T) {
+	f := newFixture(t)
+	f.courier(t, "cou_1")
+	f.delivery(t, "del_pf", domain.ModelDirect, "cou_1", domain.StatusPickedUp)
+	pub := &failingPub{}
+	f.svc.Pub = pub
+	f.clock.Advance(time.Second)
+	acc, _, err := f.svc.Ingest(context.Background(), sc, "cou_1", []domain.Fix{fixAt(f.clock.Now(), 52.372, 4.89)}, "relay")
+	if err != nil || acc != 1 {
+		t.Fatalf("Ingest = %d, %v", acc, err)
+	}
+	if pub.n == 0 {
+		t.Fatal("publish was not attempted")
+	}
+	if rows := f.trail.forDelivery("del_pf"); len(rows) != 1 {
+		t.Fatalf("trail rows = %d, want 1", len(rows))
+	}
+	// And Apply itself returns nil.
+	f.clock.Advance(time.Second)
+	if err := f.svc.Apply(context.Background(), sc, "del_pf", func(st *domain.State) error {
+		st.PickupName = "Other hub"
+		return nil
+	}); err != nil {
+		t.Fatalf("Apply = %v", err)
+	}
+}

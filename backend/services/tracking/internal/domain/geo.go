@@ -108,3 +108,28 @@ func Simplify(points []LatLng, toleranceM float64) []LatLng {
 
 // DistanceM is the great-circle distance between a and b in metres.
 func DistanceM(a, b LatLng) float64 { return distanceM(a, b) }
+
+// PathLengthM is the length of the path in metres.
+func PathLengthM(pts []LatLng) float64 { return pathLengthM(pts) }
+
+// RemainingAlongM returns the metres left on route for a traveller at p: the
+// distance to the closest point on the route plus the rest of the route.
+func RemainingAlongM(route []LatLng, p LatLng) float64 { return remainingAlong(route, p) }
+
+// OffRouteM returns the distance in metres from p to the closest point of
+// route; 0 for an empty route.
+func OffRouteM(route []LatLng, p LatLng) float64 {
+	switch len(route) {
+	case 0:
+		return 0
+	case 1:
+		return distanceM(p, route[0])
+	}
+	best := math.Inf(1)
+	pp := project(p, p)
+	for i := 0; i+1 < len(route); i++ {
+		d, _ := segmentDistance(pp, project(route[i], p), project(route[i+1], p))
+		best = math.Min(best, d)
+	}
+	return best
+}
