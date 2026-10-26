@@ -60,15 +60,19 @@ func (q *Queries) CourierActiveDeliveries(ctx context.Context, courierID *string
 	return items, nil
 }
 
-const courierExists = `-- name: CourierExists :one
-SELECT EXISTS (SELECT 1 FROM couriers WHERE id = $1)
+const courierKnown = `-- name: CourierKnown :one
+SELECT (EXISTS (SELECT 1 FROM couriers c WHERE c.id = $1::text)
+    OR EXISTS (SELECT 1 FROM deliveries d WHERE d.courier_id = $1::text AND d.final_at IS NULL))::bool AS known
 `
 
-func (q *Queries) CourierExists(ctx context.Context, id string) (bool, error) {
-	row := q.db.QueryRow(ctx, courierExists, id)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
+// A courier is the scope's when it has a couriers row, or when a non-final
+// delivery of the scope is assigned to it (its courier.upserted may have aged
+// out of the stream before tracking first read it).
+func (q *Queries) CourierKnown(ctx context.Context, courierID string) (bool, error) {
+	row := q.db.QueryRow(ctx, courierKnown, courierID)
+	var known bool
+	err := row.Scan(&known)
+	return known, err
 }
 
 const ensureTrailPartition = `-- name: EnsureTrailPartition :exec
@@ -374,11 +378,13 @@ func (q *Queries) SetTenantPrep(ctx context.Context, arg SetTenantPrepParams) (i
 
 const trailBetween = `-- name: TrailBetween :many
 SELECT t, lat, lng, accuracy_m, speed_mps, heading_deg, source
-FROM trail_fixes WHERE delivery_id = $1 AND t >= $2 AND t <= $3 ORDER BY t, id
+FROM trail_fixes WHERE delivery_id = $1 AND courier_id = $2
+  AND t >= $3 AND t <= $4 ORDER BY t, id
 `
 
 type TrailBetweenParams struct {
 	DeliveryID string
+	CourierID  string
 	FromT      time.Time
 	ToT        time.Time
 }
@@ -394,7 +400,12 @@ type TrailBetweenRow struct {
 }
 
 func (q *Queries) TrailBetween(ctx context.Context, arg TrailBetweenParams) ([]TrailBetweenRow, error) {
-	rows, err := q.db.Query(ctx, trailBetween, arg.DeliveryID, arg.FromT, arg.ToT)
+	rows, err := q.db.Query(ctx, trailBetween,
+		arg.DeliveryID,
+		arg.CourierID,
+		arg.FromT,
+		arg.ToT,
+	)
 	if err != nil {
 		return nil, err
 	}

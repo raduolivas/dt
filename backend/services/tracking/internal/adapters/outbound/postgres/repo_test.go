@@ -103,11 +103,11 @@ func TestRLSHidesOtherTenantTrail(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A's scope sees A's fix, not B's, even when asking for B's delivery.
-	got, err := e.repo.RecentTrail(ctx, scopeA, "del_a", now.Add(-time.Minute), now)
+	got, err := e.repo.RecentTrail(ctx, scopeA, "del_a", "cou_a", now.Add(-time.Minute), now)
 	if err != nil || len(got) != 1 || got[0].Pos.Lat != 52.361 || got[0].SpeedMps == nil {
 		t.Fatalf("A trail = %+v, %v", got, err)
 	}
-	if got, _ := e.repo.RecentTrail(ctx, scopeA, "del_b", now.Add(-time.Minute), now); len(got) != 0 {
+	if got, _ := e.repo.RecentTrail(ctx, scopeA, "del_b", "cou_b", now.Add(-time.Minute), now); len(got) != 0 {
 		t.Fatalf("A sees B's trail: %+v", got)
 	}
 	if _, err := e.repo.LoadState(ctx, scopeA, "del_b"); !errors.Is(err, app.ErrNotFound) {
@@ -225,6 +225,11 @@ func TestLoadStateRebuildsFromReadModel(t *testing.T) {
 		st.Status != domain.StatusCourierAssigned || len(st.Timeline) != 1 || st.Pickup.Lat != 52.36 {
 		t.Fatalf("state = %+v (fix %+v)", st, st.LastFix)
 	}
+	// The trail is per courier: the previous courier's fix is not returned.
+	tr, err := e.repo.RecentTrail(ctx, scopeA, "del_a", "cou_a", now.Add(-time.Minute), now.Add(time.Minute))
+	if err != nil || len(tr) != 1 || tr[0].Pos.Lat != 52.361 {
+		t.Fatalf("courier trail = %+v, %v", tr, err)
+	}
 	ids, err := e.repo.CourierActiveDeliveries(ctx, scopeA, "cou_a")
 	if err != nil || len(ids) != 1 || ids[0] != "del_a" {
 		t.Fatalf("active = %v, %v", ids, err)
@@ -243,5 +248,30 @@ func TestEnsurePartitionsIsIdempotent(t *testing.T) {
 	var n int
 	if err := e.admin.QueryRow(ctx, `SELECT count(*) FROM pg_inherits WHERE inhparent = 'tracking.trail_fixes'::regclass`).Scan(&n); err != nil || n != 4 {
 		t.Fatalf("partitions = %d, %v", n, err)
+	}
+}
+
+// TestPartitionFunctionIsLockedDown: the SECURITY DEFINER helper runs as the
+// schema owner, so only the tracking runtime role may call it, and its
+// search_path is pinned with pg_temp last.
+func TestPartitionFunctionIsLockedDown(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	const fn = "tracking.ensure_trail_partition(date)"
+	for role, want := range map[string]bool{"svc_tracking": true, "svc_deliveries": false, "svc_gateway": false} {
+		var got bool
+		if err := e.admin.QueryRow(ctx, `SELECT has_function_privilege($1, $2, 'EXECUTE')`, role, fn).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("%s EXECUTE = %v, want %v", role, got, want)
+		}
+	}
+	var cfg []string
+	if err := e.admin.QueryRow(ctx, `SELECT proconfig FROM pg_proc WHERE oid = $1::regprocedure`, fn).Scan(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg) != 1 || cfg[0] != "search_path=tracking, extensions, pg_temp" {
+		t.Fatalf("proconfig = %v", cfg)
 	}
 }

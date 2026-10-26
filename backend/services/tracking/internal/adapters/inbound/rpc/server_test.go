@@ -35,6 +35,10 @@ const (
 	testToken = "test-only-internal-rpc-token-0123456789"
 	courierA  = "cou_01jrpc0000000000000000000a"
 	delA      = "del_01jrpc0000000000000000000a"
+	// courierB has no couriers row (its courier.upserted aged out of the
+	// stream) but is assigned to delB.
+	courierB = "cou_01jrpc0000000000000000000b"
+	delB     = "del_01jrpc0000000000000000000b"
 )
 
 type clock struct{}
@@ -97,7 +101,15 @@ func serve(t *testing.T) (trackingv1connect.TrackingServiceClient, *pgxpool.Pool
 			Dropoff: domain.LatLng{Lat: 52.37, Lng: 4.89}, CreatedAt: now}); err != nil {
 			return err
 		}
-		return svc.OnCourierAssigned(ctx, p, sc, 2, delA, courierA, now)
+		if err := svc.OnCourierAssigned(ctx, p, sc, 2, delA, courierA, now); err != nil {
+			return err
+		}
+		if err := svc.OnDeliveryCreated(ctx, p, sc, 1, app.DeliveryCreated{ID: delB, Model: domain.ModelEndToEnd,
+			Status: domain.StatusConfirmed, Pickup: domain.LatLng{Lat: 52.36, Lng: 4.9}, PickupName: "Hub",
+			Dropoff: domain.LatLng{Lat: 52.37, Lng: 4.89}, CreatedAt: now}); err != nil {
+			return err
+		}
+		return svc.OnCourierAssigned(ctx, p, sc, 2, delB, courierB, now)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -167,5 +179,18 @@ func TestIngestRPCValidates(t *testing.T) {
 	// Other RPCs are not implemented yet.
 	if _, err := c.GetPartnerView(ctx, &trackingv1.GetPartnerViewRequest{}); connect.CodeOf(err) != connect.CodeUnimplemented {
 		t.Fatalf("GetPartnerView: %v", err)
+	}
+}
+
+func TestIngestAcceptsCourierKnownOnlyFromDelivery(t *testing.T) {
+	c, _ := serve(t)
+	ctx := context.Background()
+	res, err := c.IngestLocations(ctx, req("ten_a", courierB, 2))
+	if err != nil || res.GetAccepted() != 2 {
+		t.Fatalf("courier without a couriers row: %+v %v", res, err)
+	}
+	// Still scoped: another tenant naming it is not found.
+	if _, err := c.IngestLocations(ctx, req("ten_b", courierB, 1)); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("other tenant: %v", err)
 	}
 }

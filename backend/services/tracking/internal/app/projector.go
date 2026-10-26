@@ -105,10 +105,12 @@ func (s *Service) OnStatusChanged(ctx context.Context, p Projection, sc Scope, v
 			return fmt.Errorf("active set: %w", err)
 		}
 	}
+	// The proof position is evidence: only the current courier's fixes
+	// count, never the previous courier's after a reassignment.
 	var last *domain.Fix
 	if err := s.sync(ctx, p, sc, rec, func(st *domain.State) {
 		last = nil
-		if st.LastFix != nil {
+		if st.LastFix != nil && rec.CourierID != nil && st.Courier != nil && st.Courier.ID == *rec.CourierID {
 			c := *st.LastFix
 			last = &c
 		}
@@ -119,9 +121,12 @@ func (s *Service) OnStatusChanged(ctx context.Context, p Projection, sc Scope, v
 	if !ok {
 		return nil
 	}
-	trail, err := p.RecentTrail(ctx, sc, ev.ID, ev.At.Add(-proofWindow), ev.At)
-	if err != nil {
-		return err
+	var trail []domain.Fix
+	if rec.CourierID != nil {
+		trail, err = p.RecentTrail(ctx, sc, ev.ID, *rec.CourierID, ev.At.Add(-proofWindow), ev.At)
+		if err != nil {
+			return err
+		}
 	}
 	if last != nil {
 		trail = append(trail, *last)

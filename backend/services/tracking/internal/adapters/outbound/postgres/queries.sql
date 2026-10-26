@@ -25,8 +25,12 @@ SET external_id = EXCLUDED.external_id, display_name = EXCLUDED.display_name,
 -- name: GetCourier :one
 SELECT id, external_id, display_name, vehicle, photo_url FROM couriers WHERE id = $1;
 
--- name: CourierExists :one
-SELECT EXISTS (SELECT 1 FROM couriers WHERE id = $1);
+-- name: CourierKnown :one
+-- A courier is the scope's when it has a couriers row, or when a non-final
+-- delivery of the scope is assigned to it (its courier.upserted may have aged
+-- out of the stream before tracking first read it).
+SELECT (EXISTS (SELECT 1 FROM couriers c WHERE c.id = sqlc.arg(courier_id)::text)
+    OR EXISTS (SELECT 1 FROM deliveries d WHERE d.courier_id = sqlc.arg(courier_id)::text AND d.final_at IS NULL))::bool AS known;
 
 -- name: GetDelivery :one
 SELECT id, tenant_id, environment, model, status,
@@ -68,7 +72,8 @@ FROM trail_fixes WHERE delivery_id = @delivery_id AND courier_id = @courier_id O
 
 -- name: TrailBetween :many
 SELECT t, lat, lng, accuracy_m, speed_mps, heading_deg, source
-FROM trail_fixes WHERE delivery_id = @delivery_id AND t >= @from_t AND t <= @to_t ORDER BY t, id;
+FROM trail_fixes WHERE delivery_id = @delivery_id AND courier_id = @courier_id
+  AND t >= @from_t AND t <= @to_t ORDER BY t, id;
 
 -- name: InsertProofPoint :exec
 INSERT INTO proof_points (delivery_id, status, at, actor, lat, lng, position_at, accuracy_m, tenant_id, environment)

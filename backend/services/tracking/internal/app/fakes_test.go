@@ -37,6 +37,7 @@ type fakeStates struct {
 	scope   map[string]Scope    // courier -> scope
 	beforeP func()              // runs before each Put (to simulate a racing writer)
 	puts    int
+	failPut map[string]error // delivery id -> Put error
 }
 
 func newFakeStates() *fakeStates {
@@ -63,6 +64,9 @@ func (f *fakeStates) Put(_ context.Context, st domain.State, prev int64) (bool, 
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := f.failPut[st.DeliveryID]; err != nil {
+		return false, err
+	}
 	f.puts++
 	var cur int64
 	if b, ok := f.m[st.DeliveryID]; ok {
@@ -117,14 +121,14 @@ type fakeRead struct {
 	mu       sync.Mutex
 	recs     map[string]DeliveryRecord
 	couriers map[string]domain.Courier
-	trail    map[string][]domain.Fix
+	trail    map[string][]trailFix
 	proofs   []ProofPoint
 	prep     map[string]*int
 }
 
 func newFakeRead() *fakeRead {
 	return &fakeRead{recs: map[string]DeliveryRecord{}, couriers: map[string]domain.Courier{},
-		trail: map[string][]domain.Fix{}, prep: map[string]*int{}}
+		trail: map[string][]trailFix{}, prep: map[string]*int{}}
 }
 
 func (f *fakeRead) LoadState(_ context.Context, sc Scope, id string) (domain.State, error) {
@@ -142,20 +146,33 @@ func (f *fakeRead) LoadState(_ context.Context, sc Scope, id string) (domain.Sta
 	}
 	ApplyRecord(&st, rec, c)
 	st.DefaultPrepMinutes = f.prep[sc.TenantID]
-	if tr := f.trail[id]; len(tr) > 0 {
-		l := tr[len(tr)-1]
-		st.LastFix = &l
+	for _, x := range f.trail[id] {
+		if rec.CourierID != nil && x.courier == *rec.CourierID {
+			l := x.f
+			st.LastFix = &l
+		}
 	}
 	return st, nil
 }
 
-func (f *fakeRead) RecentTrail(_ context.Context, _ Scope, id string, from, to time.Time) ([]domain.Fix, error) {
+type trailFix struct {
+	courier string
+	f       domain.Fix
+}
+
+func (f *fakeRead) addTrail(id, courier string, fx domain.Fix) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.trail[id] = append(f.trail[id], trailFix{courier, fx})
+}
+
+func (f *fakeRead) RecentTrail(_ context.Context, _ Scope, id, courier string, from, to time.Time) ([]domain.Fix, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []domain.Fix
 	for _, x := range f.trail[id] {
-		if !x.T.Before(from) && !x.T.After(to) {
-			out = append(out, x)
+		if x.courier == courier && !x.f.T.Before(from) && !x.f.T.After(to) {
+			out = append(out, x.f)
 		}
 	}
 	return out, nil
@@ -267,13 +284,17 @@ type enqueued struct {
 }
 
 type fakeEvents struct {
-	mu  sync.Mutex
-	got []enqueued
+	mu   sync.Mutex
+	got  []enqueued
+	fail error // when set, every Enqueue fails with it
 }
 
 func (f *fakeEvents) Enqueue(_ context.Context, typ, _, _ string, subj Subject, msg proto.Message) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.fail != nil {
+		return f.fail
+	}
 	f.got = append(f.got, enqueued{typ, subj, msg})
 	return nil
 }

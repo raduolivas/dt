@@ -136,7 +136,7 @@ CREATE POLICY tenant_isolation ON proof_points
 -- schema's default privileges, and carries the same forced policy, so
 -- reading the partition directly is as isolated as reading trail_fixes.
 CREATE FUNCTION ensure_trail_partition(day date) RETURNS void
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = tracking, extensions, pg_temp AS $$
 DECLARE
   part text := 'trail_fixes_' || to_char(day, 'YYYYMMDD');
 BEGIN
@@ -155,6 +155,10 @@ BEGIN
     WITH CHECK (tenant_id = current_setting('dt.tenant_id', true)
                 AND environment = current_setting('dt.environment', true))$p$, part);
 END $$;
+-- Only the runtime role may call it (functions are executable by PUBLIC by
+-- default; this one runs as the schema owner).
+REVOKE EXECUTE ON FUNCTION ensure_trail_partition(date) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ensure_trail_partition(date) TO svc_tracking;
 
 -- Transactional outbox and idempotent inbox (pkg/outbox SchemaSQL, verbatim).
 CREATE TABLE outbox (event_id text PRIMARY KEY, subject text NOT NULL, payload bytea NOT NULL,

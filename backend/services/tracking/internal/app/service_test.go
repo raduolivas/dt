@@ -459,3 +459,106 @@ func (f *fakeSettings) ActiveDeliveries(_ context.Context, s Scope) ([]string, e
 	}
 	return out, nil
 }
+
+func TestEnqueueFailureStillPublishesSnapshot(t *testing.T) {
+	f := newFixture(t)
+	f.courier(t, "cou_1")
+	f.delivery(t, "del_e", domain.ModelDirect, "cou_1", domain.StatusPickedUp)
+	f.events.fail = errors.New("postgres down")
+	n0 := len(f.pub.forDelivery("del_e"))
+	f.clock.Advance(time.Second)
+	// Within 200 m of the dropoff: the arrival event is due but cannot be enqueued.
+	acc, _, err := f.svc.Ingest(context.Background(), sc, "cou_1", []domain.Fix{fixAt(f.clock.Now(), 52.3739, 4.889)}, "relay")
+	if err != nil || acc != 1 {
+		t.Fatalf("Ingest = %d, %v", acc, err)
+	}
+	st := f.state(t, "del_e")
+	if st.LastFix == nil || !st.LastFix.T.Equal(f.clock.Now()) {
+		t.Fatalf("live position did not move: %+v", st.LastFix)
+	}
+	if st.ArrivalSent {
+		t.Fatal("ArrivalSent kept although the event was not enqueued")
+	}
+	if n := len(f.pub.forDelivery("del_e")); n != n0+1 {
+		t.Fatalf("published %d snapshots, want 1", n-n0)
+	}
+	// Postgres back: the next change enqueues the arrival, once.
+	f.events.fail = nil
+	for range 2 {
+		f.clock.Advance(time.Second)
+		if _, _, err := f.svc.Ingest(context.Background(), sc, "cou_1", []domain.Fix{fixAt(f.clock.Now(), 52.37391, 4.889)}, "relay"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := len(f.events.ofType(EventArrivalDetected)); n != 1 {
+		t.Fatalf("arrival events = %d, want 1", n)
+	}
+	if !f.state(t, "del_e").ArrivalSent {
+		t.Fatal("ArrivalSent not set after the event was enqueued")
+	}
+}
+
+func TestApplyErrorOnOneDeliveryKeepsOthers(t *testing.T) {
+	f := newFixture(t)
+	f.courier(t, "cou_1")
+	f.delivery(t, "del_ok", domain.ModelEndToEnd, "cou_1", domain.StatusPickedUp)
+	f.delivery(t, "del_bad", domain.ModelEndToEnd, "cou_1", domain.StatusPickedUp)
+	f.states.failPut = map[string]error{"del_bad": errors.New("redis hiccup")}
+	f.clock.Advance(time.Second)
+	acc, drop, err := f.svc.Ingest(context.Background(), sc, "cou_1", []domain.Fix{fixAt(f.clock.Now(), 52.369, 4.9)}, "relay")
+	if err != nil || acc != 1 || drop != 0 {
+		t.Fatalf("Ingest = %d,%d,%v want 1,0,nil", acc, drop, err)
+	}
+	if st := f.state(t, "del_ok"); st.LastFix == nil {
+		t.Fatal("the healthy delivery lost its fix")
+	}
+	if rows := f.trail.forDelivery("del_ok"); len(rows) != 1 {
+		t.Fatalf("healthy delivery trail rows = %d", len(rows))
+	}
+	// Every delivery failing is an error the caller sees.
+	f.states.failPut["del_ok"] = errors.New("redis down")
+	f.clock.Advance(time.Second)
+	if _, _, err := f.svc.Ingest(context.Background(), sc, "cou_1", []domain.Fix{fixAt(f.clock.Now(), 52.3691, 4.9)}, "relay"); err == nil {
+		t.Fatal("all deliveries failed but Ingest returned nil")
+	}
+}
+
+func TestProofPointIgnoresPreviousCourierFixes(t *testing.T) {
+	f := newFixture(t)
+	f.courier(t, "cou_old")
+	f.courier(t, "cou_new")
+	f.delivery(t, "del_pp", domain.ModelEndToEnd, "cou_old", domain.StatusCourierAssigned)
+	f.clock.Advance(time.Second)
+	if _, _, err := f.svc.Ingest(context.Background(), sc, "cou_old", []domain.Fix{fixAt(f.clock.Now(), 52.368, 4.903)}, "relay"); err != nil {
+		t.Fatal(err)
+	}
+	// The old courier's fix reached the stored trail.
+	f.read.addTrail("del_pp", "cou_old", fixAt(f.clock.Now(), 52.368, 4.903))
+	f.clock.Advance(10 * time.Second)
+	nextVersion++
+	if err := f.svc.OnCourierAssigned(context.Background(), f.read, sc, nextVersion, "del_pp", "cou_new", f.clock.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// Within 2 minutes of the old fix, the new courier reaches the pickup
+	// without having sent a fix: the proof point has no position.
+	f.clock.Advance(10 * time.Second)
+	f.status(t, "del_pp", domain.StatusCourierAssigned, domain.StatusAtPickup)
+	for _, p := range f.read.proofs {
+		if p.DeliveryID == "del_pp" && p.Status == "at_pickup" && p.Fix != nil {
+			t.Fatalf("proof point used the previous courier's fix: %+v", p.Fix)
+		}
+	}
+	// The new courier's own fix is used.
+	f.read.addTrail("del_pp", "cou_new", fixAt(f.clock.Now(), 52.3681, 4.9031))
+	f.clock.Advance(5 * time.Second)
+	f.status(t, "del_pp", domain.StatusAtPickup, domain.StatusPickedUp)
+	var got *ProofPoint
+	for i, p := range f.read.proofs {
+		if p.DeliveryID == "del_pp" && p.Status == "pickup_confirmed" {
+			got = &f.read.proofs[i]
+		}
+	}
+	if got == nil || got.Fix == nil || got.Fix.Pos.Lat != 52.3681 {
+		t.Fatalf("pickup_confirmed proof = %+v", got)
+	}
+}

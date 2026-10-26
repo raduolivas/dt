@@ -57,8 +57,9 @@ type ReadModel interface {
 	// LoadState rebuilds a delivery's state from Postgres and its latest
 	// trail fix; ErrNotFound when the delivery is unknown in the scope.
 	LoadState(ctx context.Context, s Scope, deliveryID string) (domain.State, error)
-	// RecentTrail returns the delivery's stored fixes with from <= t <= to.
-	RecentTrail(ctx context.Context, s Scope, deliveryID string, from, to time.Time) ([]domain.Fix, error)
+	// RecentTrail returns the delivery's stored fixes from courierID with
+	// from <= t <= to.
+	RecentTrail(ctx context.Context, s Scope, deliveryID, courierID string, from, to time.Time) ([]domain.Fix, error)
 }
 
 // DeliveryRecord is a delivery's row in the read model.

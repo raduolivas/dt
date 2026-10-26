@@ -14,8 +14,9 @@ import (
 // each delivery's last accepted fix, moves its live position when accepted
 // and goes to its trail unless dropped. A fix counts as accepted when at
 // least one delivery kept it. Without an active delivery every fix is
-// dropped. It returns ErrCourierNotFound when the courier is not the
-// scope's.
+// dropped. A delivery whose state cannot be updated is skipped (logged);
+// Ingest fails only when every delivery failed. It returns
+// ErrCourierNotFound when the courier is not the scope's.
 func (s *Service) Ingest(ctx context.Context, sc Scope, courierID string, fixes []domain.Fix, source string) (accepted, dropped int, err error) {
 	ids, err := s.States.ActiveDeliveriesForCourier(ctx, sc.TenantID, sc.Env, courierID)
 	if err != nil {
@@ -32,6 +33,8 @@ func (s *Service) Ingest(ctx context.Context, sc Scope, courierID string, fixes 
 
 	kept := make([]bool, len(sorted))
 	var rows []TrailRow
+	var failed []error
+	attempted := 0
 	for _, id := range ids {
 		var keptHere []bool
 		var rowsHere []TrailRow
@@ -68,8 +71,14 @@ func (s *Service) Ingest(ctx context.Context, sc Scope, courierID string, fixes 
 		if errors.Is(err, ErrNotFound) {
 			continue
 		}
+		attempted++
 		if err != nil {
-			return 0, 0, err
+			// One delivery's failure must not cost the others their fixes:
+			// skip it (its fixes count as dropped unless another delivery
+			// kept them) and go on.
+			s.log().WarnContext(ctx, "ingest_delivery_failed", "delivery_id", id, "courier_id", courierID, "error", err)
+			failed = append(failed, err)
+			continue
 		}
 		for i, k := range keptHere {
 			kept[i] = kept[i] || k
@@ -86,6 +95,10 @@ func (s *Service) Ingest(ctx context.Context, sc Scope, courierID string, fixes 
 	}
 	if accepted > 0 {
 		s.reportLocation(ctx, sc, courierID, accepted)
+	}
+	if len(failed) > 0 && len(failed) == attempted {
+		// Nothing could be applied anywhere: report the outage.
+		return 0, 0, errors.Join(failed...)
 	}
 	return accepted, len(fixes) - accepted, nil
 }

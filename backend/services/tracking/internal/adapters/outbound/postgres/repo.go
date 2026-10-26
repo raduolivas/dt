@@ -88,26 +88,27 @@ func (r *Repo) LoadState(ctx context.Context, s app.Scope, id string) (domain.St
 	return st, err
 }
 
-// RecentTrail returns the delivery's fixes with from <= t <= to.
-func (r *Repo) RecentTrail(ctx context.Context, s app.Scope, id string, from, to time.Time) ([]domain.Fix, error) {
+// RecentTrail returns the delivery's fixes from courierID with from <= t <= to.
+func (r *Repo) RecentTrail(ctx context.Context, s app.Scope, id, courierID string, from, to time.Time) ([]domain.Fix, error) {
 	var out []domain.Fix
 	err := r.inTenant(ctx, s, func(q *db.Queries) error {
 		var err error
-		out, err = trailBetween(ctx, q, id, from, to)
+		out, err = trailBetween(ctx, q, id, courierID, from, to)
 		return err
 	})
 	return out, err
 }
 
 // CourierActiveDeliveries returns the courier's non-final deliveries in s,
-// or app.ErrCourierNotFound when the courier is not s's. It is the state
-// store's source when its cached set is missing.
+// or app.ErrCourierNotFound when the courier is not s's: it has neither a
+// couriers row nor a non-final delivery in s. It is the state store's
+// source when its cached set is missing.
 func (r *Repo) CourierActiveDeliveries(ctx context.Context, s app.Scope, courierID string) ([]string, error) {
 	var ids []string
 	err := r.inTenant(ctx, s, func(q *db.Queries) error {
-		ok, err := q.CourierExists(ctx, courierID)
+		ok, err := q.CourierKnown(ctx, courierID)
 		if err != nil {
-			return fmt.Errorf("courier exists: %w", err)
+			return fmt.Errorf("courier known: %w", err)
 		}
 		if !ok {
 			return app.ErrCourierNotFound
@@ -282,8 +283,8 @@ func loadState(ctx context.Context, q *db.Queries, id string) (domain.State, err
 	return st, nil
 }
 
-func trailBetween(ctx context.Context, q *db.Queries, id string, from, to time.Time) ([]domain.Fix, error) {
-	rows, err := q.TrailBetween(ctx, db.TrailBetweenParams{DeliveryID: id, FromT: from, ToT: to})
+func trailBetween(ctx context.Context, q *db.Queries, id, courierID string, from, to time.Time) ([]domain.Fix, error) {
+	rows, err := q.TrailBetween(ctx, db.TrailBetweenParams{DeliveryID: id, CourierID: courierID, FromT: from, ToT: to})
 	if err != nil {
 		return nil, fmt.Errorf("trail: %w", err)
 	}
@@ -314,8 +315,8 @@ func (p *Projection) LoadState(ctx context.Context, s app.Scope, id string) (dom
 }
 
 // RecentTrail implements app.ReadModel within the transaction.
-func (p *Projection) RecentTrail(ctx context.Context, _ app.Scope, id string, from, to time.Time) ([]domain.Fix, error) {
-	return trailBetween(ctx, p.q, id, from, to)
+func (p *Projection) RecentTrail(ctx context.Context, _ app.Scope, id, courierID string, from, to time.Time) ([]domain.Fix, error) {
+	return trailBetween(ctx, p.q, id, courierID, from, to)
 }
 
 // Delivery returns the delivery's record, locked FOR UPDATE.

@@ -77,6 +77,9 @@ func (s *Service) ApplyWith(ctx context.Context, reads ReadModel, sc Scope, deli
 type pendingEvent struct {
 	typ string
 	msg proto.Message
+	// undo reverts the event's bookkeeping in the state, so an event that
+	// could not be enqueued is due again on the next Apply.
+	undo func(*domain.State)
 }
 
 func (s *Service) applyOnce(ctx context.Context, reads ReadModel, sc Scope, id string, mutate func(*domain.State) error) (bool, error) {
@@ -121,12 +124,15 @@ func (s *Service) applyOnce(ctx context.Context, reads ReadModel, sc Scope, id s
 	}
 	events := dueEvents(&st, now)
 
-	// Events are enqueued before the store so a failure retries them; a
-	// version conflict after that can only duplicate one (consumers are
-	// idempotent on the effect: deliveries ignores a repeated arriving).
+	// Events are enqueued before the store, so a version conflict can at
+	// most duplicate one (deliveries ignores a repeated arriving). The
+	// outbox is Postgres, which must never hold up the viewer path: an
+	// event that cannot be enqueued has its bookkeeping undone and is due
+	// again on the next Apply, while the state is stored and published.
 	for _, e := range events {
 		if err := s.Events.Enqueue(ctx, e.typ, st.TenantID, st.Env, Subject{DeliveryID: id}, e.msg); err != nil {
-			return false, fmt.Errorf("enqueue %s: %w", e.typ, err)
+			e.undo(&st)
+			s.log().WarnContext(ctx, "tracking_event_enqueue_failed", "delivery_id", id, "event_type", e.typ, "error", err)
 		}
 	}
 	stored, err := s.States.Put(ctx, st, prevVersion)
@@ -169,10 +175,11 @@ func dueEvents(st *domain.State, now time.Time) []pendingEvent {
 	st.EtaSeconds, st.EtaState, st.EtaComputedAt = eta, es, now
 	if eta != nil && etaEventDue(st, *eta, now) {
 		v := *eta
+		prevSec, prevAt := st.LastEtaEventSec, st.LastEtaEventAt
 		st.LastEtaEventSec, st.LastEtaEventAt = &v, now
 		out = append(out, pendingEvent{EventEtaChanged, &eventsv1.EtaChanged{
 			DeliveryId: st.DeliveryID, EtaSeconds: toInt32(v), EtaState: string(es), At: timestamppb.New(now),
-		}})
+		}, func(st *domain.State) { st.LastEtaEventSec, st.LastEtaEventAt = prevSec, prevAt }})
 	}
 	if domain.ArrivalDue(*st, now) {
 		st.ArrivalSent = true
@@ -183,7 +190,7 @@ func dueEvents(st *domain.State, now time.Time) []pendingEvent {
 		if eta != nil {
 			ev.EtaSeconds = toInt32(*eta)
 		}
-		out = append(out, pendingEvent{EventArrivalDetected, ev})
+		out = append(out, pendingEvent{EventArrivalDetected, ev, func(st *domain.State) { st.ArrivalSent = false }})
 	}
 	return out
 }
