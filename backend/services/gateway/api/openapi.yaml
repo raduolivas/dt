@@ -885,7 +885,7 @@ paths:
           type: integer
           minimum: 1
           maximum: 1000
-          default: 100
+          default: 500
       - name: starting_after
         in: query
         description: The `next_cursor` of the previous page.
@@ -1706,7 +1706,7 @@ components:
             now. Drives the ETA before pickup; without it the tenant's default preparation time applies.
     UpdateDeliveryRequest:
       type: object
-      description: Only the fields sent change. `null` clears `dropoff_label`, `notes` and `metadata`; the
+      description: Only the fields sent change. `null` clears `dropoff_label`, `notes`, `metadata` and `ready_at`; the
         dropoff location cannot be cleared.
       additionalProperties: false
       minProperties: 1
@@ -2499,7 +2499,7 @@ components:
               description: Seconds of simulated time after the start.
             duration_s:
               type: integer
-              minimum: 1
+              minimum: 0
               maximum: 3600
     SimulationStarted:
       type: object

@@ -815,7 +815,7 @@ type ListTrailRequest struct {
 	Scope         *Scope                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
 	DeliveryId    string                 `protobuf:"bytes,2,opt,name=delivery_id,json=deliveryId,proto3" json:"delivery_id,omitempty"`
 	StartingAfter string                 `protobuf:"bytes,3,opt,name=starting_after,json=startingAfter,proto3" json:"starting_after,omitempty"` // opaque cursor from the previous page
-	Limit         int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`                                     // 0 = default 100; max 1000
+	Limit         int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`                                     // 0 = default 500; max 1000
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

@@ -1026,7 +1026,7 @@ type TrailPage struct {
 	Simplified *[]LatLngPair `json:"simplified"`
 }
 
-// UpdateDeliveryRequest Only the fields sent change. `null` clears `dropoff_label`, `notes` and `metadata`; the dropoff location cannot be cleared.
+// UpdateDeliveryRequest Only the fields sent change. `null` clears `dropoff_label`, `notes`, `metadata` and `ready_at`; the dropoff location cannot be cleared.
 type UpdateDeliveryRequest struct {
 	Dropoff *struct {
 		// Location WGS84 coordinate.

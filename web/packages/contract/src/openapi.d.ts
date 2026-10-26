@@ -535,7 +535,7 @@ export interface components {
              */
             ready_at?: string;
         };
-        /** @description Only the fields sent change. `null` clears `dropoff_label`, `notes` and `metadata`; the dropoff location cannot be cleared. */
+        /** @description Only the fields sent change. `null` clears `dropoff_label`, `notes`, `metadata` and `ready_at`; the dropoff location cannot be cleared. */
         UpdateDeliveryRequest: {
             dropoff?: {
                 location: components["schemas"]["LatLng"];
