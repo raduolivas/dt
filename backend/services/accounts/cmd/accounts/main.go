@@ -44,7 +44,13 @@ func run(ctx context.Context) error {
 		return errors.New("accounts: config: INTERNAL_RPC_TOKEN must be at least 32 bytes")
 	}
 
+	serverTLS, err := rpcauth.ServerTLSFromEnv("INTERNAL_RPC")
+	if err != nil {
+		return fmt.Errorf("accounts: config: %w", err)
+	}
+
 	return bootstrap.Run(ctx, bootstrap.Options{
+		TLS:        serverTLS,
 		Name:       "accounts",
 		Needs:      bootstrap.Needs{NATS: true},
 		Migrations: migrations.FS,

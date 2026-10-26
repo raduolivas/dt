@@ -8,6 +8,9 @@ x-service: &service
   depends_on:
     postgres:
       condition: service_healthy
+  # Dev mTLS material from scripts/dev-certs.sh (make dev runs it).
+  volumes:
+    - ./certs:/certs:ro
 
 services:
   postgres:
@@ -84,7 +87,11 @@ services:
       APIKEY_PEPPER: "ZGV2LW9ubHktbm90LWEtc2VjcmV0LXBlcHBlci0wMDAwMDAwMDAwMDA=" # gitleaks:allow (dev-only placeholder)
       # CIDRs of proxies whose X-Forwarded-For hops count; empty: none.
       TRUSTED_PROXIES: ""
-      DELIVERIES_RPC_URL: "http://deliveries:8081"
+      DELIVERIES_RPC_URL: "https://deliveries:8081"
+      # Internal RPC over mTLS (dev certs from scripts/dev-certs.sh).
+      INTERNAL_RPC_TLS_CERT: /certs/gateway.pem
+      INTERNAL_RPC_TLS_KEY: /certs/gateway.key
+      INTERNAL_RPC_TLS_CA: /certs/ca.pem
       # Dev-only placeholder, never a real secret: the same value as deliveries'.
       INTERNAL_RPC_TOKEN: "dev-only-not-a-secret-internal-token-0000"
       # Dev-only placeholder, never a real secret: seals stored idempotency
@@ -112,6 +119,10 @@ services:
       DATABASE_URL: "postgres://svc_deliveries:svc_deliveries@postgres:5432/dt?sslmode=disable"
       MIGRATIONS_DATABASE_URL: "postgres://mig_deliveries:mig_deliveries@postgres:5432/dt?sslmode=disable"
       NATS_URL: "nats://nats:4222"
+      # Internal RPC over mTLS (dev certs from scripts/dev-certs.sh).
+      INTERNAL_RPC_TLS_CERT: /certs/deliveries.pem
+      INTERNAL_RPC_TLS_KEY: /certs/deliveries.key
+      INTERNAL_RPC_TLS_CA: /certs/ca.pem
       # Dev-only placeholders, never real secrets. DATA_KEYS holds one key
       # (id "dev1") that is base64 of "dev-only-not-a-secret-data-key-0".
       INTERNAL_RPC_TOKEN: "dev-only-not-a-secret-internal-token-0000"
@@ -168,6 +179,10 @@ services:
       # Dev-only placeholders, never real secrets. APIKEY_PEPPER is base64 of
       # "dev-only-not-a-secret-pepper-000000000000" and must match the gateway's.
       APIKEY_PEPPER: "ZGV2LW9ubHktbm90LWEtc2VjcmV0LXBlcHBlci0wMDAwMDAwMDAwMDA=" # gitleaks:allow (dev-only placeholder)
+      # Internal RPC over mTLS (dev certs from scripts/dev-certs.sh).
+      INTERNAL_RPC_TLS_CERT: /certs/accounts.pem
+      INTERNAL_RPC_TLS_KEY: /certs/accounts.key
+      INTERNAL_RPC_TLS_CA: /certs/ca.pem
       INTERNAL_RPC_TOKEN: "dev-only-not-a-secret-internal-token-0000"
     ports:
       - "127.0.0.1:8084:8084"

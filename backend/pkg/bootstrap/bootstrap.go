@@ -6,6 +6,7 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -35,6 +36,10 @@ const readyTimeout = 2 * time.Second
 // readyTimeout so the check reports (and is ignored) before the probe gives
 // up on it and counts it as failing.
 const nonFatalCheckTimeout = 500 * time.Millisecond
+
+// NATSDrainTimeout bounds how long shutdown waits for NATS subscriptions to
+// finish their in-flight messages before the connection is closed anyway.
+const NATSDrainTimeout = 10 * time.Second
 
 // Config is read from the environment.
 type Config struct {
@@ -86,6 +91,12 @@ type Options struct {
 	// Checks are extra /readyz checks, by name. They run alongside the
 	// built-in ones; /livez is unaffected.
 	Checks map[string]httpx.Check
+	// PublicEndpoint marks the HTTP listener as reachable by untrusted callers
+	// (the gateway): incoming trace context is linked, not continued.
+	PublicEndpoint bool
+	// TLS, when set, makes the service serve HTTPS with it (internal RPC
+	// services pass rpcauth.ServerTLSFromEnv). Nil serves plain HTTP.
+	TLS *tls.Config
 	// Ready is a test hook called with the bound address once listening.
 	Ready func(addr string)
 }
@@ -183,11 +194,12 @@ func Run(ctx context.Context, opts Options) (err error) {
 		checks["redis"] = ping
 	}
 	if opts.Needs.NATS {
-		nc, err := nats.Connect(cfg.NATSURL, nats.Name(opts.Name), nats.Timeout(5*time.Second))
+		nc, err := nats.Connect(cfg.NATSURL, nats.Name(opts.Name), nats.Timeout(5*time.Second),
+			nats.DrainTimeout(NATSDrainTimeout))
 		if err != nil {
 			return fmt.Errorf("%s: nats: connect failed", opts.Name)
 		}
-		defer func() { _ = nc.Drain() }() // runs after workers stop
+		defer drainNATS(nc) // runs after workers stop
 		deps.JS, err = jetstream.New(nc)
 		if err != nil {
 			return fmt.Errorf("%s: nats: jetstream: %w", opts.Name, err)
@@ -217,13 +229,20 @@ func Run(ctx context.Context, opts Options) (err error) {
 			return fmt.Errorf("%s: setup: %w", opts.Name, err)
 		}
 	}
-	handler := httpx.RequestID(httpx.AccessLog(log)(httpx.Recover(log)(otelx.HTTP(mux, opts.Name))))
+	var traceOpts []otelx.Option
+	if opts.PublicEndpoint {
+		traceOpts = append(traceOpts, otelx.PublicEndpoint())
+	}
+	handler := httpx.RequestID(httpx.AccessLog(log)(httpx.Recover(log)(otelx.HTTP(mux, opts.Name, traceOpts...))))
 
 	srv, err := httpx.Listen(":"+strconv.Itoa(cfg.Port), handler, log)
 	if err != nil {
 		return fmt.Errorf("%s: listen: %w", opts.Name, err)
 	}
-	log.Info("listening", "addr", srv.Addr())
+	if opts.TLS != nil {
+		srv.UseTLS(opts.TLS)
+	}
+	log.Info("listening", "addr", srv.Addr(), "tls", opts.TLS != nil)
 	if opts.Ready != nil {
 		opts.Ready(srv.Addr())
 	}
@@ -234,4 +253,19 @@ func Run(ctx context.Context, opts Options) (err error) {
 		g.Go(func() error { return w(gctx) })
 	}
 	return g.Wait()
+}
+
+// drainNATS drains nc and waits for it to close, but for no longer than
+// NATSDrainTimeout (plus a little): a handler that never returns would
+// otherwise keep the process from exiting. The connection is closed either way.
+func drainNATS(nc *nats.Conn) {
+	if err := nc.Drain(); err != nil {
+		nc.Close()
+		return
+	}
+	deadline := time.Now().Add(NATSDrainTimeout)
+	for !nc.IsClosed() && time.Now().Before(deadline) {
+		time.Sleep(25 * time.Millisecond)
+	}
+	nc.Close()
 }

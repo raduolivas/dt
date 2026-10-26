@@ -68,17 +68,31 @@ func clientAddr(r *http.Request, trusted []netip.Prefix) netip.Addr {
 		hops = append(hops, strings.Split(v, ",")...)
 	}
 	for _, hop := range slices.Backward(hops) {
-		hop = strings.TrimSpace(hop)
-		addr, err := netip.ParseAddr(hop)
-		if err != nil {
+		addr, ok := ParseForwardedHop(hop)
+		if !ok {
 			return netip.Addr{}
 		}
-		ip = addr.Unmap()
+		ip = addr
 		if !isTrusted(ip, trusted) {
 			return ip
 		}
 	}
 	return ip
+}
+
+// ParseForwardedHop parses one X-Forwarded-For hop: "ip", "ip:port" or
+// "[ipv6]:port" (some proxies and load balancers append the client port). The
+// port is dropped and IPv4-mapped IPv6 addresses are unmapped. Anything else
+// reports false.
+func ParseForwardedHop(s string) (netip.Addr, bool) {
+	s = strings.TrimSpace(s)
+	if ap, err := netip.ParseAddrPort(s); err == nil {
+		return ap.Addr().Unmap(), true
+	}
+	if a, err := netip.ParseAddr(s); err == nil {
+		return a.Unmap(), true
+	}
+	return netip.Addr{}, false
 }
 
 func peerAddr(remote string) netip.Addr {

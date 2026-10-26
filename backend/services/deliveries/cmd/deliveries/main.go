@@ -52,7 +52,13 @@ func run(ctx context.Context) error {
 	// js is set by Setup; the accounts_stream check reads it per probe.
 	var js atomic.Pointer[jetstream.JetStream]
 
+	serverTLS, err := rpcauth.ServerTLSFromEnv("INTERNAL_RPC")
+	if err != nil {
+		return fmt.Errorf("deliveries: config: %w", err)
+	}
+
 	return bootstrap.Run(ctx, bootstrap.Options{
+		TLS:        serverTLS,
 		Name:       "deliveries",
 		Needs:      bootstrap.Needs{NATS: true},
 		Migrations: migrations.FS,

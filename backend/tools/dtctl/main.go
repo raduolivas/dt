@@ -6,6 +6,7 @@
 //
 //	DT_ACCOUNTS_URL        accounts base URL (default http://127.0.0.1:8084)
 //	DT_INTERNAL_RPC_TOKEN  the accounts INTERNAL_RPC_TOKEN (required)
+//	DT_INTERNAL_RPC_TLS_CERT, _KEY, _CA  client certificate files for mTLS (all or none)
 //
 // A key's plaintext secret is printed once on stdout and nowhere else; all
 // other output goes to stderr, except the data a command is asked for
@@ -42,7 +43,8 @@ const usage = `usage:
   dtctl key revoke    --tenant ID --key ID
   dtctl key list      --tenant ID --env test|live
 
-env: DT_ACCOUNTS_URL (default http://127.0.0.1:8084), DT_INTERNAL_RPC_TOKEN (required)
+env: DT_ACCOUNTS_URL (default http://127.0.0.1:8084), DT_INTERNAL_RPC_TOKEN (required),
+     DT_INTERNAL_RPC_TLS_CERT, DT_INTERNAL_RPC_TLS_KEY, DT_INTERNAL_RPC_TLS_CA (mTLS; use an https URL)
 `
 
 // actor is who dtctl acts as: the dev owner of every tenant.
@@ -231,7 +233,16 @@ func newClient() (accountsv1connect.AccountsServiceClient, error) {
 	if base == "" {
 		base = "http://127.0.0.1:8084"
 	}
-	hc := bearer{c: &http.Client{Timeout: 15 * time.Second}, value: "Bearer " + token}
+	// DT_INTERNAL_RPC_TLS_CERT/_KEY/_CA select mTLS (then the URL is https).
+	tlsCfg, err := rpcauth.ClientTLSFromEnv("DT_INTERNAL_RPC")
+	if err != nil {
+		return nil, err
+	}
+	c := &http.Client{Timeout: 15 * time.Second}
+	if tlsCfg != nil {
+		c.Transport = &http.Transport{TLSClientConfig: tlsCfg}
+	}
+	hc := bearer{c: c, value: "Bearer " + token}
 	return accountsv1connect.NewAccountsServiceClient(connect.NewClient(connecthttp.NewTransport(hc, base))), nil
 }
 

@@ -56,8 +56,25 @@ func Init(ctx context.Context, service string) (func(context.Context) error, err
 // can carry ids) never become span names. otelhttp (>= v0.6x) re-applies the
 // formatter after the handler returns, when the mux has set r.Pattern, so the
 // formatter alone does the renaming.
-func HTTP(h http.Handler, service string) http.Handler {
-	return otelhttp.NewHandler(h, service, otelhttp.WithSpanNameFormatter(spanName))
+//
+// Behind a public listener pass PublicEndpoint: the caller is not trusted.
+func HTTP(h http.Handler, service string, opts ...Option) http.Handler {
+	o := []otelhttp.Option{otelhttp.WithSpanNameFormatter(spanName)}
+	for _, opt := range opts {
+		o = append(o, opt.o...)
+	}
+	return otelhttp.NewHandler(h, service, o...)
+}
+
+// Option customises HTTP.
+type Option struct{ o []otelhttp.Option }
+
+// PublicEndpoint marks the server as reachable by untrusted callers: an
+// incoming traceparent no longer becomes the span's parent (a caller could
+// otherwise pick the trace id and force sampling); it is kept as a link and
+// every request starts a new trace.
+func PublicEndpoint() Option {
+	return Option{o: []otelhttp.Option{otelhttp.WithPublicEndpointFn(func(*http.Request) bool { return true })}}
 }
 
 func spanName(_ string, r *http.Request) string {

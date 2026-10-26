@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+	"go.opentelemetry.io/otel"
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/connecthttp"
@@ -65,7 +67,11 @@ func run(ctx context.Context, ready func(addr string)) error {
 		return fmt.Errorf("gateway: config: DATA_KEYS/DATA_KEY_CURRENT: %w", err)
 	}
 
-	deliveries, err := newDeliveriesClient(os.Getenv("DELIVERIES_RPC_URL"), os.Getenv("INTERNAL_RPC_TOKEN"))
+	clientTLS, err := rpcauth.ClientTLSFromEnv("INTERNAL_RPC")
+	if err != nil {
+		return fmt.Errorf("gateway: config: %w", err)
+	}
+	deliveries, err := newDeliveriesClient(os.Getenv("DELIVERIES_RPC_URL"), os.Getenv("INTERNAL_RPC_TOKEN"), clientTLS)
 	if err != nil {
 		return fmt.Errorf("gateway: config: %w", err)
 	}
@@ -75,6 +81,8 @@ func run(ctx context.Context, ready func(addr string)) error {
 
 	return bootstrap.Run(ctx, bootstrap.Options{
 		Name: "gateway",
+		// The public API: callers' trace ids are linked, never continued.
+		PublicEndpoint: true,
 		// Redis is non-fatal for /readyz: the limiter fails open without it
 		// (R21), so an outage must not drain the replicas.
 		Needs:      bootstrap.Needs{Redis: true, RedisNonFatal: true, NATS: true},
@@ -112,9 +120,17 @@ func run(ctx context.Context, ready func(addr string)) error {
 				}
 				return outbox.Consume(ctx, d.JS, d.DB, d.Log, consumer.APIKeysStream, consumer.APIKeysConfig, consumer.APIKeys(keys))
 			}
+			lag, err := consumer.NewLagMonitor(otel.Meter("github.com/raduolivas/dt/backend/services/gateway"),
+				d.Log, consumer.APIKeysConfig.Durable)
+			if err != nil {
+				return nil, err
+			}
+			watchLag := func(ctx context.Context) error {
+				return lag.Run(ctx, d.JS, consumer.APIKeysStream)
+			}
 			sweeper := &app.IdempotencySweeper{Store: idem, Clock: clock, Log: d.Log}
 			retention := &app.AuditRetention{Store: audit, Clock: clock, Log: d.Log}
-			return []bootstrap.Worker{consume, sweeper.Run, retention.Run}, nil
+			return []bootstrap.Worker{consume, watchLag, sweeper.Run, retention.Run}, nil
 		},
 	})
 }
@@ -123,17 +139,25 @@ func run(ctx context.Context, ready func(addr string)) error {
 const deliveriesCallTimeout = 5 * time.Second
 
 // newDeliveriesClient builds the deliveries RPC client. Errors never echo the
-// token.
-func newDeliveriesClient(baseURL, token string) (deliveriesv1connect.DeliveriesServiceClient, error) {
+// token. With a TLS config the URL must be https and the client presents its
+// certificate (mTLS); without one it must be plain http.
+func newDeliveriesClient(baseURL, token string, tlsCfg *tls.Config) (deliveriesv1connect.DeliveriesServiceClient, error) {
 	u, err := url.Parse(baseURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, errors.New("DELIVERIES_RPC_URL must be an http(s) URL")
+	}
+	if tlsCfg != nil && u.Scheme != "https" {
+		return nil, errors.New("DELIVERIES_RPC_URL must be https when INTERNAL_RPC_TLS_* is set")
 	}
 	auth, err := rpcauth.NewClientInterceptor(token)
 	if err != nil {
 		return nil, fmt.Errorf("INTERNAL_RPC_TOKEN: %w", err)
 	}
 	hc := &http.Client{Timeout: deliveriesCallTimeout}
+	if tlsCfg != nil {
+		hc.Transport = &http.Transport{TLSClientConfig: tlsCfg, ForceAttemptHTTP2: true,
+			MaxIdleConnsPerHost: 16, IdleConnTimeout: 90 * time.Second}
+	}
 	return deliveriesv1connect.NewDeliveriesServiceClient(
 		connect.NewClient(connecthttp.NewTransport(hc, baseURL), auth)), nil
 }

@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
 	"net"
@@ -45,6 +46,9 @@ func Listen(addr string, h http.Handler, log *slog.Logger) (*Server, error) {
 		log: log,
 	}, nil
 }
+
+// UseTLS makes the server speak TLS with cfg. Call it before Serve.
+func (s *Server) UseTLS(cfg *tls.Config) { s.ln = tls.NewListener(s.ln, cfg) }
 
 // Addr is the bound address, useful when listening on port 0.
 func (s *Server) Addr() string { return s.ln.Addr().String() }

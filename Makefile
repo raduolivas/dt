@@ -88,10 +88,17 @@ COMPOSE := docker compose -f infra/compose/compose.yaml $(if $(COMPOSE_OVERRIDE)
 # dtctl talks to the local accounts service with the dev-only token from
 # infra/compose/compose.yaml.
 DTCTL := backend/bin/dtctl
-export DT_ACCOUNTS_URL ?= http://127.0.0.1:8084
+# The internal RPC servers need a client certificate (mTLS): dtctl uses the
+# dev one that scripts/dev-certs.sh writes.
+CERTS := $(CURDIR)/infra/compose/certs
+export DT_ACCOUNTS_URL ?= https://127.0.0.1:8084
 export DT_INTERNAL_RPC_TOKEN ?= dev-only-not-a-secret-internal-token-0000
+export DT_INTERNAL_RPC_TLS_CERT ?= $(CERTS)/dtctl.pem
+export DT_INTERNAL_RPC_TLS_KEY ?= $(CERTS)/dtctl.key
+export DT_INTERNAL_RPC_TLS_CA ?= $(CERTS)/ca.pem
 
 dev: ## Build and start the local stack, then wait until every service is ready
+	scripts/dev-certs.sh
 	$(COMPOSE) up --build -d
 	scripts/wait-ready.sh
 
