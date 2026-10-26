@@ -3,11 +3,11 @@ module github.com/raduolivas/dt/backend/pkg
 go 1.27.3
 
 require (
-	connectrpc.com/connect/v2 v2.0.1
+	connectrpc.com/connect/v2 v2.0.2
 	github.com/caarlos0/env/v11 v11.4.1
 	github.com/golang-migrate/migrate/v4 v4.20.1
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/nats-io/nats.go v1.54.0
+	github.com/nats-io/nats.go v1.55.0
 	github.com/oklog/ulid/v2 v2.1.2
 	github.com/raduolivas/dt/backend/gen v0.0.0
 	github.com/redis/go-redis/v9 v9.23.0
