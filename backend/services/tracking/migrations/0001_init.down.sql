@@ -1,0 +1,9 @@
+DROP TABLE inbox;
+DROP TABLE outbox;
+DROP FUNCTION ensure_trail_partition(date);
+DROP TABLE proof_points;
+DROP TABLE simplified_routes;
+DROP TABLE trail_fixes;
+DROP TABLE deliveries;
+DROP TABLE couriers;
+DROP TABLE tenant_settings;

@@ -133,17 +133,36 @@ services:
 
   tracking:
     <<: *service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
     build:
       context: ../../backend
       args:
         SERVICE: tracking
     environment:
+      # PORT serves health (and, later, the public viewer endpoints): plain
+      # HTTP. The internal RPC API has its own mTLS port, INTERNAL_RPC_PORT.
       PORT: "8082"
+      INTERNAL_RPC_PORT: "8085"
       LOG_LEVEL: info
       DATABASE_URL: "postgres://svc_tracking:svc_tracking@postgres:5432/dt?sslmode=disable"
       MIGRATIONS_DATABASE_URL: "postgres://mig_tracking:mig_tracking@postgres:5432/dt?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      NATS_URL: "nats://nats:4222"
+      # Internal RPC over mTLS (dev certs from scripts/dev-certs.sh).
+      INTERNAL_RPC_TLS_CERT: /certs/tracking.pem
+      INTERNAL_RPC_TLS_KEY: /certs/tracking.key
+      INTERNAL_RPC_TLS_CA: /certs/ca.pem
+      # Dev-only placeholder, never a real secret: the same value as the other services'.
+      INTERNAL_RPC_TOKEN: "dev-only-not-a-secret-internal-token-0000"
     ports:
       - "127.0.0.1:8082:8082"
+      - "127.0.0.1:8085:8085"
 
   webhooks:
     <<: *service

@@ -105,3 +105,6 @@ func Simplify(points []LatLng, toleranceM float64) []LatLng {
 	}
 	return out
 }
+
+// DistanceM is the great-circle distance between a and b in metres.
+func DistanceM(a, b LatLng) float64 { return distanceM(a, b) }
