@@ -1298,6 +1298,104 @@ func (x *SimulateResponse) GetSimulationId() string {
 	return ""
 }
 
+type GetSnapshotRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Scope         *Scope                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	DeliveryId    string                 `protobuf:"bytes,2,opt,name=delivery_id,json=deliveryId,proto3" json:"delivery_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetSnapshotRequest) Reset() {
+	*x = GetSnapshotRequest{}
+	mi := &file_dt_tracking_v1_tracking_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetSnapshotRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetSnapshotRequest) ProtoMessage() {}
+
+func (x *GetSnapshotRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_dt_tracking_v1_tracking_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetSnapshotRequest.ProtoReflect.Descriptor instead.
+func (*GetSnapshotRequest) Descriptor() ([]byte, []int) {
+	return file_dt_tracking_v1_tracking_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *GetSnapshotRequest) GetScope() *Scope {
+	if x != nil {
+		return x.Scope
+	}
+	return nil
+}
+
+func (x *GetSnapshotRequest) GetDeliveryId() string {
+	if x != nil {
+		return x.DeliveryId
+	}
+	return ""
+}
+
+type GetSnapshotResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// snapshot_json is the TrackingSnapshot of the public API (OpenAPI
+	// components.schemas.TrackingSnapshot), exactly as the stream sends it.
+	SnapshotJson  []byte `protobuf:"bytes,1,opt,name=snapshot_json,json=snapshotJson,proto3" json:"snapshot_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetSnapshotResponse) Reset() {
+	*x = GetSnapshotResponse{}
+	mi := &file_dt_tracking_v1_tracking_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetSnapshotResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetSnapshotResponse) ProtoMessage() {}
+
+func (x *GetSnapshotResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_dt_tracking_v1_tracking_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetSnapshotResponse.ProtoReflect.Descriptor instead.
+func (*GetSnapshotResponse) Descriptor() ([]byte, []int) {
+	return file_dt_tracking_v1_tracking_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *GetSnapshotResponse) GetSnapshotJson() []byte {
+	if x != nil {
+		return x.SnapshotJson
+	}
+	return nil
+}
+
 var File_dt_tracking_v1_tracking_proto protoreflect.FileDescriptor
 
 const file_dt_tracking_v1_tracking_proto_rawDesc = "" +
@@ -1439,13 +1537,20 @@ const file_dt_tracking_v1_tracking_proto_rawDesc = "" +
 	"\fspeed_factor\x18\x03 \x01(\x01R\vspeedFactor\x12+\n" +
 	"\x03gap\x18\x04 \x01(\v2\x19.dt.tracking.v1.SignalGapR\x03gap\"7\n" +
 	"\x10SimulateResponse\x12#\n" +
-	"\rsimulation_id\x18\x01 \x01(\tR\fsimulationId2\xaa\x03\n" +
+	"\rsimulation_id\x18\x01 \x01(\tR\fsimulationId\"b\n" +
+	"\x12GetSnapshotRequest\x12+\n" +
+	"\x05scope\x18\x01 \x01(\v2\x15.dt.tracking.v1.ScopeR\x05scope\x12\x1f\n" +
+	"\vdelivery_id\x18\x02 \x01(\tR\n" +
+	"deliveryId\":\n" +
+	"\x13GetSnapshotResponse\x12#\n" +
+	"\rsnapshot_json\x18\x01 \x01(\fR\fsnapshotJson2\x82\x04\n" +
 	"\x0fTrackingService\x12P\n" +
 	"\x0fIngestLocations\x12\x1d.dt.tracking.v1.IngestRequest\x1a\x1e.dt.tracking.v1.IngestResponse\x12T\n" +
 	"\x0eGetPartnerView\x12%.dt.tracking.v1.GetPartnerViewRequest\x1a\x1b.dt.tracking.v1.PartnerView\x12H\n" +
 	"\tListTrail\x12 .dt.tracking.v1.ListTrailRequest\x1a\x19.dt.tracking.v1.TrailPage\x12V\n" +
 	"\x0fListProofPoints\x12&.dt.tracking.v1.ListProofPointsRequest\x1a\x1b.dt.tracking.v1.ProofPoints\x12M\n" +
-	"\bSimulate\x12\x1f.dt.tracking.v1.SimulateRequest\x1a .dt.tracking.v1.SimulateResponseB\xbd\x01\n" +
+	"\bSimulate\x12\x1f.dt.tracking.v1.SimulateRequest\x1a .dt.tracking.v1.SimulateResponse\x12V\n" +
+	"\vGetSnapshot\x12\".dt.tracking.v1.GetSnapshotRequest\x1a#.dt.tracking.v1.GetSnapshotResponseB\xbd\x01\n" +
 	"\x12com.dt.tracking.v1B\rTrackingProtoP\x01Z>github.com/raduolivas/dt/backend/gen/dt/tracking/v1;trackingv1\xa2\x02\x03DTX\xaa\x02\x0eDt.Tracking.V1\xca\x02\x0eDt\\Tracking\\V1\xe2\x02\x1aDt\\Tracking\\V1\\GPBMetadata\xea\x02\x10Dt::Tracking::V1b\x06proto3"
 
 var (
@@ -1460,7 +1565,7 @@ func file_dt_tracking_v1_tracking_proto_rawDescGZIP() []byte {
 	return file_dt_tracking_v1_tracking_proto_rawDescData
 }
 
-var file_dt_tracking_v1_tracking_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_dt_tracking_v1_tracking_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_dt_tracking_v1_tracking_proto_goTypes = []any{
 	(*Scope)(nil),                  // 0: dt.tracking.v1.Scope
 	(*Fix)(nil),                    // 1: dt.tracking.v1.Fix
@@ -1480,53 +1585,58 @@ var file_dt_tracking_v1_tracking_proto_goTypes = []any{
 	(*SignalGap)(nil),              // 15: dt.tracking.v1.SignalGap
 	(*SimulateRequest)(nil),        // 16: dt.tracking.v1.SimulateRequest
 	(*SimulateResponse)(nil),       // 17: dt.tracking.v1.SimulateResponse
-	(v1.Environment)(0),            // 18: dt.events.v1.Environment
-	(*timestamppb.Timestamp)(nil),  // 19: google.protobuf.Timestamp
-	(*v1.LatLng)(nil),              // 20: dt.events.v1.LatLng
+	(*GetSnapshotRequest)(nil),     // 18: dt.tracking.v1.GetSnapshotRequest
+	(*GetSnapshotResponse)(nil),    // 19: dt.tracking.v1.GetSnapshotResponse
+	(v1.Environment)(0),            // 20: dt.events.v1.Environment
+	(*timestamppb.Timestamp)(nil),  // 21: google.protobuf.Timestamp
+	(*v1.LatLng)(nil),              // 22: dt.events.v1.LatLng
 }
 var file_dt_tracking_v1_tracking_proto_depIdxs = []int32{
-	18, // 0: dt.tracking.v1.Scope.environment:type_name -> dt.events.v1.Environment
-	19, // 1: dt.tracking.v1.Fix.t:type_name -> google.protobuf.Timestamp
+	20, // 0: dt.tracking.v1.Scope.environment:type_name -> dt.events.v1.Environment
+	21, // 1: dt.tracking.v1.Fix.t:type_name -> google.protobuf.Timestamp
 	0,  // 2: dt.tracking.v1.IngestRequest.scope:type_name -> dt.tracking.v1.Scope
 	1,  // 3: dt.tracking.v1.IngestRequest.fixes:type_name -> dt.tracking.v1.Fix
 	0,  // 4: dt.tracking.v1.GetPartnerViewRequest.scope:type_name -> dt.tracking.v1.Scope
-	20, // 5: dt.tracking.v1.PartnerCourier.position:type_name -> dt.events.v1.LatLng
-	19, // 6: dt.tracking.v1.PartnerCourier.position_at:type_name -> google.protobuf.Timestamp
-	20, // 7: dt.tracking.v1.RouteLegs.to_pickup:type_name -> dt.events.v1.LatLng
-	20, // 8: dt.tracking.v1.RouteLegs.to_dropoff:type_name -> dt.events.v1.LatLng
-	19, // 9: dt.tracking.v1.TimelineEntry.at:type_name -> google.protobuf.Timestamp
+	22, // 5: dt.tracking.v1.PartnerCourier.position:type_name -> dt.events.v1.LatLng
+	21, // 6: dt.tracking.v1.PartnerCourier.position_at:type_name -> google.protobuf.Timestamp
+	22, // 7: dt.tracking.v1.RouteLegs.to_pickup:type_name -> dt.events.v1.LatLng
+	22, // 8: dt.tracking.v1.RouteLegs.to_dropoff:type_name -> dt.events.v1.LatLng
+	21, // 9: dt.tracking.v1.TimelineEntry.at:type_name -> google.protobuf.Timestamp
 	6,  // 10: dt.tracking.v1.PartnerView.courier:type_name -> dt.tracking.v1.PartnerCourier
-	20, // 11: dt.tracking.v1.PartnerView.pickup:type_name -> dt.events.v1.LatLng
-	20, // 12: dt.tracking.v1.PartnerView.dropoff:type_name -> dt.events.v1.LatLng
+	22, // 11: dt.tracking.v1.PartnerView.pickup:type_name -> dt.events.v1.LatLng
+	22, // 12: dt.tracking.v1.PartnerView.dropoff:type_name -> dt.events.v1.LatLng
 	7,  // 13: dt.tracking.v1.PartnerView.route:type_name -> dt.tracking.v1.RouteLegs
 	5,  // 14: dt.tracking.v1.PartnerView.eta_window:type_name -> dt.tracking.v1.EtaWindow
 	8,  // 15: dt.tracking.v1.PartnerView.timeline:type_name -> dt.tracking.v1.TimelineEntry
-	19, // 16: dt.tracking.v1.PartnerView.updated_at:type_name -> google.protobuf.Timestamp
+	21, // 16: dt.tracking.v1.PartnerView.updated_at:type_name -> google.protobuf.Timestamp
 	0,  // 17: dt.tracking.v1.ListTrailRequest.scope:type_name -> dt.tracking.v1.Scope
 	1,  // 18: dt.tracking.v1.TrailPage.fixes:type_name -> dt.tracking.v1.Fix
-	20, // 19: dt.tracking.v1.TrailPage.simplified:type_name -> dt.events.v1.LatLng
+	22, // 19: dt.tracking.v1.TrailPage.simplified:type_name -> dt.events.v1.LatLng
 	0,  // 20: dt.tracking.v1.ListProofPointsRequest.scope:type_name -> dt.tracking.v1.Scope
-	19, // 21: dt.tracking.v1.ProofPoint.at:type_name -> google.protobuf.Timestamp
-	20, // 22: dt.tracking.v1.ProofPoint.position:type_name -> dt.events.v1.LatLng
-	19, // 23: dt.tracking.v1.ProofPoint.position_at:type_name -> google.protobuf.Timestamp
+	21, // 21: dt.tracking.v1.ProofPoint.at:type_name -> google.protobuf.Timestamp
+	22, // 22: dt.tracking.v1.ProofPoint.position:type_name -> dt.events.v1.LatLng
+	21, // 23: dt.tracking.v1.ProofPoint.position_at:type_name -> google.protobuf.Timestamp
 	13, // 24: dt.tracking.v1.ProofPoints.points:type_name -> dt.tracking.v1.ProofPoint
 	0,  // 25: dt.tracking.v1.SimulateRequest.scope:type_name -> dt.tracking.v1.Scope
 	15, // 26: dt.tracking.v1.SimulateRequest.gap:type_name -> dt.tracking.v1.SignalGap
-	2,  // 27: dt.tracking.v1.TrackingService.IngestLocations:input_type -> dt.tracking.v1.IngestRequest
-	4,  // 28: dt.tracking.v1.TrackingService.GetPartnerView:input_type -> dt.tracking.v1.GetPartnerViewRequest
-	10, // 29: dt.tracking.v1.TrackingService.ListTrail:input_type -> dt.tracking.v1.ListTrailRequest
-	12, // 30: dt.tracking.v1.TrackingService.ListProofPoints:input_type -> dt.tracking.v1.ListProofPointsRequest
-	16, // 31: dt.tracking.v1.TrackingService.Simulate:input_type -> dt.tracking.v1.SimulateRequest
-	3,  // 32: dt.tracking.v1.TrackingService.IngestLocations:output_type -> dt.tracking.v1.IngestResponse
-	9,  // 33: dt.tracking.v1.TrackingService.GetPartnerView:output_type -> dt.tracking.v1.PartnerView
-	11, // 34: dt.tracking.v1.TrackingService.ListTrail:output_type -> dt.tracking.v1.TrailPage
-	14, // 35: dt.tracking.v1.TrackingService.ListProofPoints:output_type -> dt.tracking.v1.ProofPoints
-	17, // 36: dt.tracking.v1.TrackingService.Simulate:output_type -> dt.tracking.v1.SimulateResponse
-	32, // [32:37] is the sub-list for method output_type
-	27, // [27:32] is the sub-list for method input_type
-	27, // [27:27] is the sub-list for extension type_name
-	27, // [27:27] is the sub-list for extension extendee
-	0,  // [0:27] is the sub-list for field type_name
+	0,  // 27: dt.tracking.v1.GetSnapshotRequest.scope:type_name -> dt.tracking.v1.Scope
+	2,  // 28: dt.tracking.v1.TrackingService.IngestLocations:input_type -> dt.tracking.v1.IngestRequest
+	4,  // 29: dt.tracking.v1.TrackingService.GetPartnerView:input_type -> dt.tracking.v1.GetPartnerViewRequest
+	10, // 30: dt.tracking.v1.TrackingService.ListTrail:input_type -> dt.tracking.v1.ListTrailRequest
+	12, // 31: dt.tracking.v1.TrackingService.ListProofPoints:input_type -> dt.tracking.v1.ListProofPointsRequest
+	16, // 32: dt.tracking.v1.TrackingService.Simulate:input_type -> dt.tracking.v1.SimulateRequest
+	18, // 33: dt.tracking.v1.TrackingService.GetSnapshot:input_type -> dt.tracking.v1.GetSnapshotRequest
+	3,  // 34: dt.tracking.v1.TrackingService.IngestLocations:output_type -> dt.tracking.v1.IngestResponse
+	9,  // 35: dt.tracking.v1.TrackingService.GetPartnerView:output_type -> dt.tracking.v1.PartnerView
+	11, // 36: dt.tracking.v1.TrackingService.ListTrail:output_type -> dt.tracking.v1.TrailPage
+	14, // 37: dt.tracking.v1.TrackingService.ListProofPoints:output_type -> dt.tracking.v1.ProofPoints
+	17, // 38: dt.tracking.v1.TrackingService.Simulate:output_type -> dt.tracking.v1.SimulateResponse
+	19, // 39: dt.tracking.v1.TrackingService.GetSnapshot:output_type -> dt.tracking.v1.GetSnapshotResponse
+	34, // [34:40] is the sub-list for method output_type
+	28, // [28:34] is the sub-list for method input_type
+	28, // [28:28] is the sub-list for extension type_name
+	28, // [28:28] is the sub-list for extension extendee
+	0,  // [0:28] is the sub-list for field type_name
 }
 
 func init() { file_dt_tracking_v1_tracking_proto_init() }
@@ -1544,7 +1654,7 @@ func file_dt_tracking_v1_tracking_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_dt_tracking_v1_tracking_proto_rawDesc), len(file_dt_tracking_v1_tracking_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   18,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -674,7 +674,7 @@ export interface components {
         /** @description The created delivery with its tracking link. */
         CreateDeliveryResponse: components["schemas"]["Delivery"] & {
             /** @description `null` when the link could not be issued; the delivery is still created. Call `rotateTrackingLink` to issue one. */
-            tracking?: components["schemas"]["TrackingLink"] | null;
+            tracking: components["schemas"]["TrackingLink"] | null;
         };
         /**
          * @description `pending`: the courier is visible but no fix has arrived yet. `live`: the last fix is at most 30 seconds old. `stale`: older than 30 seconds. `lost`: older than 5 minutes (or still `pending` after 5 minutes).

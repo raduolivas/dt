@@ -1,7 +1,9 @@
 package rpc_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -192,5 +194,57 @@ func TestIngestAcceptsCourierKnownOnlyFromDelivery(t *testing.T) {
 	// Still scoped: another tenant naming it is not found.
 	if _, err := c.IngestLocations(ctx, req("ten_b", courierB, 1)); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("other tenant: %v", err)
+	}
+}
+
+func TestGetSnapshotRPC(t *testing.T) {
+	c, _ := serve(t)
+	ctx := context.Background()
+	scope := func(tenant string) *trackingv1.Scope {
+		return &trackingv1.Scope{TenantId: tenant, Environment: eventsv1.Environment_ENVIRONMENT_TEST, ActorId: "tl_1"}
+	}
+	res, err := c.GetSnapshot(ctx, &trackingv1.GetSnapshotRequest{Scope: scope("ten_a"), DeliveryId: delA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Exactly the domain snapshot's JSON: decode into it strictly.
+	var snap domain.TrackingSnapshot
+	dec := json.NewDecoder(bytes.NewReader(res.GetSnapshotJson()))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&snap); err != nil {
+		t.Fatalf("snapshot_json: %v: %s", err, res.GetSnapshotJson())
+	}
+	if snap.DeliveryID != delA || snap.Status != domain.StatusConfirmed || snap.Version <= 0 ||
+		snap.Pickup.Name != "Hub" || len(snap.Timeline) != 1 {
+		t.Fatalf("snapshot = %s", res.GetSnapshotJson())
+	}
+	// The visibility filter applies: no courier while still confirmed.
+	if snap.Courier != nil {
+		t.Fatalf("courier = %+v, want hidden", snap.Courier)
+	}
+	// Never the partner fields.
+	for _, k := range []string{`"external_id"`, `"id":"cou_`} {
+		if bytes.Contains(res.GetSnapshotJson(), []byte(k)) {
+			t.Fatalf("snapshot carries %s: %s", k, res.GetSnapshotJson())
+		}
+	}
+
+	for name, r := range map[string]*trackingv1.GetSnapshotRequest{
+		"other tenant":      {Scope: scope("ten_b"), DeliveryId: delA},
+		"other environment": {Scope: &trackingv1.Scope{TenantId: "ten_a", Environment: eventsv1.Environment_ENVIRONMENT_LIVE}, DeliveryId: delA},
+		"unknown delivery":  {Scope: scope("ten_a"), DeliveryId: "del_01jrpc0000000000000000000z"},
+	} {
+		if _, err := c.GetSnapshot(ctx, r); connect.CodeOf(err) != connect.CodeNotFound {
+			t.Errorf("%s: %v, want NotFound", name, err)
+		}
+	}
+	for name, r := range map[string]*trackingv1.GetSnapshotRequest{
+		"no scope":       {DeliveryId: delA},
+		"bad delivery":   {Scope: scope("ten_a"), DeliveryId: "order-1"},
+		"empty delivery": {Scope: scope("ten_a")},
+	} {
+		if _, err := c.GetSnapshot(ctx, r); connect.CodeOf(err) != connect.CodeInvalidArgument {
+			t.Errorf("%s: %v, want InvalidArgument", name, err)
+		}
 	}
 }

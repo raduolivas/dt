@@ -548,7 +548,7 @@ type CreateDeliveryResponse struct {
 	Status DeliveryStatus `json:"status"`
 
 	// Tracking `null` when the link could not be issued; the delivery is still created. Call `rotateTrackingLink` to issue one.
-	Tracking  *TrackingLink `json:"tracking,omitempty"`
+	Tracking  *TrackingLink `json:"tracking"`
 	UpdatedAt time.Time     `json:"updated_at"`
 }
 

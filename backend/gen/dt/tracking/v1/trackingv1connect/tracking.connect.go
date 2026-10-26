@@ -37,6 +37,9 @@ const (
 	TrackingServiceListProofPointsProcedure = "/dt.tracking.v1.TrackingService/ListProofPoints"
 	// TrackingServiceSimulateProcedure is the procedure name of the TrackingService's Simulate RPC.
 	TrackingServiceSimulateProcedure = "/dt.tracking.v1.TrackingService/Simulate"
+	// TrackingServiceGetSnapshotProcedure is the procedure name of the TrackingService's GetSnapshot
+	// RPC.
+	TrackingServiceGetSnapshotProcedure = "/dt.tracking.v1.TrackingService/GetSnapshot"
 )
 
 var (
@@ -75,6 +78,13 @@ var (
 			Procedure:  TrackingServiceSimulateProcedure,
 		}
 	})
+	trackingServiceGetSnapshotSpec = sync.OnceValue(func() connect.Spec {
+		return connect.Spec{
+			StreamType: connect.StreamTypeUnary,
+			Schema:     v1.File_dt_tracking_v1_tracking_proto.Services().ByName("TrackingService").Methods().ByName("GetSnapshot"),
+			Procedure:  TrackingServiceGetSnapshotProcedure,
+		}
+	})
 )
 
 // TrackingServiceClient is a client for the dt.tracking.v1.TrackingService service.
@@ -89,6 +99,9 @@ type TrackingServiceClient interface {
 	// buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
 	ListProofPoints(context.Context, *v1.ListProofPointsRequest) (*v1.ProofPoints, error)
 	Simulate(context.Context, *v1.SimulateRequest) (*v1.SimulateResponse, error)
+	// GetSnapshot returns the customer's viewer snapshot (the visibility
+	// filter applied), for the gateway's tracking session exchange.
+	GetSnapshot(context.Context, *v1.GetSnapshotRequest) (*v1.GetSnapshotResponse, error)
 }
 
 // NewTrackingServiceClient constructs a client for the dt.tracking.v1.TrackingService service.
@@ -109,6 +122,9 @@ type TrackingServiceHandler interface {
 	// buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
 	ListProofPoints(context.Context, *v1.ListProofPointsRequest) (*v1.ProofPoints, error)
 	Simulate(context.Context, *v1.SimulateRequest) (*v1.SimulateResponse, error)
+	// GetSnapshot returns the customer's viewer snapshot (the visibility
+	// filter applied), for the gateway's tracking session exchange.
+	GetSnapshot(context.Context, *v1.GetSnapshotRequest) (*v1.GetSnapshotResponse, error)
 }
 
 // RegisterTrackingServiceHandler registers svc as the dt.tracking.v1.TrackingService implementation
@@ -121,6 +137,7 @@ func RegisterTrackingServiceHandler(server *connect.Server, svc TrackingServiceH
 		connect.Method{Spec: trackingServiceListTrailSpec(), Handler: adapter.listTrail},
 		connect.Method{Spec: trackingServiceListProofPointsSpec(), Handler: adapter.listProofPoints},
 		connect.Method{Spec: trackingServiceSimulateSpec(), Handler: adapter.simulate},
+		connect.Method{Spec: trackingServiceGetSnapshotSpec(), Handler: adapter.getSnapshot},
 	)
 }
 
@@ -145,6 +162,10 @@ func (UnimplementedTrackingServiceHandler) ListProofPoints(context.Context, *v1.
 
 func (UnimplementedTrackingServiceHandler) Simulate(context.Context, *v1.SimulateRequest) (*v1.SimulateResponse, error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, "dt.tracking.v1.TrackingService.Simulate is not implemented")
+}
+
+func (UnimplementedTrackingServiceHandler) GetSnapshot(context.Context, *v1.GetSnapshotRequest) (*v1.GetSnapshotResponse, error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, "dt.tracking.v1.TrackingService.GetSnapshot is not implemented")
 }
 
 type trackingServiceClient struct {
@@ -186,6 +207,14 @@ func (c *trackingServiceClient) ListProofPoints(ctx context.Context, req *v1.Lis
 func (c *trackingServiceClient) Simulate(ctx context.Context, req *v1.SimulateRequest) (*v1.SimulateResponse, error) {
 	var res v1.SimulateResponse
 	if err := c.client.CallUnary(ctx, trackingServiceSimulateSpec(), req, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+func (c *trackingServiceClient) GetSnapshot(ctx context.Context, req *v1.GetSnapshotRequest) (*v1.GetSnapshotResponse, error) {
+	var res v1.GetSnapshotResponse
+	if err := c.client.CallUnary(ctx, trackingServiceGetSnapshotSpec(), req, &res); err != nil {
 		return nil, err
 	}
 	return &res, nil
@@ -247,6 +276,18 @@ func (h trackingServiceHandler) simulate(ctx context.Context, _ connect.Spec, st
 		return err
 	}
 	res, err := h.svc.Simulate(ctx, &req)
+	if err != nil {
+		return err
+	}
+	return stream.Send(res)
+}
+
+func (h trackingServiceHandler) getSnapshot(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
+	var req v1.GetSnapshotRequest
+	if err := stream.Receive(&req); err != nil {
+		return err
+	}
+	res, err := h.svc.GetSnapshot(ctx, &req)
 	if err != nil {
 		return err
 	}

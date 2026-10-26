@@ -1,11 +1,12 @@
 // Package rpc serves the internal tracking Connect API
 // (dt.tracking.v1.TrackingService). Every RPC needs the internal bearer
-// token; the API is never routed publicly. Only IngestLocations is
-// implemented so far; the others answer Unimplemented.
+// token; the API is never routed publicly. IngestLocations and GetSnapshot
+// are implemented so far; the others answer Unimplemented.
 package rpc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -124,4 +125,42 @@ func (s *Server) IngestLocations(ctx context.Context, req *trackingv1.IngestRequ
 		return nil, connect.NewError(connect.CodeUnavailable, "tracking unavailable").WithCause(err)
 	}
 	return &trackingv1.IngestResponse{Accepted: int32(acc), Dropped: int32(drop)}, nil //nolint:gosec // at most MaxFixes
+}
+
+// GetSnapshot returns the customer's viewer snapshot as the JSON the public
+// API and the streams carry (domain.Snapshot). A delivery unknown in the
+// scope is NotFound, whoever else owns it.
+func (s *Server) GetSnapshot(ctx context.Context, req *trackingv1.GetSnapshotRequest) (*trackingv1.GetSnapshotResponse, error) {
+	sc, err := toScope(ctx, req.GetScope())
+	if err != nil {
+		return nil, err
+	}
+	if !ids.Valid(ids.Delivery, req.GetDeliveryId()) {
+		return nil, invalid(ctx, "delivery_id must be a del_ id")
+	}
+	snap, err := s.svc.ViewerSnapshot(ctx, sc, req.GetDeliveryId())
+	if err == nil {
+		var b []byte
+		if b, err = json.Marshal(snap); err == nil {
+			return &trackingv1.GetSnapshotResponse{SnapshotJson: b}, nil
+		}
+	}
+	return nil, s.fail(ctx, "GetSnapshot", err)
+}
+
+// fail maps a use-case error: not found, a cancelled or expired call, or
+// (logged) tracking_unavailable.
+func (s *Server) fail(ctx context.Context, rpcName string, err error) error {
+	switch {
+	case errors.Is(err, app.ErrNotFound):
+		rpcauth.SetCode(ctx, "not_found")
+		return connect.NewError(connect.CodeNotFound, "delivery not found")
+	case errors.Is(err, context.Canceled):
+		return connect.NewError(connect.CodeCanceled, "canceled").WithCause(err)
+	case errors.Is(err, context.DeadlineExceeded):
+		return connect.NewError(connect.CodeDeadlineExceeded, "deadline exceeded").WithCause(err)
+	}
+	s.log.ErrorContext(ctx, "rpc_internal_error", "rpc", rpcName, "error", err)
+	rpcauth.SetCode(ctx, "tracking_unavailable")
+	return connect.NewError(connect.CodeUnavailable, "tracking unavailable").WithCause(err)
 }

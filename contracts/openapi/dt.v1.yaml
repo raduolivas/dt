@@ -2020,7 +2020,7 @@ components:
       allOf:
       - $ref: '#/components/schemas/Delivery'
       - type: object
-        # Not yet in `required`: the gateway starts issuing links in a later M3 task, which tightens this.
+        required: [tracking]
         properties:
           tracking:
             description: '`null` when the link could not be issued; the delivery is still created. Call `rotateTrackingLink`

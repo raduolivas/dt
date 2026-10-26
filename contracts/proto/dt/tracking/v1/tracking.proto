@@ -25,6 +25,9 @@ service TrackingService {
   // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
   rpc ListProofPoints(ListProofPointsRequest) returns (ProofPoints);
   rpc Simulate(SimulateRequest) returns (SimulateResponse);
+  // GetSnapshot returns the customer's viewer snapshot (the visibility
+  // filter applied), for the gateway's tracking session exchange.
+  rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotResponse);
 }
 
 // Scope is the tenant, environment and caller every request runs under.
@@ -160,4 +163,15 @@ message SimulateRequest {
 
 message SimulateResponse {
   string simulation_id = 1; // a sim_ id
+}
+
+message GetSnapshotRequest {
+  Scope scope = 1;
+  string delivery_id = 2;
+}
+
+message GetSnapshotResponse {
+  // snapshot_json is the TrackingSnapshot of the public API (OpenAPI
+  // components.schemas.TrackingSnapshot), exactly as the stream sends it.
+  bytes snapshot_json = 1;
 }
