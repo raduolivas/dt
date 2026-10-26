@@ -237,6 +237,7 @@ type TenantSettingsSet struct {
 	DefaultModel       string                 `protobuf:"bytes,3,opt,name=default_model,json=defaultModel,proto3" json:"default_model,omitempty"`
 	PickupConfirmation string                 `protobuf:"bytes,4,opt,name=pickup_confirmation,json=pickupConfirmation,proto3" json:"pickup_confirmation,omitempty"`
 	UpdatedAt          *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	DefaultPrepMinutes *int32                 `protobuf:"varint,6,opt,name=default_prep_minutes,json=defaultPrepMinutes,proto3,oneof" json:"default_prep_minutes,omitempty"` // unset = none
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -306,6 +307,13 @@ func (x *TenantSettingsSet) GetUpdatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *TenantSettingsSet) GetDefaultPrepMinutes() int32 {
+	if x != nil && x.DefaultPrepMinutes != nil {
+		return *x.DefaultPrepMinutes
+	}
+	return 0
+}
+
 var File_dt_events_v1_accounts_proto protoreflect.FileDescriptor
 
 const file_dt_events_v1_accounts_proto_rawDesc = "" +
@@ -329,14 +337,16 @@ const file_dt_events_v1_accounts_proto_rawDesc = "" +
 	"\rApiKeyRevoked\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x129\n" +
 	"\n" +
-	"revoked_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\trevokedAt\"\xe8\x01\n" +
+	"revoked_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\trevokedAt\"\xb8\x02\n" +
 	"\x11TenantSettingsSet\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12%\n" +
 	"\x0eallowed_models\x18\x02 \x03(\tR\rallowedModels\x12#\n" +
 	"\rdefault_model\x18\x03 \x01(\tR\fdefaultModel\x12/\n" +
 	"\x13pickup_confirmation\x18\x04 \x01(\tR\x12pickupConfirmation\x129\n" +
 	"\n" +
-	"updated_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAtB\xaf\x01\n" +
+	"updated_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x125\n" +
+	"\x14default_prep_minutes\x18\x06 \x01(\x05H\x00R\x12defaultPrepMinutes\x88\x01\x01B\x17\n" +
+	"\x15_default_prep_minutesB\xaf\x01\n" +
 	"\x10com.dt.events.v1B\rAccountsProtoP\x01Z:github.com/raduolivas/dt/backend/gen/dt/events/v1;eventsv1\xa2\x02\x03DEX\xaa\x02\fDt.Events.V1\xca\x02\fDt\\Events\\V1\xe2\x02\x18Dt\\Events\\V1\\GPBMetadata\xea\x02\x0eDt::Events::V1b\x06proto3"
 
 var (
@@ -379,6 +389,7 @@ func file_dt_events_v1_accounts_proto_init() {
 		return
 	}
 	file_dt_events_v1_envelope_proto_init()
+	file_dt_events_v1_accounts_proto_msgTypes[3].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

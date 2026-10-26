@@ -38,4 +38,5 @@ message TenantSettingsSet {
   string default_model = 3;
   string pickup_confirmation = 4;
   google.protobuf.Timestamp updated_at = 5;
+  optional int32 default_prep_minutes = 6; // unset = none
 }

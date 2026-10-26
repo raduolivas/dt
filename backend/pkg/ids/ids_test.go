@@ -20,7 +20,7 @@ func TestNewHasPrefixAndSortsByTime(t *testing.T) {
 
 func TestPrefixConstants(t *testing.T) {
 	if ids.Tenant != "ten" || ids.APIKey != "ak" || ids.Audit != "aud" || ids.Event != "evt" ||
-		ids.Delivery != "del" || ids.Courier != "cou" {
+		ids.Delivery != "del" || ids.Courier != "cou" || ids.TrackingLink != "tl" || ids.Simulation != "sim" {
 		t.Fatal("prefix constants")
 	}
 }

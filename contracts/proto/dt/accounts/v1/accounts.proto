@@ -47,6 +47,7 @@ message TenantSettings {
   string default_model = 2;
   string pickup_confirmation = 3; // "any" | "courier" | "store" | "courier_and_store"
   google.protobuf.Timestamp updated_at = 4;
+  optional int32 default_prep_minutes = 5; // 1..240; unset = none
 }
 
 // ApiKey is a key's metadata. It never carries the hash or the plaintext.
@@ -132,6 +133,7 @@ message SetTenantSettingsRequest {
   repeated string allowed_models = 3;
   string default_model = 4;
   string pickup_confirmation = 5;
+  optional int32 default_prep_minutes = 6; // 1..240; unset clears it
 }
 
 message SetTenantSettingsResponse {

@@ -538,7 +538,7 @@ func TestDeliveryWithCourierAndConfirmations(t *testing.T) {
 	}
 	if d.Courier == nil || d.Courier.Id != couID || len(d.PickupConfirmations) != 1 || d.PickupConfirmations[0].By != "courier" ||
 		*d.Notes != "n" || *d.Dropoff.Label != "l" || *d.Customer.FirstName != "Ana" || *d.ItemCount != 2 ||
-		d.Metadata["table"] != "12" || d.Environment != api.Live {
+		d.Metadata["table"] != "12" || d.Environment != api.EnvironmentLive {
 		t.Fatalf("delivery = %s", rec.Body.String())
 	}
 }

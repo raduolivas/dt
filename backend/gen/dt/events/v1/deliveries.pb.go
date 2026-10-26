@@ -86,6 +86,7 @@ type DeliveryCreated struct {
 	PickupName    string                 `protobuf:"bytes,7,opt,name=pickup_name,json=pickupName,proto3" json:"pickup_name,omitempty"`
 	Dropoff       *LatLng                `protobuf:"bytes,8,opt,name=dropoff,proto3" json:"dropoff,omitempty"`
 	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	ReadyAt       *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=ready_at,json=readyAt,proto3" json:"ready_at,omitempty"` // unset = the partner gave none
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -179,6 +180,13 @@ func (x *DeliveryCreated) GetDropoff() *LatLng {
 func (x *DeliveryCreated) GetCreatedAt() *timestamppb.Timestamp {
 	if x != nil {
 		return x.CreatedAt
+	}
+	return nil
+}
+
+func (x *DeliveryCreated) GetReadyAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ReadyAt
 	}
 	return nil
 }
@@ -395,7 +403,8 @@ type DeliveryUpdated struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DeliveryId    string                 `protobuf:"bytes,1,opt,name=delivery_id,json=deliveryId,proto3" json:"delivery_id,omitempty"`
 	ChangedFields []string               `protobuf:"bytes,2,rep,name=changed_fields,json=changedFields,proto3" json:"changed_fields,omitempty"`
-	Dropoff       *LatLng                `protobuf:"bytes,3,opt,name=dropoff,proto3" json:"dropoff,omitempty"` // set only when the dropoff location changed
+	Dropoff       *LatLng                `protobuf:"bytes,3,opt,name=dropoff,proto3" json:"dropoff,omitempty"`                // set only when the dropoff location changed
+	ReadyAt       *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=ready_at,json=readyAt,proto3" json:"ready_at,omitempty"` // the new value; unset when cleared ("ready_at" is then in changed_fields)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -447,6 +456,13 @@ func (x *DeliveryUpdated) GetChangedFields() []string {
 func (x *DeliveryUpdated) GetDropoff() *LatLng {
 	if x != nil {
 		return x.Dropoff
+	}
+	return nil
+}
+
+func (x *DeliveryUpdated) GetReadyAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ReadyAt
 	}
 	return nil
 }
@@ -649,7 +665,7 @@ const file_dt_events_v1_deliveries_proto_rawDesc = "" +
 	"\x1ddt/events/v1/deliveries.proto\x12\fdt.events.v1\x1a\x1fgoogle/protobuf/timestamp.proto\",\n" +
 	"\x06LatLng\x12\x10\n" +
 	"\x03lat\x18\x01 \x01(\x01R\x03lat\x12\x10\n" +
-	"\x03lng\x18\x02 \x01(\x01R\x03lng\"\xf1\x02\n" +
+	"\x03lng\x18\x02 \x01(\x01R\x03lng\"\xa8\x03\n" +
 	"\x0fDeliveryCreated\x12\x1f\n" +
 	"\vdelivery_id\x18\x01 \x01(\tR\n" +
 	"deliveryId\x12\x1f\n" +
@@ -663,7 +679,9 @@ const file_dt_events_v1_deliveries_proto_rawDesc = "" +
 	"pickupName\x12.\n" +
 	"\adropoff\x18\b \x01(\v2\x14.dt.events.v1.LatLngR\adropoff\x129\n" +
 	"\n" +
-	"created_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\xd9\x01\n" +
+	"created_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x125\n" +
+	"\bready_at\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\areadyAt\"\xd9\x01\n" +
 	"\x15DeliveryStatusChanged\x12\x1f\n" +
 	"\vdelivery_id\x18\x01 \x01(\tR\n" +
 	"deliveryId\x12\x12\n" +
@@ -683,12 +701,13 @@ const file_dt_events_v1_deliveries_proto_rawDesc = "" +
 	"\vdelivery_id\x18\x01 \x01(\tR\n" +
 	"deliveryId\x12!\n" +
 	"\fconfirmed_by\x18\x02 \x03(\tR\vconfirmedBy\x120\n" +
-	"\x05since\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\"\x89\x01\n" +
+	"\x05since\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\"\xc0\x01\n" +
 	"\x0fDeliveryUpdated\x12\x1f\n" +
 	"\vdelivery_id\x18\x01 \x01(\tR\n" +
 	"deliveryId\x12%\n" +
 	"\x0echanged_fields\x18\x02 \x03(\tR\rchangedFields\x12.\n" +
-	"\adropoff\x18\x03 \x01(\v2\x14.dt.events.v1.LatLngR\adropoff\"v\n" +
+	"\adropoff\x18\x03 \x01(\v2\x14.dt.events.v1.LatLngR\adropoff\x125\n" +
+	"\bready_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\areadyAt\"v\n" +
 	"\x1aDeliveryPersonalDataErased\x12\x1f\n" +
 	"\vdelivery_id\x18\x01 \x01(\tR\n" +
 	"deliveryId\x127\n" +
@@ -736,20 +755,22 @@ var file_dt_events_v1_deliveries_proto_goTypes = []any{
 	(*timestamppb.Timestamp)(nil),             // 9: google.protobuf.Timestamp
 }
 var file_dt_events_v1_deliveries_proto_depIdxs = []int32{
-	0, // 0: dt.events.v1.DeliveryCreated.pickup:type_name -> dt.events.v1.LatLng
-	0, // 1: dt.events.v1.DeliveryCreated.dropoff:type_name -> dt.events.v1.LatLng
-	9, // 2: dt.events.v1.DeliveryCreated.created_at:type_name -> google.protobuf.Timestamp
-	9, // 3: dt.events.v1.DeliveryStatusChanged.occurred_at:type_name -> google.protobuf.Timestamp
-	9, // 4: dt.events.v1.DeliveryPickupConfirmed.occurred_at:type_name -> google.protobuf.Timestamp
-	9, // 5: dt.events.v1.DeliveryPickupConfirmationPending.since:type_name -> google.protobuf.Timestamp
-	0, // 6: dt.events.v1.DeliveryUpdated.dropoff:type_name -> dt.events.v1.LatLng
-	9, // 7: dt.events.v1.DeliveryPersonalDataErased.erased_at:type_name -> google.protobuf.Timestamp
-	9, // 8: dt.events.v1.CourierAssigned.assigned_at:type_name -> google.protobuf.Timestamp
-	9, // [9:9] is the sub-list for method output_type
-	9, // [9:9] is the sub-list for method input_type
-	9, // [9:9] is the sub-list for extension type_name
-	9, // [9:9] is the sub-list for extension extendee
-	0, // [0:9] is the sub-list for field type_name
+	0,  // 0: dt.events.v1.DeliveryCreated.pickup:type_name -> dt.events.v1.LatLng
+	0,  // 1: dt.events.v1.DeliveryCreated.dropoff:type_name -> dt.events.v1.LatLng
+	9,  // 2: dt.events.v1.DeliveryCreated.created_at:type_name -> google.protobuf.Timestamp
+	9,  // 3: dt.events.v1.DeliveryCreated.ready_at:type_name -> google.protobuf.Timestamp
+	9,  // 4: dt.events.v1.DeliveryStatusChanged.occurred_at:type_name -> google.protobuf.Timestamp
+	9,  // 5: dt.events.v1.DeliveryPickupConfirmed.occurred_at:type_name -> google.protobuf.Timestamp
+	9,  // 6: dt.events.v1.DeliveryPickupConfirmationPending.since:type_name -> google.protobuf.Timestamp
+	0,  // 7: dt.events.v1.DeliveryUpdated.dropoff:type_name -> dt.events.v1.LatLng
+	9,  // 8: dt.events.v1.DeliveryUpdated.ready_at:type_name -> google.protobuf.Timestamp
+	9,  // 9: dt.events.v1.DeliveryPersonalDataErased.erased_at:type_name -> google.protobuf.Timestamp
+	9,  // 10: dt.events.v1.CourierAssigned.assigned_at:type_name -> google.protobuf.Timestamp
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_dt_events_v1_deliveries_proto_init() }

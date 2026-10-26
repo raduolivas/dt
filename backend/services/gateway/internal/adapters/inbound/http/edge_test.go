@@ -451,7 +451,7 @@ func TestGetMeMatchesContract(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &me); err != nil {
 		t.Fatal(err)
 	}
-	if me.TenantId != tenantID || me.Environment != api.Live ||
+	if me.TenantId != tenantID || me.Environment != api.EnvironmentLive ||
 		me.Credential.Type != api.SecretKey || me.Credential.Id != k.rec.ID {
 		t.Fatalf("me = %+v", me)
 	}
