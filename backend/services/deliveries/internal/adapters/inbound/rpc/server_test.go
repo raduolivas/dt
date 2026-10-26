@@ -390,3 +390,51 @@ func TestRPCRoundTripAllMethods(t *testing.T) {
 		}
 	}
 }
+
+func TestReportEventCourierActor(t *testing.T) {
+	t.Parallel()
+	srv, _ := realServer(t)
+	c := authed(srv)
+	ctx := context.Background()
+	cr, err := c.CreateDelivery(ctx, createReq("ext-courier"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := cr.GetDelivery().GetId()
+
+	// A courier reports at_pickup: allowed by the courier column in direct.
+	res, err := c.ReportEvent(ctx, &deliveriesv1.ReportEventRequest{
+		Scope: testScope, Id: id, EventId: "c-1", Type: "at_pickup", Actor: "courier"})
+	if err != nil || res.GetOutcome() != "applied" || res.GetDelivery().GetStatus() != "at_pickup" {
+		t.Fatalf("courier at_pickup: %v %v", res, err)
+	}
+	// A courier cannot confirm as the store: by is forced to courier.
+	res, err = c.ReportEvent(ctx, &deliveriesv1.ReportEventRequest{
+		Scope: testScope, Id: id, EventId: "c-2", Type: "pickup_confirmed", By: "store", Actor: "courier"})
+	if err != nil || res.GetDelivery().GetStatus() != "picked_up" {
+		t.Fatalf("courier pickup_confirmed: %v %v", res, err)
+	}
+	pcs := res.GetDelivery().GetPickupConfirmations()
+	if len(pcs) != 1 || pcs[0].GetBy() != "courier" {
+		t.Fatalf("pickup confirmations = %v", pcs)
+	}
+
+	// Without an actor the report is the partner's, so by "store" is kept.
+	cr, err = c.CreateDelivery(ctx, createReq("ext-partner"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err = c.ReportEvent(ctx, &deliveriesv1.ReportEventRequest{
+		Scope: testScope, Id: cr.GetDelivery().GetId(), EventId: "p-1", Type: "pickup_confirmed", By: "store"})
+	if err != nil || res.GetDelivery().GetPickupConfirmations()[0].GetBy() != "store" {
+		t.Fatalf("partner pickup_confirmed: %v %v", res, err)
+	}
+
+	// Unknown actors are refused.
+	ctx2, info := connect.NewClientContext(ctx)
+	_, err = c.ReportEvent(ctx2, &deliveriesv1.ReportEventRequest{
+		Scope: testScope, Id: id, EventId: "c-3", Type: "delivered", Actor: "robot"})
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || dtCode(info) != "validation_failed" {
+		t.Fatalf("robot actor: %v / %q", err, dtCode(info))
+	}
+}

@@ -43,6 +43,7 @@ type Delivery struct {
 	UpdatedAt               time.Time
 	DroppedReports          int32
 	Version                 int64
+	ReadyAt                 *time.Time
 }
 
 type DeliveryHistory struct {

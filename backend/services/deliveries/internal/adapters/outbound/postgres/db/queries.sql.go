@@ -139,7 +139,7 @@ SELECT d.id, d.tenant_id, d.environment, d.external_id, d.model, d.status, d.pic
   ST_Y(d.pickup::geometry)::float8 AS pickup_lat, ST_X(d.pickup::geometry)::float8 AS pickup_lng, d.pickup_name,
   ST_Y(d.dropoff::geometry)::float8 AS dropoff_lat, ST_X(d.dropoff::geometry)::float8 AS dropoff_lng,
   d.dropoff_label_sealed, d.customer_first_name_sealed, d.notes_sealed, d.metadata_sealed,
-  d.items_summary, d.item_count, d.courier_id, c.external_id AS courier_external_id,
+  d.items_summary, d.item_count, d.ready_at, d.courier_id, c.external_id AS courier_external_id,
   c.display_name AS courier_display_name, c.vehicle AS courier_vehicle,
   d.erased_at, d.dropped_reports, d.version, d.created_at, d.updated_at
 FROM deliveries d LEFT JOIN couriers c ON c.id = d.courier_id
@@ -165,6 +165,7 @@ type GetDeliveryRow struct {
 	MetadataSealed          []byte
 	ItemsSummary            *string
 	ItemCount               *int32
+	ReadyAt                 *time.Time
 	CourierID               *string
 	CourierExternalID       *string
 	CourierDisplayName      *string
@@ -198,6 +199,7 @@ func (q *Queries) GetDelivery(ctx context.Context, id string) (GetDeliveryRow, e
 		&i.MetadataSealed,
 		&i.ItemsSummary,
 		&i.ItemCount,
+		&i.ReadyAt,
 		&i.CourierID,
 		&i.CourierExternalID,
 		&i.CourierDisplayName,
@@ -236,12 +238,12 @@ func (q *Queries) GetSettings(ctx context.Context, tenantID string) (GetSettings
 const insertDelivery = `-- name: InsertDelivery :exec
 INSERT INTO deliveries (id, tenant_id, environment, external_id, model, status, pickup_policy,
   pickup, pickup_name, dropoff, dropoff_label_sealed, customer_first_name_sealed, notes_sealed,
-  metadata_sealed, items_summary, item_count, courier_id, erased_at, dropped_reports, version, created_at, updated_at)
+  metadata_sealed, items_summary, item_count, ready_at, courier_id, erased_at, dropped_reports, version, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7,
   ST_SetSRID(ST_MakePoint($8::float8, $9::float8), 4326)::geography, $10,
   ST_SetSRID(ST_MakePoint($11::float8, $12::float8), 4326)::geography,
   $13, $14, $15, $16,
-  $17, $18, $19, $20, $21, $22, $23, $24)
+  $17, $18, $19, $20, $21, $22, $23, $24, $25)
 `
 
 type InsertDeliveryParams struct {
@@ -263,6 +265,7 @@ type InsertDeliveryParams struct {
 	MetadataSealed          []byte
 	ItemsSummary            *string
 	ItemCount               *int32
+	ReadyAt                 *time.Time
 	CourierID               *string
 	ErasedAt                *time.Time
 	DroppedReports          int32
@@ -291,6 +294,7 @@ func (q *Queries) InsertDelivery(ctx context.Context, arg InsertDeliveryParams) 
 		arg.MetadataSealed,
 		arg.ItemsSummary,
 		arg.ItemCount,
+		arg.ReadyAt,
 		arg.CourierID,
 		arg.ErasedAt,
 		arg.DroppedReports,
@@ -375,7 +379,7 @@ SELECT d.id, d.tenant_id, d.environment, d.external_id, d.model, d.status, d.pic
   ST_Y(d.pickup::geometry)::float8 AS pickup_lat, ST_X(d.pickup::geometry)::float8 AS pickup_lng, d.pickup_name,
   ST_Y(d.dropoff::geometry)::float8 AS dropoff_lat, ST_X(d.dropoff::geometry)::float8 AS dropoff_lng,
   d.dropoff_label_sealed, d.customer_first_name_sealed, d.notes_sealed, d.metadata_sealed,
-  d.items_summary, d.item_count, d.courier_id, c.external_id AS courier_external_id,
+  d.items_summary, d.item_count, d.ready_at, d.courier_id, c.external_id AS courier_external_id,
   c.display_name AS courier_display_name, c.vehicle AS courier_vehicle,
   d.erased_at, d.dropped_reports, d.version, d.created_at, d.updated_at
 FROM deliveries d LEFT JOIN couriers c ON c.id = d.courier_id
@@ -418,6 +422,7 @@ type ListDeliveriesRow struct {
 	MetadataSealed          []byte
 	ItemsSummary            *string
 	ItemCount               *int32
+	ReadyAt                 *time.Time
 	CourierID               *string
 	CourierExternalID       *string
 	CourierDisplayName      *string
@@ -467,6 +472,7 @@ func (q *Queries) ListDeliveries(ctx context.Context, arg ListDeliveriesParams) 
 			&i.MetadataSealed,
 			&i.ItemsSummary,
 			&i.ItemCount,
+			&i.ReadyAt,
 			&i.CourierID,
 			&i.CourierExternalID,
 			&i.CourierDisplayName,
@@ -591,9 +597,9 @@ SET status = $1,
     dropoff = ST_SetSRID(ST_MakePoint($2::float8, $3::float8), 4326)::geography,
     dropoff_label_sealed = $4, customer_first_name_sealed = $5,
     notes_sealed = $6, metadata_sealed = $7,
-    courier_id = $8, erased_at = $9, dropped_reports = $10,
-    version = $11, updated_at = $12
-WHERE id = $13
+    ready_at = $8, courier_id = $9, erased_at = $10, dropped_reports = $11,
+    version = $12, updated_at = $13
+WHERE id = $14
 `
 
 type UpdateDeliveryParams struct {
@@ -604,6 +610,7 @@ type UpdateDeliveryParams struct {
 	CustomerFirstNameSealed []byte
 	NotesSealed             []byte
 	MetadataSealed          []byte
+	ReadyAt                 *time.Time
 	CourierID               *string
 	ErasedAt                *time.Time
 	DroppedReports          int32
@@ -621,6 +628,7 @@ func (q *Queries) UpdateDelivery(ctx context.Context, arg UpdateDeliveryParams) 
 		arg.CustomerFirstNameSealed,
 		arg.NotesSealed,
 		arg.MetadataSealed,
+		arg.ReadyAt,
 		arg.CourierID,
 		arg.ErasedAt,
 		arg.DroppedReports,

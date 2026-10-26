@@ -646,7 +646,7 @@ export interface components {
              * Format: date-time
              * @description When the order is expected to be ready for pickup, if you gave one.
              */
-            ready_at?: string | null;
+            ready_at: string | null;
         };
         DeliveryList: {
             data: components["schemas"]["Delivery"][];

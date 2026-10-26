@@ -48,6 +48,7 @@ func toProto(e domain.Event) (proto.Message, *eventsv1.Subject, time.Time, error
 			DeliveryId: p.DeliveryID, ExternalId: p.ExternalID, DeliveryModel: string(p.Model),
 			Status: string(p.Status), PickupPolicy: string(p.Policy), Pickup: latLng(p.Pickup),
 			PickupName: p.PickupName, Dropoff: latLng(p.Dropoff), CreatedAt: timestamppb.New(p.CreatedAt),
+			ReadyAt: optTime(p.ReadyAt),
 		}, deliverySubject(p.DeliveryID), p.CreatedAt, nil
 	case domain.StatusChanged:
 		return &eventsv1.DeliveryStatusChanged{
@@ -71,6 +72,7 @@ func toProto(e domain.Event) (proto.Message, *eventsv1.Subject, time.Time, error
 		if p.Dropoff != nil {
 			m.Dropoff = latLng(*p.Dropoff)
 		}
+		m.ReadyAt = optTime(p.ReadyAt)
 		return m, deliverySubject(p.DeliveryID), time.Time{}, nil
 	case domain.PersonalDataErased:
 		return &eventsv1.DeliveryPersonalDataErased{
@@ -102,4 +104,11 @@ func protoEnv(env string) (eventsv1.Environment, error) {
 		return eventsv1.Environment_ENVIRONMENT_LIVE, nil
 	}
 	return eventsv1.Environment_ENVIRONMENT_UNSPECIFIED, fmt.Errorf("unknown environment %q", env)
+}
+
+func optTime(t *time.Time) *timestamppb.Timestamp {
+	if t == nil {
+		return nil
+	}
+	return timestamppb.New(*t)
 }

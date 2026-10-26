@@ -7,6 +7,8 @@ package db
 import (
 	"net/netip"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type ApiKey struct {
@@ -49,4 +51,5 @@ type Tenant struct {
 	DefaultModel       string
 	PickupConfirmation string
 	SettingsUpdatedAt  time.Time
+	DefaultPrepMinutes pgtype.Int4
 }

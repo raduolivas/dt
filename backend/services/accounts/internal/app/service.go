@@ -92,7 +92,16 @@ func publishSettings(ctx context.Context, tx Tx, tenantID string, st domain.Tena
 	return tx.Publish(ctx, EventTenantSettingsSet, tenantID, "", &eventsv1.TenantSettingsSet{
 		TenantId: tenantID, AllowedModels: st.AllowedModels, DefaultModel: st.DefaultModel,
 		PickupConfirmation: st.PickupConfirmation, UpdatedAt: timestamppb.New(st.UpdatedAt),
+		DefaultPrepMinutes: prepToProto(st.DefaultPrepMinutes),
 	})
+}
+
+func prepToProto(p *int) *int32 {
+	if p == nil {
+		return nil
+	}
+	v := int32(*p)
+	return &v
 }
 
 // SetLiveEnabled flips the live-mode flag (system use; no actor).

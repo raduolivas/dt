@@ -71,6 +71,10 @@ func toCreateInput(req *deliveriesv1.CreateDeliveryRequest) (domain.NewDeliveryI
 		ItemsSummary:      req.ItemsSummary, Notes: req.Notes,
 		Metadata: req.GetMetadata(),
 	}
+	if t := req.GetReadyAt(); t != nil {
+		v := t.AsTime()
+		in.ReadyAt = &v
+	}
 	if m := req.GetDeliveryModel(); m != "" {
 		model := domain.Model(m)
 		in.Model = &model
@@ -98,6 +102,13 @@ func toPatch(req *deliveriesv1.UpdateDeliveryRequest) (domain.Patch, error) {
 		case "notes":
 			v := req.Notes
 			p.Notes = &v
+		case "ready_at":
+			var v *time.Time
+			if t := req.GetReadyAt(); t != nil {
+				x := t.AsTime()
+				v = &x
+			}
+			p.ReadyAt = &v
 		case "metadata":
 			p.MetadataSet = true
 			if len(req.GetMetadata()) > 0 {
@@ -134,15 +145,25 @@ func toFilter(req *deliveriesv1.ListDeliveriesRequest) app.ListFilter {
 	return f
 }
 
-func toReport(req *deliveriesv1.ReportEventRequest) domain.Report {
+// toReport maps a report. The actor is the partner unless an internal caller
+// (the tracking simulator) says "courier"; the gateway never sets it. A
+// courier's confirmation is always by the courier.
+func toReport(req *deliveriesv1.ReportEventRequest) (domain.Report, error) {
 	r := domain.Report{
 		EventID: req.GetEventId(), Type: domain.ReportType(req.GetType()),
 		Actor: domain.ActorPartner, By: domain.ConfirmedBy(req.GetBy()), Reason: req.GetReason(),
 	}
+	switch req.GetActor() {
+	case "", "partner":
+	case "courier":
+		r.Actor, r.By = domain.ActorCourier, domain.ByCourier
+	default:
+		return r, violation("actor", "invalid", "must be partner or courier")
+	}
 	if t := req.GetOccurredAt(); t != nil {
 		r.OccurredAt = t.AsTime()
 	}
-	return r
+	return r, nil
 }
 
 func toCourierInput(req *deliveriesv1.UpsertCourierRequest) domain.CourierInput {
@@ -168,6 +189,9 @@ func fromDelivery(d *domain.Delivery) *deliveriesv1.Delivery {
 		PickupPolicy:       string(d.Policy),
 		PersonalDataErased: d.ErasedAt != nil,
 		CreatedAt:          ts(d.CreatedAt), UpdatedAt: ts(d.UpdatedAt),
+	}
+	if d.ReadyAt != nil {
+		out.ReadyAt = ts(*d.ReadyAt)
 	}
 	if d.ItemCount != nil {
 		n := int32(min(*d.ItemCount, 999)) //nolint:gosec // bounded by the domain (0-999)

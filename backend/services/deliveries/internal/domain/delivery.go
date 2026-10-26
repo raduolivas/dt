@@ -16,6 +16,8 @@ type NewDeliveryInput struct {
 	DropoffLabel, CustomerFirstName, ItemsSummary, Notes *string
 	ItemCount                                            *int
 	Metadata                                             map[string]string
+	// ReadyAt is when the order will be ready for pickup; nil = not given.
+	ReadyAt *time.Time
 }
 
 // Patch is a partial update. A nil outer pointer leaves the field
@@ -24,8 +26,10 @@ type NewDeliveryInput struct {
 type Patch struct {
 	Dropoff             *Location
 	DropoffLabel, Notes **string
-	Metadata            map[string]string
-	MetadataSet         bool
+	// ReadyAt changes when the order will be ready; allowed until picked_up.
+	ReadyAt     **time.Time
+	Metadata    map[string]string
+	MetadataSet bool
 }
 
 // Delivery is the deliveries aggregate.
@@ -40,7 +44,9 @@ type Delivery struct {
 	DropoffLabel, CustomerFirstName, ItemsSummary, Notes *string
 	ItemCount                                            *int
 	Metadata                                             map[string]string
-	Courier                                              *CourierRef
+	// ReadyAt is when the order will be ready for pickup; nil = unknown.
+	ReadyAt *time.Time
+	Courier *CourierRef
 	// History is the full event log, oldest first. Report needs all of it
 	// (duplicates, pickup confirmations, the conflict rule).
 	History []HistoryEntry
@@ -81,6 +87,9 @@ func NewDelivery(id, tenantID, env string, in NewDeliveryInput, s TenantSettings
 	if err := validateNewDelivery(in); err != nil {
 		return nil, nil, err
 	}
+	if err := checkReadyAt(in.ReadyAt, now, now); err != nil {
+		return nil, nil, err
+	}
 	model := s.DefaultModel
 	if in.Model != nil {
 		model = *in.Model
@@ -97,7 +106,7 @@ func NewDelivery(id, tenantID, env string, in NewDeliveryInput, s TenantSettings
 		Pickup: in.Pickup, PickupName: in.PickupName, Dropoff: in.Dropoff,
 		DropoffLabel: in.DropoffLabel, CustomerFirstName: in.CustomerFirstName,
 		ItemsSummary: in.ItemsSummary, Notes: in.Notes, ItemCount: in.ItemCount,
-		Metadata:  maps.Clone(in.Metadata),
+		Metadata: maps.Clone(in.Metadata), ReadyAt: cloneTime(in.ReadyAt),
 		CreatedAt: now, UpdatedAt: now,
 	}
 	d.record(HistoryEntry{
@@ -107,7 +116,7 @@ func NewDelivery(id, tenantID, env string, in NewDeliveryInput, s TenantSettings
 	return d, []Event{{Type: EventDeliveryCreated, Payload: DeliveryCreated{
 		DeliveryID: id, ExternalID: in.ExternalID, Model: model, Status: StatusConfirmed,
 		Policy: s.PickupPolicy, Pickup: in.Pickup, PickupName: in.PickupName,
-		Dropoff: in.Dropoff, CreatedAt: now,
+		Dropoff: in.Dropoff, CreatedAt: now, ReadyAt: cloneTime(in.ReadyAt),
 	}}}, nil
 }
 
@@ -193,6 +202,14 @@ func (d *Delivery) Update(p Patch, at time.Time) ([]Event, error) {
 	if d.Status.Final() {
 		return nil, ErrInvalidTransition
 	}
+	if p.ReadyAt != nil && d.Status.rank() >= StatusPickedUp.rank() {
+		return nil, ErrInvalidTransition
+	}
+	if p.ReadyAt != nil {
+		if err := checkReadyAt(*p.ReadyAt, d.CreatedAt, at); err != nil {
+			return nil, err
+		}
+	}
 	dropoffChanged := p.Dropoff != nil && *p.Dropoff != d.Dropoff
 	if dropoffChanged {
 		if err := checkLocation("dropoff.location", *p.Dropoff); err != nil {
@@ -237,6 +254,11 @@ func (d *Delivery) Update(p Patch, at time.Time) ([]Event, error) {
 		d.Notes = cloneOpt(*p.Notes)
 		changed = append(changed, "notes")
 	}
+	if p.ReadyAt != nil && !equalTime(d.ReadyAt, *p.ReadyAt) {
+		d.ReadyAt = cloneTime(*p.ReadyAt)
+		ev.ReadyAt = cloneTime(d.ReadyAt)
+		changed = append(changed, "ready_at")
+	}
 	if p.MetadataSet && (!maps.Equal(d.Metadata, p.Metadata) || (d.Metadata == nil) != (p.Metadata == nil)) {
 		d.Metadata = maps.Clone(p.Metadata)
 		changed = append(changed, "metadata")
@@ -275,6 +297,32 @@ func (d *Delivery) statusChanged(from Status, a ActorKind, at time.Time, overrod
 		DeliveryID: d.ID, From: from, To: d.Status, Actor: a,
 		OccurredAt: at, Overrode: overrode,
 	}}
+}
+
+// checkReadyAt checks that a ready time lies within [created - 1 h, now + 24 h].
+func checkReadyAt(v *time.Time, created, now time.Time) error {
+	if v == nil {
+		return nil
+	}
+	if v.Before(created.Add(-time.Hour)) || v.After(now.Add(24*time.Hour)) {
+		return invalid("ready_at", "out_of_range", "must be between 1 hour before creation and 24 hours from now")
+	}
+	return nil
+}
+
+func equalTime(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(*b)
+}
+
+func cloneTime(v *time.Time) *time.Time {
+	if v == nil {
+		return nil
+	}
+	t := *v
+	return &t
 }
 
 func equalOpt(a, b *string) bool {

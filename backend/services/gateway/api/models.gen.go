@@ -542,7 +542,7 @@ type CreateDeliveryResponse struct {
 	PickupPolicy PickupPolicy `json:"pickup_policy"`
 
 	// ReadyAt When the order is expected to be ready for pickup, if you gave one.
-	ReadyAt *time.Time `json:"ready_at,omitempty"`
+	ReadyAt *time.Time `json:"ready_at"`
 
 	// Status `delivered`, `cancelled` and `failed` are final.
 	Status DeliveryStatus `json:"status"`
@@ -606,7 +606,7 @@ type Delivery struct {
 	PickupPolicy PickupPolicy `json:"pickup_policy"`
 
 	// ReadyAt When the order is expected to be ready for pickup, if you gave one.
-	ReadyAt *time.Time `json:"ready_at,omitempty"`
+	ReadyAt *time.Time `json:"ready_at"`
 
 	// Status `delivered`, `cancelled` and `failed` are final.
 	Status    DeliveryStatus `json:"status"`

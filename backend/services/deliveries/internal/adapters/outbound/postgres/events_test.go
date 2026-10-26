@@ -176,3 +176,52 @@ func TestPickupWarningBumpsVersion(t *testing.T) {
 		t.Errorf("stored version after the warning and a change %d, want 4", v)
 	}
 }
+
+func TestReadyAtPersistsAndRidesEvents(t *testing.T) {
+	t.Parallel()
+	e := setup(t)
+	in := fullInput("ord-ready")
+	in.ReadyAt = ptr(t0.Add(15 * time.Minute))
+	d := create(t, e, scopeA, in, domain.DefaultTenantSettings(), t0)
+	got, err := e.repo.Get(context.Background(), scopeA, d.ID)
+	if err != nil || got.ReadyAt == nil || !got.ReadyAt.Equal(*in.ReadyAt) {
+		t.Fatalf("get: %v %v", got, err)
+	}
+	nv := t0.Add(30 * time.Minute)
+	mutate(t, e, scopeA, d.ID, func(d *domain.Delivery) ([]domain.Event, error) {
+		return d.Update(domain.Patch{ReadyAt: ptr(&nv)}, t0.Add(time.Minute))
+	})
+	mutate(t, e, scopeA, d.ID, func(d *domain.Delivery) ([]domain.Event, error) {
+		return d.Update(domain.Patch{ReadyAt: ptr[*time.Time](nil)}, t0.Add(2*time.Minute))
+	})
+	got, err = e.repo.Get(context.Background(), scopeA, d.ID)
+	if err != nil || got.ReadyAt != nil {
+		t.Fatalf("after clear: %v %v", got, err)
+	}
+	var created, updated []*eventsv1.Envelope
+	for _, r := range outboxRows(t, e) {
+		if r.env.GetSubject().GetDeliveryId() != d.ID {
+			continue
+		}
+		switch r.env.GetType() {
+		case domain.EventDeliveryCreated:
+			created = append(created, r.env)
+		case domain.EventDeliveryUpdated:
+			updated = append(updated, r.env)
+		}
+	}
+	c := &eventsv1.DeliveryCreated{}
+	if len(created) != 1 || created[0].GetPayload().UnmarshalTo(c) != nil || !c.GetReadyAt().AsTime().Equal(*in.ReadyAt) {
+		t.Fatalf("created = %v", created)
+	}
+	if len(updated) != 2 {
+		t.Fatalf("updates = %d", len(updated))
+	}
+	u1, u2 := &eventsv1.DeliveryUpdated{}, &eventsv1.DeliveryUpdated{}
+	_ = updated[0].GetPayload().UnmarshalTo(u1)
+	_ = updated[1].GetPayload().UnmarshalTo(u2)
+	if !slices.Equal(u1.GetChangedFields(), []string{"ready_at"}) || !u1.GetReadyAt().AsTime().Equal(nv) ||
+		!slices.Equal(u2.GetChangedFields(), []string{"ready_at"}) || u2.ReadyAt != nil {
+		t.Fatalf("u1 = %v, u2 = %v", u1, u2)
+	}
+}

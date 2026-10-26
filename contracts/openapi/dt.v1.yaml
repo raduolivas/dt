@@ -1891,6 +1891,7 @@ components:
       - personal_data_erased
       - created_at
       - updated_at
+      - ready_at
       properties:
         id:
           $ref: '#/components/schemas/DeliveryId'

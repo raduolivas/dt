@@ -26,6 +26,8 @@ type TenantSettings struct {
 	AllowedModels      []string
 	DefaultModel       string
 	PickupConfirmation string
+	// DefaultPrepMinutes is the usual preparation time; nil = none. 1..240.
+	DefaultPrepMinutes *int
 	UpdatedAt          time.Time
 }
 
@@ -58,6 +60,9 @@ func (s TenantSettings) Validate() error {
 	}
 	if !slices.Contains(knownPolicies, s.PickupConfirmation) {
 		return fmt.Errorf("%w: unknown pickup_confirmation %q", ErrInvalidArgument, s.PickupConfirmation)
+	}
+	if p := s.DefaultPrepMinutes; p != nil && (*p < 1 || *p > 240) {
+		return fmt.Errorf("%w: default_prep_minutes must be 1..240", ErrInvalidArgument)
 	}
 	return nil
 }
