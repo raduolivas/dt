@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -242,8 +243,8 @@ func nonNil[T any](s []T) []T {
 }
 
 func prepToDB(p *int) pgtype.Int4 {
-	if p == nil {
-		return pgtype.Int4{}
+	if p == nil || *p < 0 || *p > math.MaxInt32 {
+		return pgtype.Int4{} // validated to 1..240 before it gets here
 	}
 	return pgtype.Int4{Int32: int32(*p), Valid: true}
 }

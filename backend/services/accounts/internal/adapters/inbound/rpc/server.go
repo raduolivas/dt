@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
 	"time"
 
@@ -186,8 +187,8 @@ func prepFromProto(p *int32) *int {
 }
 
 func prepToProto(p *int) *int32 {
-	if p == nil {
-		return nil
+	if p == nil || *p < 0 || *p > math.MaxInt32 {
+		return nil // validated to 1..240 before it gets here
 	}
 	v := int32(*p)
 	return &v
