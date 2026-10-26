@@ -185,7 +185,7 @@ func Snapshot(st State, now time.Time) TrackingSnapshot {
 		Pickup: c.pickup, Dropoff: c.dropoff, Route: c.route,
 		EtaSeconds: c.eta, EtaWindow: c.window, EtaState: c.etaState, EtaQuality: c.quality,
 		DistanceRemainingM: c.distance, Progress: c.progress, Timeline: c.timeline,
-		UpdatedAt: st.UpdatedAt, Version: st.Version,
+		UpdatedAt: st.UpdatedAt, Version: st.ViewerVersion,
 	}
 	if visible {
 		s.Courier = courierDTO(st, now)

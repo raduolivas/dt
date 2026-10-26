@@ -43,6 +43,9 @@ const (
 	maxSpeedMps   = 200.0 / 3.6
 	jumpDistanceM = 1000.0
 	jumpWindow    = 10 * time.Second
+	// minSpeedWindow is the shortest gap over which the implied speed is
+	// judged: closer fixes differ mostly by GPS jitter.
+	minSpeedWindow = 2 * time.Second
 )
 
 // ErrInvalidFix is returned for a fix with non-finite or out-of-range values.
@@ -67,7 +70,7 @@ func CheckFix(prev *Fix, f Fix, receivedAt time.Time) (FixVerdict, error) {
 			if d > jumpDistanceM && dt < jumpWindow {
 				return FixVerdict{Drop, "jump"}, nil
 			}
-			if d/dt.Seconds() > maxSpeedMps {
+			if dt >= minSpeedWindow && d/dt.Seconds() > maxSpeedMps {
 				return FixVerdict{Drop, "speed"}, nil
 			}
 		} else {
