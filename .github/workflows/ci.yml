@@ -151,6 +151,8 @@ jobs:
             infra/compose/osrm/car
             infra/compose/osrm/bike
           key: osrm-${{ hashFiles('scripts/osrm-prepare.sh') }}
+      - name: Prepare the Amsterdam OSRM data (a no-op when the cache restored it)
+        run: scripts/osrm-prepare.sh amsterdam
       - run: make dev
       - run: make smoke
       - name: Show logs on failure

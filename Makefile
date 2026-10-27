@@ -79,7 +79,7 @@ test: test-go test-web ## Run every test
 lint: lint-go lint-web lint-contracts ## Run every linter
 
 # ---- local stack ------------------------------------------------------------
-.PHONY: dev down logs dtctl seed smoke osrm-data
+.PHONY: dev down logs dtctl seed smoke latency osrm-data
 
 # COMPOSE_OVERRIDE optionally names an extra Compose file (for example one that sets
 # build.network: host on machines whose Docker build containers have no network). Empty by default.
@@ -121,9 +121,19 @@ seed: dtctl ## Create the tenant "Dev Tenant" and a test key in the running stac
 	echo "Call the API with:" >&2; \
 	echo "curl -sS -H 'Authorization: Bearer $$secret' http://127.0.0.1:8080/v1/me"
 
-smoke: dtctl ## Run the M1 and M2 end-to-end smoke tests against the running stack (after make dev)
+smoke: dtctl ## Run the M1, M2 and M3 end-to-end smoke tests against the running stack (after make dev)
 	DTCTL=$(DTCTL) scripts/smoke-m1.sh
 	DTCTL=$(DTCTL) scripts/smoke-m2.sh
+	DTCTL=$(DTCTL) scripts/smoke-m3.sh
+
+latency: dtctl ## Measure fix-to-viewer latency against the running stack (after make dev); fails when p95 >= 1000 ms
+	@set -eu; tenant=$$($(DTCTL) tenant create --name "Latency"); \
+	$(DTCTL) tenant settings --tenant "$$tenant" --models direct,end_to_end --default end_to_end --pickup any >/dev/null; \
+	secret=$$($(DTCTL) key create --tenant "$$tenant" --env test --name latency); \
+	for _ in $$(seq 1 40); do \
+	  [ "$$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $$secret" http://127.0.0.1:8080/v1/me)" = 200 ] && break; sleep 0.25; \
+	done; \
+	cd backend/tools/latency && DT_API_KEY="$$secret" go run . -deliveries 20 -viewers 5 -duration 2m
 
 # ---- security and CI --------------------------------------------------------
 .PHONY: secrets ci

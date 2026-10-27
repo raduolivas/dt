@@ -19,7 +19,8 @@ make doctor
 |---|---|
 | `make dev` | Build the service images, start the local stack (Postgres + PostGIS, Redis, NATS JetStream and the five services) and wait until every `/readyz` answers 200 |
 | `make seed` | After `make dev`: create the tenant `Dev Tenant` and one test key, and print a `curl` line for `GET /v1/me` |
-| `make smoke` | After `make dev`: the M1 and M2 end-to-end smoke tests (`scripts/smoke-m1.sh`, `scripts/smoke-m2.sh`, need `jq`); prints `SMOKE OK`, then `SMOKE M2 OK` and `OK` |
+| `make smoke` | After `make dev`: the M1, M2 and M3 end-to-end smoke tests (`scripts/smoke-m1.sh`, `scripts/smoke-m2.sh`, `scripts/smoke-m3.sh`, need `jq`); prints `SMOKE OK`, then `SMOKE M2 OK`, `SMOKE M3 OK` and `OK` |
+| `make latency` | After `make dev`: drive 20 couriers at 1 Hz with 5 viewers for 2 minutes and print the fix-to-viewer p50, p95 and p99; exits non-zero when p95 is 1000 ms or more |
 | `make dtctl` | Build the dev CLI for the accounts API into `backend/bin/dtctl` |
 | `make down` | Stop the local stack and delete its volumes |
 | `make logs` | Follow the local stack logs |
@@ -121,6 +122,7 @@ backend/                Go workspace (go.work)
   pkg/                  technical shared libraries only (logx, httpx, bootstrap, outbox, apikey, otelx, testkit, ...)
   gen/                  generated contract code (never edited by hand)
   tools/dtctl/          dev CLI for the accounts internal RPC
+  tools/latency/        fix-to-viewer latency measurement (make latency)
 contracts/
   openapi/dt.v1.yaml    public REST API (OpenAPI 3.1)
   proto/dt/.../v1/      event and internal contracts (Protobuf, managed by buf)
@@ -128,8 +130,9 @@ web/                    pnpm workspace + Turborepo
   packages/renderer/    the Three.js tracking renderer (former prototype)
   packages/contract/    TypeScript types generated from the OpenAPI contract
 infra/compose/          local stack; postgres/init creates one schema and one role per service
-scripts/                helper scripts (wait-ready.sh, smoke-m1.sh, smoke-m2.sh)
+scripts/                helper scripts (wait-ready.sh, smoke-m1.sh, smoke-m2.sh, smoke-m3.sh)
 docs/                   project context, architecture, open questions, specs and plans
+  guides/               partner guides (tracking links, courier locations, tracking data, simulator)
 ```
 
 ## The onion rule
@@ -153,6 +156,7 @@ to watch the snapshot update live.
 
 - [`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md): decisions and current state
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): architecture draft
+- [`docs/guides/`](docs/guides/): partner guides: [tracking links](docs/guides/tracking-links.md), [courier locations](docs/guides/courier-locations.md), [partner tracking data](docs/guides/partner-tracking-data.md), [sandbox simulator](docs/guides/sandbox-simulator.md)
 - [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md): questions waiting for an answer
 - [`docs/superpowers/specs/`](docs/superpowers/specs/): the MVP spec; [`docs/superpowers/plans/`](docs/superpowers/plans/): milestone plans
 
