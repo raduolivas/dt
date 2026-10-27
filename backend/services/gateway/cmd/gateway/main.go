@@ -130,7 +130,7 @@ func run(ctx context.Context, ready func(addr string)) error {
 				Limiter: limiter, JWKS: signer.JWKS(), TrustedProxies: trusted, Clock: clock, Log: d.Log,
 			})
 			httpapi.Mount(mux, httpapi.Routes(httpapi.Deps{Deliveries: deliveries, Idempotency: idem, Log: d.Log,
-				Links: links, TrackingURLBase: trackingBase}), httpapi.Middleware{
+				Links: links, TrackingURLBase: trackingBase, Tracking: trackingRPC}), httpapi.Middleware{
 				Auth:           &app.Authenticator{Keys: keys, Hasher: keyhash.New(pepper), Clock: clock},
 				TrustedProxies: trusted,
 				Log:            d.Log,

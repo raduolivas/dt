@@ -642,8 +642,40 @@ func TestMiddlewareHookOrder(t *testing.T) {
 func TestRoutesTable(t *testing.T) {
 	t.Parallel()
 	rs := httpapi.Routes(httpapi.Deps{})
-	if len(rs) != 11 { // me.get plus the ten delivery and courier routes
-		t.Fatalf("routes = %d, want 11", len(rs))
+	if len(rs) != 15 { // me.get, the ten delivery and courier routes, the four tracking routes
+		t.Fatalf("routes = %d, want 15", len(rs))
+	}
+	type props struct {
+		method, pattern string
+		scope           domain.Scope
+		bucket          string
+		auditReads      bool
+		maxBody         int64
+		noIdempotency   bool
+	}
+	want := map[string]props{
+		"deliveries.get_tracking":      {http.MethodGet, "/v1/deliveries/{id}/tracking", domain.ScopeDeliveriesRead, "", false, 0, false},
+		"deliveries.list_trail":        {http.MethodGet, "/v1/deliveries/{id}/trail", domain.ScopeDeliveriesRead, "", true, 0, false},
+		"deliveries.list_proof_points": {http.MethodGet, "/v1/deliveries/{id}/proof-points", domain.ScopeDeliveriesRead, "", true, 0, false},
+		"couriers.report_locations": {http.MethodPost, "/v1/couriers/{id}/locations", domain.ScopeCouriersWrite,
+			httpapi.RateBucketRelay, false, 16 << 10, true},
+	}
+	for _, r := range rs {
+		w, ok := want[r.Name]
+		if !ok {
+			if r.RateBucket != "" || r.AuditReads || r.MaxBody != 0 || r.NoIdempotency {
+				t.Errorf("route %s has tracking-only settings: %+v", r.Name, r)
+			}
+			continue
+		}
+		delete(want, r.Name)
+		got := props{r.Method, r.Pattern, r.Scope, r.RateBucket, r.AuditReads, r.MaxBody, r.NoIdempotency}
+		if got != w || r.Env != httpapi.AnyEnv || r.SuccessStatus != http.StatusOK {
+			t.Errorf("route %s = %+v, want %+v", r.Name, got, w)
+		}
+	}
+	if len(want) != 0 {
+		t.Errorf("missing routes: %v", want)
 	}
 	r := rs[0]
 	if r.Name != "me.get" || r.Method != http.MethodGet || r.Pattern != "/v1/me" || r.Scope != "" ||

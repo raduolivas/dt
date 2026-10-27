@@ -20,10 +20,11 @@ const maxAuditText = 512
 // context, so a client hanging up does not drop the entry.
 const auditTimeout = 5 * time.Second
 
-// Audit is the Middleware.Audit hook (non-GET routes). Mount places it right
+// Audit is the Middleware.Audit hook (non-GET routes, and GET routes with
+// AuditReads). Mount places it right
 // inside RateLimit, so it wraps Authorize, Idempotency and the handler. After
 // them it records one app.AuditEntry for every request with a
-// principal whose method is not GET or HEAD: the credential as actor, the
+// principal whose method is not GET or HEAD (or whose route sets AuditReads): the credential as actor, the
 // route name as action, the route's path value as target, and the status the
 // client received. That includes 403s, idempotency conflicts and replays. A
 // panic is recorded as the 500 the outer Recover answers, then re-raised.
@@ -44,7 +45,7 @@ func Audit(store app.AuditStore, clock app.Clock, log *slog.Logger) Hook {
 		wildcard := patternWildcard(rt.Pattern)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			p, ok := PrincipalFrom(r.Context())
-			if !ok || r.Method == http.MethodGet || r.Method == http.MethodHead {
+			if !ok || ((r.Method == http.MethodGet || r.Method == http.MethodHead) && !rt.AuditReads) {
 				next.ServeHTTP(w, r)
 				return
 			}

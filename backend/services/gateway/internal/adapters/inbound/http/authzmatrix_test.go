@@ -3,6 +3,9 @@ package httpapi_test
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -19,7 +22,9 @@ import (
 
 	deliveriesv1 "github.com/raduolivas/dt/backend/gen/dt/deliveries/v1"
 	eventsv1 "github.com/raduolivas/dt/backend/gen/dt/events/v1"
+	trackingv1 "github.com/raduolivas/dt/backend/gen/dt/tracking/v1"
 	"github.com/raduolivas/dt/backend/pkg/apikey"
+	"github.com/raduolivas/dt/backend/pkg/viewerjwt"
 	"github.com/raduolivas/dt/backend/services/gateway/api"
 	httpapi "github.com/raduolivas/dt/backend/services/gateway/internal/adapters/inbound/http"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
@@ -56,25 +61,38 @@ type matrixFixture struct {
 	revoked, expired, rolled, noScope testKey
 	allowlisted, unknown              testKey
 	other                             netip.Prefix // the allowlist of the allowlisted key
+	viewer                            string       // a valid viewer JWT
 }
 
-// Resources the matrix fake (scopedFake) owns. delMine and couMine belong to
-// (fixtureTenant, test), delLive to (fixtureTenant, live), delOther to another
-// tenant. The live key's happy path uses delLive, so that "live key on a test
+// Resources the matrix fakes (scopedFake, scopedTracking) own. delMine and
+// couMine belong to (fixtureTenant, test), delLive and couLive to
+// (fixtureTenant, live), delOther and couOther to another tenant. The live
+// key's happy path uses the live resource, so that "live key on a test
 // resource" can be the other-environment case.
 const (
 	delMine     = delID
 	delLive     = "del_01j9z3k8m2q4r6s8t0v2w4x6z1"
 	delOther    = "del_01j9z3k8m2q4r6s8t0v2w4x6z2"
 	couMine     = couID
+	couLive     = "cou_01j9z3k8m2q4r6s8t0v2w4x6z4"
+	couOther    = "cou_01j9z3k8m2q4r6s8t0v2w4x6z5"
 	extMine     = "c-mine"
 	otherTenant = "ten_01j9z3k8m2q4r6s8t0v2w4x6z3"
 )
 
-// hasResourceID reports whether rt addresses a delivery by {id}.
+// hasResourceID reports whether rt addresses a delivery or courier by {id}.
 // couriers.upsert is deliberately not one: external_id is tenant and
 // environment scoped, so a PUT just creates the caller's own courier.
 func hasResourceID(rt httpapi.Route) bool { return strings.Contains(rt.Pattern, "{id}") }
+
+// resources are rt's own, live and other-tenant resource ids: couriers for
+// the courier-location relay, deliveries otherwise.
+func resources(rt httpapi.Route) (mine, live, other string) {
+	if strings.HasPrefix(rt.Pattern, "/v1/couriers/{id}") {
+		return couMine, couLive, couOther
+	}
+	return delMine, delLive, delOther
+}
 
 // onResource points a request at resource id.
 func onResource(rt httpapi.Route, id string) func(*http.Request) {
@@ -106,9 +124,10 @@ func tenantResourceCases(rt httpapi.Route, f *matrixFixture) []credentialCase {
 		return nil
 	}
 	notFound := func(httpapi.Route) (int, string) { return http.StatusNotFound, "not_found" }
+	mine, _, other := resources(rt)
 	return []credentialCase{
-		{Name: "other tenant's resource", Apply: both(bearer(f.test), onResource(rt, delOther)), Want: notFound, Reached: true},
-		{Name: "same tenant, other environment", Apply: both(bearer(f.live), onResource(rt, delMine)), Want: notFound, Reached: true},
+		{Name: "other tenant's resource", Apply: both(bearer(f.test), onResource(rt, other)), Want: notFound, Reached: true},
+		{Name: "same tenant, other environment", Apply: both(bearer(f.live), onResource(rt, mine)), Want: notFound, Reached: true},
 	}
 }
 
@@ -140,15 +159,23 @@ func newMatrixFixture(t *testing.T, rt httpapi.Route) (*matrixFixture, []testKey
 	f.allowlisted = mint(t, apikey.Test, "ak_01j9z3k8m2q4r6s8t0v2w4x6y7", domain.AllScopes...)
 	f.allowlisted.rec.AllowedIPs = []netip.Prefix{f.other}
 	f.unknown = mint(t, apikey.Test, "ak_01j9z3k8m2q4r6s8t0v2w4x6y8", domain.AllScopes...) // never stored
+	// A valid viewer token for one of the tenant's deliveries.
+	jwt, _, err := testSigner(t).Sign(viewerjwt.Claims{DeliveryID: delMine, TenantID: tenantID, Env: "test",
+		LinkID: "tl_01j9z3k8m2q4r6s8t0v2w4x6y8"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.viewer = jwt
 	return f, []testKey{f.test, f.live, f.revoked, f.expired, f.rolled, f.noScope, f.allowlisted}
 }
 
-// liveResource points a delivery route at the live-environment delivery.
+// liveResource points a resource route at the live-environment resource.
 func liveResource(rt httpapi.Route) func(*http.Request) {
 	if !hasResourceID(rt) {
 		return func(*http.Request) {}
 	}
-	return onResource(rt, delLive)
+	_, live, _ := resources(rt)
+	return onResource(rt, live)
 }
 
 func bearer(k testKey) func(*http.Request) {
@@ -173,6 +200,12 @@ func credentialCases(rt httpapi.Route, f *matrixFixture) []credentialCase {
 		{Name: "malformed key", Apply: func(r *http.Request) { r.Header.Set("Authorization", "Bearer dt_sk_test_short") }, Want: unauth},
 		{Name: "unknown key", Apply: bearer(f.unknown), Want: unauth},
 		{Name: "revoked key", Apply: bearer(f.revoked), Want: unauth},
+		// A viewer token is no partner credential, from a browser or not.
+		{Name: "viewer token", Apply: func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+f.viewer) }, Want: unauth},
+		{Name: "viewer token with Origin", Apply: func(r *http.Request) {
+			r.Header.Set("Authorization", "Bearer "+f.viewer)
+			r.Header.Set("Origin", "https://shop.example")
+		}, Want: unauth},
 		{Name: "expired key", Apply: bearer(f.expired), Want: unauth},
 		{Name: "rolled key inside the overlap", Apply: bearer(f.rolled), Want: allowed},
 		{Name: "valid key with Origin", Apply: func(r *http.Request) {
@@ -213,19 +246,21 @@ var idemSeq atomic.Int64
 // routeBodies is a valid example body per route name (the OpenAPI examples),
 // so request validation never masks an authorization result.
 var routeBodies = map[string]string{
-	"test.deliveries.create":  `{"name":"matrix"}`,
-	"deliveries.create":       create,
-	"deliveries.update":       `{"dropoff":{"location":{"lat":-23.55,"lng":-46.64}}}`,
-	"deliveries.assign":       `{"courier_id":"` + couMine + `"}`,
-	"deliveries.report_event": `{"event_id":"evt-9001","type":"at_pickup","occurred_at":"2026-10-22T14:10:00Z"}`,
-	"deliveries.cancel":       `{"reason":"Customer cancelled the order"}`,
-	"couriers.upsert":         `{"display_name":"Carlos","vehicle":"e_bike","photo_url":"https://cdn.example.com/c/77.jpg"}`,
+	"test.deliveries.create":    `{"name":"matrix"}`,
+	"deliveries.create":         create,
+	"deliveries.update":         `{"dropoff":{"location":{"lat":-23.55,"lng":-46.64}}}`,
+	"deliveries.assign":         `{"courier_id":"` + couMine + `"}`,
+	"deliveries.report_event":   `{"event_id":"evt-9001","type":"at_pickup","occurred_at":"2026-10-22T14:10:00Z"}`,
+	"deliveries.cancel":         `{"reason":"Customer cancelled the order"}`,
+	"couriers.upsert":           `{"display_name":"Carlos","vehicle":"e_bike","photo_url":"https://cdn.example.com/c/77.jpg"}`,
+	"couriers.report_locations": relayBody,
 }
 
 // baseRequest is a request that would succeed for rt with a good credential
 // on the test environment's own resources.
 func baseRequest(rt httpapi.Route) *http.Request {
-	target := resolvePath(rt, delMine, extMine)
+	mine, _, _ := resources(rt)
+	target := resolvePath(rt, mine, extMine)
 	body, hasBody := routeBodies[rt.Name]
 	if !hasBody && rt.Method == http.MethodPost {
 		body, hasBody = `{"name":"matrix"}`, true
@@ -305,6 +340,55 @@ func (s scopedFake) CancelDelivery(ctx context.Context, r *deliveriesv1.CancelDe
 		return nil, err
 	}
 	return &deliveriesv1.CancelDeliveryResponse{Delivery: s.del}, nil
+}
+
+// scopedTracking is the tracking client of the matrix: like scopedFake, it
+// answers NotFound for a delivery or courier outside the scope the gateway
+// sends.
+type scopedTracking struct{ *fakeTracking }
+
+var courierOwners = map[string]owner{
+	couMine:  {tenantID, eventsv1.Environment_ENVIRONMENT_TEST},
+	couLive:  {tenantID, eventsv1.Environment_ENVIRONMENT_LIVE},
+	couOther: {otherTenant, eventsv1.Environment_ENVIRONMENT_TEST},
+}
+
+func (s scopedTracking) visible(ctx context.Context, name string, req any, sc *trackingv1.Scope, id string, of map[string]owner) error {
+	if err := s.rec(ctx, name, req); err != nil {
+		return err
+	}
+	if o, ok := of[id]; !ok || o.tenant != sc.GetTenantId() || o.env != sc.GetEnvironment() {
+		return rpcFail(connect.CodeNotFound, "not_found")(ctx)
+	}
+	return nil
+}
+
+func (s scopedTracking) GetPartnerView(ctx context.Context, r *trackingv1.GetPartnerViewRequest) (*trackingv1.PartnerView, error) {
+	if err := s.visible(ctx, "view", r, r.GetScope(), r.GetDeliveryId(), owners); err != nil {
+		return nil, err
+	}
+	return s.view, nil
+}
+
+func (s scopedTracking) ListTrail(ctx context.Context, r *trackingv1.ListTrailRequest) (*trackingv1.TrailPage, error) {
+	if err := s.visible(ctx, "trail", r, r.GetScope(), r.GetDeliveryId(), owners); err != nil {
+		return nil, err
+	}
+	return s.trail, nil
+}
+
+func (s scopedTracking) ListProofPoints(ctx context.Context, r *trackingv1.ListProofPointsRequest) (*trackingv1.ProofPoints, error) {
+	if err := s.visible(ctx, "proofs", r, r.GetScope(), r.GetDeliveryId(), owners); err != nil {
+		return nil, err
+	}
+	return s.proofs, nil
+}
+
+func (s scopedTracking) IngestLocations(ctx context.Context, r *trackingv1.IngestRequest) (*trackingv1.IngestResponse, error) {
+	if err := s.visible(ctx, "ingest", r, r.GetScope(), r.GetCourierId(), courierOwners); err != nil {
+		return nil, err
+	}
+	return s.ingest, nil
 }
 
 func (s scopedFake) ErasePersonalData(ctx context.Context, r *deliveriesv1.ErasePersonalDataRequest) (*deliveriesv1.ErasePersonalDataResponse, error) {
@@ -448,10 +532,10 @@ func TestAuthorizationMatrix(t *testing.T) {
 				var handled atomic.Int64
 				// Production routes get a fresh fake per cell; the two
 				// test-only routes carry their own handlers.
-				fake := scopedFake{newFake()}
+				fake, track := scopedFake{newFake()}, scopedTracking{newFakeTracking()}
 				counted := rt
 				links := &app.TrackingLinks{Store: apptest.NewMemLinks(), Hasher: apptest.Hasher{}, Revoker: &apptest.MemRevoker{}, Expiries: &apptest.MemExpiries{}, Clock: fixedClock{}}
-				for _, pr := range httpapi.Routes(httpapi.Deps{Deliveries: fake, Links: links}) {
+				for _, pr := range httpapi.Routes(httpapi.Deps{Deliveries: fake, Links: links, Tracking: track}) {
 					if pr.Name == rt.Name {
 						counted = pr
 					}
@@ -478,11 +562,12 @@ func TestAuthorizationMatrix(t *testing.T) {
 				status, code := cell.Want(rt)
 				rows := audit.all()
 				// M1 audits every authenticated write at its final status,
-				// refusals included (insufficient_scope, 404s). Requests
+				// refusals included (insufficient_scope, 404s), and M3 the
+				// reads of location history (AuditReads routes). Requests
 				// refused before a principal exists (401, the Origin and IP
 				// 403s of Authenticate) have no actor, and 429s are skipped
 				// on purpose, so neither leaves a row.
-				audited := rt.Method != http.MethodGet && status != http.StatusUnauthorized && status != http.StatusTooManyRequests &&
+				audited := (rt.Method != http.MethodGet || rt.AuditReads) && status != http.StatusUnauthorized && status != http.StatusTooManyRequests &&
 					code != "secret_key_in_browser" && code != "ip_not_allowed"
 				if audited {
 					if len(rows) != 1 {
@@ -509,8 +594,8 @@ func TestAuthorizationMatrix(t *testing.T) {
 					if n := handled.Load(); n != wantHandled {
 						t.Fatalf("handler ran %d times, want %d", n, wantHandled)
 					}
-					if n := fake.count(); n != wantRPC {
-						t.Fatalf("deliveries calls = %d, want %d", n, wantRPC)
+					if n := fake.count() + track.count(); n != wantRPC {
+						t.Fatalf("deliveries and tracking calls = %d, want %d", n, wantRPC)
 					}
 					return
 				}
@@ -546,5 +631,149 @@ func TestEveryRouteIsInTheMatrix(t *testing.T) {
 			t.Errorf("duplicate route name %q", rt.Name)
 		}
 		seen[rt.Name] = true
+	}
+}
+
+// forgeViewerJWT signs payload with the Ed25519 key of seed under kid "v1":
+// a token the gateway's signer would never issue (another audience, say)
+// but whose signature verifies.
+func forgeViewerJWT(t *testing.T, seed []byte, payload map[string]any) string {
+	t.Helper()
+	enc := func(v any) string {
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return base64.RawURLEncoding.EncodeToString(b)
+	}
+	signing := enc(map[string]string{"alg": "EdDSA", "typ": "JWT", "kid": "v1"}) + "." + enc(payload)
+	sig := ed25519.Sign(ed25519.NewKeyFromSeed(seed), []byte(signing))
+	return signing + "." + base64.RawURLEncoding.EncodeToString(sig)
+}
+
+// viewerClaims is the payload of a viewer token for link l, with audience aud.
+func viewerClaims(l domain.TrackingLink, aud any) map[string]any {
+	return map[string]any{"iss": viewerjwt.Issuer, "aud": aud, "sub": l.DeliveryID, "tid": l.TenantID,
+		"env": string(l.Env), "lid": l.ID, "iat": viewerNow.Unix(), "exp": viewerNow.Add(viewerjwt.TTL).Unix(), "jti": "matrix"}
+}
+
+// TestViewerAuthorizationMatrix runs the customer viewer routes against
+// every credential case: the link token on /v1/tracking/session, the viewer
+// token on /refresh, and a secret key on both. (A viewer token on the partner
+// routes is in TestAuthorizationMatrix.)
+func TestViewerAuthorizationMatrix(t *testing.T) {
+	t.Parallel()
+	secret := func(t *testing.T, r *http.Request, origin bool) {
+		k := mint(t, apikey.Test, actor, domain.AllScopes...)
+		r.Header.Set("Authorization", "Bearer "+k.raw)
+		if !origin {
+			r.Header.Del("Origin")
+		}
+	}
+	type viewerCase struct {
+		name   string
+		req    func(t *testing.T, v *viewerEdge) *http.Request
+		status int
+		code   string // "" for success
+	}
+	session := []viewerCase{
+		{"valid link token", func(t *testing.T, v *viewerEdge) *http.Request {
+			_, tok := v.issue(t)
+			return sessionReq(tok)
+		}, http.StatusOK, ""},
+		{"rotated link token", func(t *testing.T, v *viewerEdge) *http.Request {
+			_, tok := v.issue(t)
+			if _, _, err := v.links.Rotate(context.Background(), domain.Principal{TenantID: tenantID, Env: domain.EnvTest}, delID); err != nil {
+				t.Fatal(err)
+			}
+			return sessionReq(tok)
+		}, http.StatusUnauthorized, "link_invalid"},
+		{"expired link token", func(t *testing.T, v *viewerEdge) *http.Request {
+			_, tok := v.issue(t)
+			// Final an hour ago: the link expired 30 minutes ago.
+			if err := v.links.ExpireOnFinal(context.Background(), delID, viewerNow.Add(-time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			return sessionReq(tok)
+		}, http.StatusUnauthorized, "link_invalid"},
+		{"garbage link token", func(*testing.T, *viewerEdge) *http.Request {
+			return sessionReq("garbage_garbage_garbag") // link token shaped, matches nothing
+		}, http.StatusUnauthorized, "link_invalid"},
+		{"secret key instead of a link token", func(t *testing.T, _ *viewerEdge) *http.Request {
+			r := sessionReq("garbage_garbage_garbag")
+			secret(t, r, false)
+			return r
+		}, http.StatusUnauthorized, "link_invalid"},
+		{"secret key with Origin", func(t *testing.T, v *viewerEdge) *http.Request {
+			_, tok := v.issue(t)
+			r := sessionReq(tok)
+			secret(t, r, true)
+			return r
+		}, http.StatusForbidden, "secret_key_in_browser"},
+	}
+	signed := func(t *testing.T, v *viewerEdge, s *viewerjwt.Signer, at time.Time) string {
+		l, _ := v.issue(t)
+		jwt, _, err := s.Sign(viewerjwt.Claims{DeliveryID: l.DeliveryID, TenantID: l.TenantID, Env: string(l.Env), LinkID: l.ID}, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return jwt
+	}
+	refresh := []viewerCase{
+		{"valid viewer token", func(t *testing.T, v *viewerEdge) *http.Request {
+			return refreshReq(signed(t, v, v.signer, viewerNow))
+		}, http.StatusOK, ""},
+		{"forged token with aud viewer (control)", func(t *testing.T, v *viewerEdge) *http.Request {
+			l, _ := v.issue(t)
+			return refreshReq(forgeViewerJWT(t, v.seed, viewerClaims(l, "viewer")))
+		}, http.StatusOK, ""},
+		{"wrong aud", func(t *testing.T, v *viewerEdge) *http.Request {
+			l, _ := v.issue(t)
+			return refreshReq(forgeViewerJWT(t, v.seed, viewerClaims(l, "partner")))
+		}, http.StatusUnauthorized, "viewer_token_invalid"},
+		{"aud viewer and another", func(t *testing.T, v *viewerEdge) *http.Request {
+			l, _ := v.issue(t)
+			return refreshReq(forgeViewerJWT(t, v.seed, viewerClaims(l, []string{"viewer", "partner"})))
+		}, http.StatusUnauthorized, "viewer_token_invalid"},
+		{"expired viewer token", func(t *testing.T, v *viewerEdge) *http.Request {
+			return refreshReq(signed(t, v, v.signer, viewerNow.Add(-time.Hour)))
+		}, http.StatusUnauthorized, "viewer_token_invalid"},
+		{"viewer token of another key", func(t *testing.T, v *viewerEdge) *http.Request {
+			return refreshReq(signed(t, v, testSigner(t), viewerNow)) // same kid, other key
+		}, http.StatusUnauthorized, "viewer_token_invalid"},
+		{"no credential", func(*testing.T, *viewerEdge) *http.Request {
+			r := refreshReq("")
+			r.Header.Del("Authorization")
+			return r
+		}, http.StatusUnauthorized, "viewer_token_invalid"},
+		{"secret key", func(t *testing.T, _ *viewerEdge) *http.Request {
+			r := refreshReq("")
+			secret(t, r, false)
+			return r
+		}, http.StatusUnauthorized, "viewer_token_invalid"},
+		{"secret key with Origin", func(t *testing.T, _ *viewerEdge) *http.Request {
+			r := refreshReq("")
+			secret(t, r, true)
+			return r
+		}, http.StatusForbidden, "secret_key_in_browser"},
+	}
+	for route, cases := range map[string][]viewerCase{"tracking.session": session, "tracking.session_refresh": refresh} {
+		for _, c := range cases {
+			t.Run(route+"/"+c.name, func(t *testing.T) {
+				t.Parallel()
+				v := newViewerEdge(t, nil)
+				req := c.req(t, v)
+				rec := v.do(req)
+				if c.code != "" {
+					wantProblem(t, rec, c.status, c.code)
+				} else if rec.Code != c.status {
+					t.Fatalf("status = %d, want %d: %s", rec.Code, c.status, rec.Body.String())
+				}
+				// Every answer, refusals included, is readable from a browser.
+				if req.Header.Get("Origin") != "" && rec.Header().Get("Access-Control-Allow-Origin") != "*" {
+					t.Fatalf("no CORS header: %v", rec.Header())
+				}
+			})
+		}
 	}
 }

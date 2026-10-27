@@ -47,6 +47,23 @@ func bearerToken(r *http.Request) (string, bool) {
 	return token, true
 }
 
+// secretKeyInBrowser answers 403 secret_key_in_browser, and reports true,
+// when the request carries a bearer token that looks like a secret key
+// together with an Origin header: the key leaked to a browser and must not
+// be used from one. It runs before any lookup, on the partner API and on the
+// viewer routes alike.
+func secretKeyInBrowser(w http.ResponseWriter, r *http.Request) bool {
+	token, ok := bearerToken(r)
+	if !ok || !apikey.LooksLikeSecretKey(token) || r.Header.Get("Origin") == "" {
+		return false
+	}
+	httpx.WriteProblem(w, r, httpx.Problem{
+		Status: http.StatusForbidden, Code: "secret_key_in_browser",
+		Detail: "Secret keys must never be used from a browser. Roll this key.",
+	})
+	return true
+}
+
 // Authenticate resolves the request's secret key to a principal, in order:
 //
 //  1. A bearer token that looks like a secret key, sent with an Origin header,
@@ -64,14 +81,10 @@ func bearerToken(r *http.Request) (string, bool) {
 func Authenticate(auth Authenticator, log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token, ok := bearerToken(r)
-			if ok && apikey.LooksLikeSecretKey(token) && r.Header.Get("Origin") != "" {
-				httpx.WriteProblem(w, r, httpx.Problem{
-					Status: http.StatusForbidden, Code: "secret_key_in_browser",
-					Detail: "Secret keys must never be used from a browser. Roll this key.",
-				})
+			if secretKeyInBrowser(w, r) {
 				return
 			}
+			token, ok := bearerToken(r)
 			// A key in the URL may already sit in proxy and browser logs; refuse
 			// it even next to a valid header so the habit never works.
 			if !ok || r.URL.Query().Has("api_key") {

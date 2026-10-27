@@ -10,6 +10,7 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 
 	"github.com/raduolivas/dt/backend/gen/dt/deliveries/v1/deliveriesv1connect"
+	"github.com/raduolivas/dt/backend/gen/dt/tracking/v1/trackingv1connect"
 	"github.com/raduolivas/dt/backend/pkg/httpx"
 	"github.com/raduolivas/dt/backend/services/gateway/api"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
@@ -39,8 +40,25 @@ type Route struct {
 	// authorization matrix expects it). Upsert routes that can answer two
 	// statuses name the usual one.
 	SuccessStatus int
+	// RateBucket names the rate limit the route is charged to. "" is the
+	// partner key bucket (rl:sk:<credential_id>); RateBucketRelay is the
+	// courier-location relay's own buckets, charged instead of it.
+	RateBucket string
+	// AuditReads makes the Audit hook record this GET route as well (reads
+	// of location history are audited, spec M3 §4.1).
+	AuditReads bool
+	// MaxBody is the request body limit in bytes; 0 is MaxBodyBytes.
+	MaxBody int64
+	// NoIdempotency exempts a POST route from the Idempotency hook. Only the
+	// courier-location relay sets it: its contract takes no Idempotency-Key
+	// (a GPS batch sent twice is harmless) and it runs at up to 1/s per
+	// courier, too often to store a record per call.
+	NoIdempotency bool
 	Handler       http.Handler
 }
+
+// RateBucketRelay is Route.RateBucket of the courier-location relay.
+const RateBucketRelay = "relay"
 
 // Deps are what the route handlers need.
 type Deps struct {
@@ -55,6 +73,10 @@ type Deps struct {
 	// TrackingURLBase is the hosted tracking page's base URL; a link's url
 	// is <base>/t/<token>.
 	TrackingURLBase string
+	// Tracking is the tracking internal RPC client (partner tracking data
+	// and the courier-location relay). Nil answers those routes 503
+	// tracking_unavailable.
+	Tracking trackingv1connect.TrackingServiceClient
 	// Log receives failures of the deliveries calls. Nil means slog.Default().
 	Log *slog.Logger
 }
@@ -74,6 +96,7 @@ func Routes(deps Deps) []Route {
 	}
 	d := &deliveriesAPI{c: deps.Deliveries, purger: deps.Idempotency, log: log,
 		links: deps.Links, trackingBase: strings.TrimRight(deps.TrackingURLBase, "/")}
+	t := &trackingAPI{c: deps.Tracking, log: log}
 	secret := []domain.CredentialType{domain.CredentialSecretKey}
 	route := func(name, method, pattern string, scope domain.Scope, status int, h http.HandlerFunc) Route {
 		return Route{Name: name, Method: method, Pattern: pattern, Credentials: secret, Scope: scope,
@@ -96,7 +119,26 @@ func Routes(deps Deps) []Route {
 		route("deliveries.rotate_tracking_link", http.MethodPost, "/v1/deliveries/{id}/tracking-link/rotate", write, http.StatusOK, d.rotateTrackingLink),
 		route("deliveries.erase_personal_data", http.MethodDelete, "/v1/deliveries/{id}/personal-data", write, http.StatusOK, d.erasePersonalData),
 		route("couriers.upsert", http.MethodPut, "/v1/couriers/{external_id}", couriers, http.StatusOK, d.upsertCourier),
+		route("deliveries.get_tracking", http.MethodGet, "/v1/deliveries/{id}/tracking", read, http.StatusOK, t.getTracking),
+		auditedRead(route("deliveries.list_trail", http.MethodGet, "/v1/deliveries/{id}/trail", read, http.StatusOK, t.listTrail)),
+		auditedRead(route("deliveries.list_proof_points", http.MethodGet, "/v1/deliveries/{id}/proof-points", read, http.StatusOK, t.listProofPoints)),
+		relay(route("couriers.report_locations", http.MethodPost, "/v1/couriers/{id}/locations", couriers, http.StatusOK, t.reportLocations)),
 	}
+}
+
+// auditedRead makes the Audit hook record a GET route.
+func auditedRead(r Route) Route {
+	r.AuditReads = true
+	return r
+}
+
+// relay puts a route on the relay's rate buckets and its 16 KB body limit,
+// without idempotency records.
+func relay(r Route) Route {
+	r.RateBucket = RateBucketRelay
+	r.MaxBody = MaxRelayBodyBytes
+	r.NoIdempotency = true
+	return r
 }
 
 // Authenticator resolves a raw secret key used from ip to a principal; it is
@@ -130,23 +172,28 @@ type Middleware struct {
 	// principal set and before Audit and Authorize, so every authenticated
 	// request is counted, including those Authorize refuses.
 	RateLimit Hook
-	// Idempotency (Task 11) runs on POST routes only, after Authorize.
+	// Idempotency (Task 11) runs on POST routes only (not NoIdempotency
+	// ones), after Authorize.
 	Idempotency Hook
-	// Audit (Task 12) runs on non-GET routes only, after RateLimit and
-	// before Authorize, so it sees every authenticated write's final status
-	// except a 429.
+	// Audit (Task 12) runs on non-GET routes, and on GET routes that set
+	// AuditReads, after RateLimit and before Authorize, so it sees every
+	// authenticated write's (and audited read's) final status except a 429.
 	Audit Hook
 }
 
 // MaxBodyBytes is the partner request body limit (spec §11.1).
 const MaxBodyBytes = 64 << 10
 
+// MaxRelayBodyBytes is the courier-location relay's body limit (spec M3 §5).
+const MaxRelayBodyBytes = 16 << 10
+
 // Mount registers every route on mux under its "METHOD /v1/..." pattern,
 // wrapped in this chain, outermost first:
 //
-//	MaxBytes(64 KiB) → ClientIP(trusted) → [FailedAuth] → Authenticate →
-//	[RateLimit] → [Audit, non-GET only] → Authorize(route) →
-//	[Idempotency, POST only] → Validate (OpenAPI, security off) → handler
+//	MaxBytes(64 KiB, or the route's MaxBody) → ClientIP(trusted) →
+//	[FailedAuth] → Authenticate → [RateLimit] →
+//	[Audit, non-GET or AuditReads] → Authorize(route) →
+//	[Idempotency, POST but not NoIdempotency] → Validate (OpenAPI, security off) → handler
 //
 // FailedAuth wraps Authenticate so it can count the 401s Authenticate writes.
 // RateLimit sits right inside Authenticate, so every authenticated request
@@ -177,11 +224,11 @@ func Mount(mux *http.ServeMux, routes []Route, mw Middleware) {
 
 	for _, rt := range routes {
 		h := validate(rt.Handler)
-		if mw.Idempotency != nil && rt.Method == http.MethodPost {
+		if mw.Idempotency != nil && rt.Method == http.MethodPost && !rt.NoIdempotency {
 			h = mw.Idempotency(h, rt)
 		}
 		h = Authorize(rt)(h)
-		if mw.Audit != nil && rt.Method != http.MethodGet {
+		if mw.Audit != nil && (rt.Method != http.MethodGet || rt.AuditReads) {
 			h = mw.Audit(h, rt)
 		}
 		if mw.RateLimit != nil {
@@ -192,7 +239,11 @@ func Mount(mux *http.ServeMux, routes []Route, mw Middleware) {
 			h = mw.FailedAuth(h, rt)
 		}
 		h = ClientIP(mw.TrustedProxies)(h)
-		h = MaxBytes(MaxBodyBytes)(h)
+		limit := int64(MaxBodyBytes)
+		if rt.MaxBody > 0 {
+			limit = rt.MaxBody
+		}
+		h = MaxBytes(limit)(h)
 		mux.Handle(rt.Method+" "+rt.Pattern, h)
 	}
 

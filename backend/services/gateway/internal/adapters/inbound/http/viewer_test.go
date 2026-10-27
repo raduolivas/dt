@@ -72,10 +72,19 @@ type viewerEdge struct {
 	links  *app.TrackingLinks
 	snaps  *fakeSnapshots
 	signer *viewerjwt.Signer
+	seed   []byte // the signer's key
 	logs   *bytes.Buffer
 }
 
 func testSigner(t *testing.T) *viewerjwt.Signer {
+	t.Helper()
+	s, _ := testSignerSeed(t)
+	return s
+}
+
+// testSignerSeed is a signer with a fresh key "v1", and that key's seed (to
+// forge tokens the signer would never issue).
+func testSignerSeed(t *testing.T) (*viewerjwt.Signer, []byte) {
 	t.Helper()
 	seed := make([]byte, 32)
 	_, _ = rand.Read(seed)
@@ -83,7 +92,7 @@ func testSigner(t *testing.T) *viewerjwt.Signer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return s
+	return s, seed
 }
 
 // newViewerEdge mounts the partner API and the viewer routes on one mux
@@ -91,7 +100,7 @@ func testSigner(t *testing.T) *viewerjwt.Signer {
 func newViewerEdge(t *testing.T, lim app.Limiter) *viewerEdge {
 	t.Helper()
 	links := &app.TrackingLinks{Store: apptest.NewMemLinks(), Hasher: apptest.Hasher{}, Revoker: &apptest.MemRevoker{}, Expiries: &apptest.MemExpiries{}, Clock: fixedClock{}}
-	s := testSigner(t)
+	s, seed := testSignerSeed(t)
 	snaps := &fakeSnapshots{}
 	logs := &bytes.Buffer{}
 	log := logx.New(logs, slog.LevelDebug, "gateway")
@@ -104,7 +113,7 @@ func newViewerEdge(t *testing.T, lim app.Limiter) *viewerEdge {
 		Limiter: lim, JWKS: s.JWKS(), Clock: fixedClock{}, Log: log,
 	})
 	h := httpx.RequestID(httpx.AccessLog(log)(httpx.Recover(log)(mux)))
-	return &viewerEdge{t: t, h: h, links: links, snaps: snaps, signer: s, logs: logs}
+	return &viewerEdge{t: t, h: h, links: links, snaps: snaps, signer: s, seed: seed, logs: logs}
 }
 
 func (v *viewerEdge) do(r *http.Request) *httptest.ResponseRecorder {
