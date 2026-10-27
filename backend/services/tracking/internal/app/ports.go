@@ -243,3 +243,37 @@ type PartnerReads interface {
 	// ProofPoints returns the delivery's proof points in time order.
 	ProofPoints(ctx context.Context, s Scope, deliveryID string) ([]ProofPoint, error)
 }
+
+// SimDelivery is what the simulator reads of a delivery from deliveries.
+type SimDelivery struct {
+	ID     string
+	Model  domain.Model
+	Status domain.Status
+	// PickupPolicy is any, courier, store or courier_and_store.
+	PickupPolicy    string
+	Courier         *domain.Courier // nil: none assigned
+	Pickup, Dropoff domain.LatLng
+}
+
+// CourierUpsert creates or updates a courier by external id.
+type CourierUpsert struct{ ExternalID, DisplayName, Vehicle string }
+
+// StatusReport is a status event the simulator reports: at_pickup,
+// pickup_confirmed or delivered, as the courier, or a pickup confirmation by
+// the store (Actor "partner", By "store").
+type StatusReport struct{ EventID, Type, Actor, By string }
+
+// Deliveries is the deliveries internal API the simulator drives: the same
+// calls the partner path uses. Get returns ErrNotFound for a delivery
+// outside the scope.
+type Deliveries interface {
+	Get(ctx context.Context, s Scope, deliveryID string) (SimDelivery, error)
+	UpsertCourier(ctx context.Context, s Scope, c CourierUpsert) (domain.Courier, error)
+	Assign(ctx context.Context, s Scope, deliveryID, courierID string) error
+	Report(ctx context.Context, s Scope, deliveryID string, r StatusReport) error
+}
+
+// RoadSnapper snaps a point to the nearest road (OSRM /nearest).
+type RoadSnapper interface {
+	Nearest(ctx context.Context, profile string, p domain.LatLng) (domain.LatLng, error)
+}

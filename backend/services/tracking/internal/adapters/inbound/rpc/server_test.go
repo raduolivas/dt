@@ -84,7 +84,7 @@ func serve(t *testing.T) (trackingv1connect.TrackingServiceClient, *pgxpool.Pool
 	svc := &app.Service{States: states, Reads: repo, Trail: postgres.NewTrailWriter(pool, log),
 		Partner: repo, Pub: redis.NewPublisher(rdb), Events: repo, Sampler: states, Clock: clock{}, Log: log}
 	mux := http.NewServeMux()
-	if err := rpc.Mount(mux, svc, testToken, log); err != nil {
+	if err := rpc.Mount(mux, svc, nil, testToken, log); err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(mux)

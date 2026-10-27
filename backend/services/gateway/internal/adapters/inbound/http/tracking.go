@@ -317,3 +317,37 @@ func (a *trackingAPI) listProofPoints(w http.ResponseWriter, r *http.Request) {
 		Data []point `json:"data"`
 	}{data})
 }
+
+// simulate serves POST /v1/test/deliveries/{id}/simulate: it starts a
+// sandbox simulation in tracking (test keys only; the route is TestOnly).
+// The body is optional; the OpenAPI validation has checked its ranges.
+func (a *trackingAPI) simulate(w http.ResponseWriter, r *http.Request) {
+	sc, ok := a.scope(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		SpeedFactor float64 `json:"speed_factor"`
+		SignalGap   *struct {
+			AfterS    int32 `json:"after_s"`
+			DurationS int32 `json:"duration_s"`
+		} `json:"signal_gap"`
+	}
+	if !decodeBody(w, r, &in) {
+		return
+	}
+	req := &trackingv1.SimulateRequest{Scope: sc, DeliveryId: r.PathValue("id"), SpeedFactor: in.SpeedFactor}
+	if g := in.SignalGap; g != nil {
+		req.Gap = &trackingv1.SignalGap{AfterS: g.AfterS, DurationS: g.DurationS}
+	}
+	res, err := callRPC(r.Context(), func(ctx context.Context) (*trackingv1.SimulateResponse, error) {
+		return a.c.Simulate(ctx, req)
+	})
+	if err != nil {
+		writeRPCError(w, r, a.log, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, struct {
+		SimulationID string `json:"simulation_id"`
+	}{res.GetSimulationId()})
+}

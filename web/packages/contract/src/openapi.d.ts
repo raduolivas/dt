@@ -868,6 +868,7 @@ export interface components {
             signal_gap?: {
                 /** @description Seconds of simulated time after the start. */
                 after_s: number;
+                /** @description Seconds of real time without fixes, so the stale (30 s) and lost (5 min) states show at any speed factor. The courier keeps driving at real-time speed meanwhile. */
                 duration_s: number;
             };
         };

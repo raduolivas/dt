@@ -118,17 +118,24 @@ func both(fs ...func(*http.Request)) func(*http.Request) {
 
 // tenantResourceCases are the cases for routes that take a tenant-owned
 // resource id: another tenant's resource and the same tenant's other
-// environment are both 404 not_found, never 403.
+// environment are both 404 not_found, never 403. A test-only route has no
+// other-environment case: a live key never gets that far.
 func tenantResourceCases(rt httpapi.Route, f *matrixFixture) []credentialCase {
 	if !hasResourceID(rt) {
 		return nil
 	}
 	notFound := func(httpapi.Route) (int, string) { return http.StatusNotFound, "not_found" }
 	mine, _, other := resources(rt)
-	return []credentialCase{
+	cs := []credentialCase{
 		{Name: "other tenant's resource", Apply: both(bearer(f.test), onResource(rt, other)), Want: notFound, Reached: true},
-		{Name: "same tenant, other environment", Apply: both(bearer(f.live), onResource(rt, mine)), Want: notFound, Reached: true},
 	}
+	if rt.Env == httpapi.TestOnly {
+		// The other environment is live: its key is refused before the
+		// resource is looked up (the test-only case above).
+		return cs
+	}
+	return append(cs, credentialCase{Name: "same tenant, other environment", Apply: both(bearer(f.live), onResource(rt, mine)),
+		Want: notFound, Reached: true})
 }
 
 func allScopesExcept(skip domain.Scope) []domain.Scope {
@@ -254,6 +261,7 @@ var routeBodies = map[string]string{
 	"deliveries.cancel":         `{"reason":"Customer cancelled the order"}`,
 	"couriers.upsert":           `{"display_name":"Carlos","vehicle":"e_bike","photo_url":"https://cdn.example.com/c/77.jpg"}`,
 	"couriers.report_locations": relayBody,
+	"deliveries.simulate":       `{"speed_factor":10,"signal_gap":{"after_s":30,"duration_s":90}}`,
 }
 
 // baseRequest is a request that would succeed for rt with a good credential
@@ -389,6 +397,13 @@ func (s scopedTracking) IngestLocations(ctx context.Context, r *trackingv1.Inges
 		return nil, err
 	}
 	return s.ingest, nil
+}
+
+func (s scopedTracking) Simulate(ctx context.Context, r *trackingv1.SimulateRequest) (*trackingv1.SimulateResponse, error) {
+	if err := s.visible(ctx, "simulate", r, r.GetScope(), r.GetDeliveryId(), owners); err != nil {
+		return nil, err
+	}
+	return s.sim, nil
 }
 
 func (s scopedFake) ErasePersonalData(ctx context.Context, r *deliveriesv1.ErasePersonalDataRequest) (*deliveriesv1.ErasePersonalDataResponse, error) {

@@ -393,3 +393,27 @@ func TestEtaQuality(t *testing.T) {
 		t.Fatal(q)
 	}
 }
+
+func TestDestinationAndAlong(t *testing.T) {
+	store := LatLng{Lat: 52.368, Lng: 4.903}
+	p := Destination(store, 225, 1500)
+	if d := DistanceM(store, p); math.Abs(d-1500) > 1 {
+		t.Fatalf("distance = %.1f, want 1500", d)
+	}
+	if p.Lat >= store.Lat || p.Lng >= store.Lng {
+		t.Fatalf("%v is not south-west of %v", p, store)
+	}
+	path := []LatLng{store, Destination(store, 90, 100), Destination(Destination(store, 90, 100), 0, 100)}
+	if q, h := Along(path, 50); math.Abs(DistanceM(store, q)-50) > 0.5 || math.Abs(h-90) > 1 {
+		t.Fatalf("Along(50) = %v heading %.1f", q, h)
+	}
+	if q, h := Along(path, 150); math.Abs(DistanceM(path[1], q)-50) > 0.5 || math.Abs(h) > 1 && math.Abs(h-360) > 1 {
+		t.Fatalf("Along(150) = %v heading %.1f", q, h)
+	}
+	if q, _ := Along(path, 1e6); DistanceM(q, path[2]) > 0.01 {
+		t.Fatalf("past the end = %v, want %v", q, path[2])
+	}
+	if q, _ := Along(path, -5); DistanceM(q, store) > 0.01 {
+		t.Fatalf("before the start = %v", q)
+	}
+}

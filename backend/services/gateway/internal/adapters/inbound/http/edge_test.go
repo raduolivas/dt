@@ -642,8 +642,8 @@ func TestMiddlewareHookOrder(t *testing.T) {
 func TestRoutesTable(t *testing.T) {
 	t.Parallel()
 	rs := httpapi.Routes(httpapi.Deps{})
-	if len(rs) != 15 { // me.get, the ten delivery and courier routes, the four tracking routes
-		t.Fatalf("routes = %d, want 15", len(rs))
+	if len(rs) != 16 { // me.get, the ten delivery and courier routes, the four tracking routes, the simulator
+		t.Fatalf("routes = %d, want 16", len(rs))
 	}
 	type props struct {
 		method, pattern string
@@ -660,6 +660,8 @@ func TestRoutesTable(t *testing.T) {
 		"deliveries.list_proof_points": {http.MethodGet, "/v1/deliveries/{id}/proof-points", domain.ScopeDeliveriesRead, "", true, 0, false, false},
 		"couriers.report_locations": {http.MethodPost, "/v1/couriers/{id}/locations", domain.ScopeCouriersWrite,
 			httpapi.RateBucketRelay, false, 16 << 10, true, true},
+		// A normal write (idempotent, audited), for test keys only.
+		"deliveries.simulate": {http.MethodPost, "/v1/test/deliveries/{id}/simulate", domain.ScopeDeliveriesWrite, "", false, 0, false, false},
 	}
 	for _, r := range rs {
 		w, ok := want[r.Name]
@@ -671,7 +673,11 @@ func TestRoutesTable(t *testing.T) {
 		}
 		delete(want, r.Name)
 		got := props{r.Method, r.Pattern, r.Scope, r.RateBucket, r.AuditReads, r.MaxBody, r.NoIdempotency, r.NoAudit}
-		if got != w || r.Env != httpapi.AnyEnv || r.SuccessStatus != http.StatusOK {
+		wantEnv, wantStatus := httpapi.AnyEnv, http.StatusOK
+		if r.Name == "deliveries.simulate" {
+			wantEnv, wantStatus = httpapi.TestOnly, http.StatusAccepted
+		}
+		if got != w || r.Env != wantEnv || r.SuccessStatus != wantStatus {
 			t.Errorf("route %s = %+v, want %+v", r.Name, got, w)
 		}
 	}

@@ -1,7 +1,8 @@
 // Command tracking runs the tracking service: the read model consumers of
 // the DELIVERIES and ACCOUNTS streams, the internal Connect RPC API (on its
 // own mTLS port), the trail writer, the outbox relay that publishes the
-// tracking.* events and the signal sweeper. Its main port (PORT) carries the
+// tracking.* events, the signal sweeper and the sandbox simulator (which
+// drives deliveries through the deliveries internal RPC). Its main port (PORT) carries the
 // health endpoints and the public viewer endpoints (snapshot, WebSocket and
 // SSE streams), so it is never mTLS; viewer routes are never on the
 // internal RPC port.
@@ -35,6 +36,7 @@ import (
 	"github.com/raduolivas/dt/backend/services/tracking/internal/adapters/inbound/consumer"
 	httpapi "github.com/raduolivas/dt/backend/services/tracking/internal/adapters/inbound/http"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/adapters/inbound/rpc"
+	"github.com/raduolivas/dt/backend/services/tracking/internal/adapters/outbound/deliveriesrpc"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/adapters/outbound/osrm"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/adapters/outbound/postgres"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/adapters/outbound/redis"
@@ -75,6 +77,17 @@ func run(ctx context.Context) error {
 	rpcTLS, err := rpcauth.ServerTLSFromEnv("INTERNAL_RPC")
 	if err != nil {
 		return fmt.Errorf("tracking: config: %w", err)
+	}
+	// The simulator calls deliveries with the same certificate (mTLS).
+	clientTLS, err := rpcauth.ClientTLSFromEnv("INTERNAL_RPC")
+	if err != nil {
+		return fmt.Errorf("tracking: config: %w", err)
+	}
+	var deliveries *deliveriesrpc.Client
+	if u := os.Getenv("DELIVERIES_RPC_URL"); u != "" {
+		if deliveries, err = deliveriesrpc.New(u, token, clientTLS); err != nil {
+			return fmt.Errorf("tracking: config: %w", err)
+		}
 	}
 	jwksURL, err := jwksURLFromEnv()
 	if err != nil {
@@ -126,13 +139,23 @@ func run(ctx context.Context) error {
 			}
 			// Without OSRM URLs no routes are built (and the ETA stays
 			// unknown): the service still tracks and shows the courier.
+			var snapper app.RoadSnapper
 			if urls := osrmURLs(); len(urls) > 0 {
-				svc.Router = osrm.New(urls, osrm.DefaultTimeout)
+				router := osrm.New(urls, osrm.DefaultTimeout)
+				svc.Router, snapper = router, router
 			} else {
 				d.Log.Warn("OSRM_CAR_URL and OSRM_BIKE_URL are unset: routes and ETAs are off")
 			}
+			// Without DELIVERIES_RPC_URL the sandbox simulator is off
+			// (Simulate answers Unimplemented).
+			var sim rpc.Simulator
+			if deliveries != nil {
+				sim = &app.Simulator{Svc: svc, Deliveries: deliveries, Snapper: snapper, Base: ctx, Log: d.Log}
+			} else {
+				d.Log.Warn("DELIVERIES_RPC_URL is unset: the sandbox simulator is off")
+			}
 
-			rpcSrv, err := internalServer(svc, token, rpcPort, rpcTLS, d.Log)
+			rpcSrv, err := internalServer(svc, sim, token, rpcPort, rpcTLS, d.Log)
 			if err != nil {
 				return nil, err
 			}
@@ -165,9 +188,9 @@ func run(ctx context.Context) error {
 
 // internalServer binds the internal RPC listener: mTLS when configured,
 // with the same middleware as the main port.
-func internalServer(svc *app.Service, token string, port int, tlsCfg *tls.Config, log *slog.Logger) (*httpx.Server, error) {
+func internalServer(svc *app.Service, sim rpc.Simulator, token string, port int, tlsCfg *tls.Config, log *slog.Logger) (*httpx.Server, error) {
 	mux := http.NewServeMux()
-	if err := rpc.Mount(mux, svc, token, log); err != nil {
+	if err := rpc.Mount(mux, svc, sim, token, log); err != nil {
 		return nil, err
 	}
 	handler := httpx.RequestID(httpx.AccessLog(log)(httpx.Recover(log)(otelx.HTTP(mux, "tracking"))))

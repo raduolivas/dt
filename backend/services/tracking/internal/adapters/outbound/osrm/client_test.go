@@ -131,3 +131,30 @@ func TestOSRMAmsterdamRoute(t *testing.T) {
 		t.Fatalf("match = %v, %v", m, err)
 	}
 }
+
+func TestOSRMClientNearest(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"code":"Ok","waypoints":[{"hint":"x","distance":12.5,"name":"Damrak","location":[4.89348,52.37311]}]}`))
+	}))
+	defer srv.Close()
+	c := New(map[string]string{"bike": srv.URL}, 800*time.Millisecond)
+	p, err := c.Nearest(context.Background(), "bike", domain.LatLng{Lat: 52.3732, Lng: 4.8936})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p != (domain.LatLng{Lat: 52.37311, Lng: 4.89348}) {
+		t.Fatalf("nearest = %v", p)
+	}
+	if !strings.HasSuffix(gotPath, "/nearest/v1/cycling/4.893600,52.373200") || !strings.Contains(gotQuery, "number=1") {
+		t.Fatalf("request = %s ? %s", gotPath, gotQuery)
+	}
+	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":"Ok","waypoints":[]}`))
+	}))
+	defer empty.Close()
+	if _, err := New(map[string]string{"bike": empty.URL}, time.Second).Nearest(context.Background(), "bike", p); err == nil {
+		t.Fatal("no waypoint must be an error")
+	}
+}

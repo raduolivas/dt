@@ -1,7 +1,7 @@
 // Package rpc serves the internal tracking Connect API
 // (dt.tracking.v1.TrackingService). Every RPC needs the internal bearer
-// token; the API is never routed publicly. Simulate still answers
-// Unimplemented.
+// token; the API is never routed publicly. Simulate answers Unimplemented
+// when no simulator is mounted.
 package rpc
 
 import (
@@ -33,8 +33,14 @@ const readMaxBytes = 64 << 10
 // MaxFixes is the most fixes one IngestLocations call may carry.
 const MaxFixes = 50
 
-// Mount registers the TrackingService on mux, behind the token check.
-func Mount(mux *http.ServeMux, svc *app.Service, token string, log *slog.Logger) error {
+// Simulator starts sandbox simulations; it is satisfied by *app.Simulator.
+type Simulator interface {
+	Start(ctx context.Context, sc app.Scope, deliveryID string, speedFactor float64, gap *app.SignalGap) (string, error)
+}
+
+// Mount registers the TrackingService on mux, behind the token check. sim
+// may be nil: Simulate then answers Unimplemented.
+func Mount(mux *http.ServeMux, svc *app.Service, sim Simulator, token string, log *slog.Logger) error {
 	if svc == nil || log == nil {
 		return errors.New("rpc: service and logger are required")
 	}
@@ -43,7 +49,7 @@ func Mount(mux *http.ServeMux, svc *app.Service, token string, log *slog.Logger)
 		return err
 	}
 	srv := connect.NewServer(auth)
-	trackingv1connect.RegisterTrackingServiceHandler(srv, &Server{svc: svc, log: log})
+	trackingv1connect.RegisterTrackingServiceHandler(srv, &Server{svc: svc, sim: sim, log: log})
 	connecthttp.Mount(mux, srv, connecthttp.WithReadMaxBytes(readMaxBytes))
 	return nil
 }
@@ -53,6 +59,7 @@ func Mount(mux *http.ServeMux, svc *app.Service, token string, log *slog.Logger)
 type Server struct {
 	trackingv1connect.UnimplementedTrackingServiceHandler
 	svc *app.Service
+	sim Simulator // nil: Simulate is Unimplemented
 	log *slog.Logger
 }
 
@@ -127,6 +134,48 @@ func (s *Server) IngestLocations(ctx context.Context, req *trackingv1.IngestRequ
 		return nil, connect.NewError(connect.CodeUnavailable, "tracking unavailable").WithCause(err)
 	}
 	return &trackingv1.IngestResponse{Accepted: int32(acc), Dropped: int32(drop)}, nil //nolint:gosec // at most MaxFixes
+}
+
+// Simulate starts a sandbox simulation of a test delivery (design §6). The
+// speed factor (0 = 1) must be 1 to 20 and the gap values 0 to 3600; a live
+// scope is refused (the gateway answers live keys 403 before this).
+func (s *Server) Simulate(ctx context.Context, req *trackingv1.SimulateRequest) (*trackingv1.SimulateResponse, error) {
+	if s.sim == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, "simulation is not available")
+	}
+	sc, err := toScope(ctx, req.GetScope())
+	if err != nil {
+		return nil, err
+	}
+	if sc.Env != "test" {
+		return nil, invalid(ctx, "simulate runs in the test environment only")
+	}
+	if !ids.Valid(ids.Delivery, req.GetDeliveryId()) {
+		return nil, invalid(ctx, "delivery_id must be a del_ id")
+	}
+	speed := req.GetSpeedFactor()
+	if speed == 0 {
+		speed = 1
+	}
+	if !(speed >= 1 && speed <= 20) {
+		return nil, invalid(ctx, "speed_factor must be 1 to 20")
+	}
+	var gap *app.SignalGap
+	if g := req.GetGap(); g != nil {
+		if g.GetAfterS() < 0 || g.GetAfterS() > 3600 || g.GetDurationS() < 0 || g.GetDurationS() > 3600 {
+			return nil, invalid(ctx, "gap values must be 0 to 3600")
+		}
+		gap = &app.SignalGap{AfterS: int(g.GetAfterS()), DurationS: int(g.GetDurationS())}
+	}
+	id, err := s.sim.Start(ctx, sc, req.GetDeliveryId(), speed, gap)
+	if errors.Is(err, app.ErrSimulationState) {
+		rpcauth.SetCode(ctx, "simulation_state")
+		return nil, connect.NewError(connect.CodeFailedPrecondition, "the delivery is final or already being simulated")
+	}
+	if err != nil {
+		return nil, s.fail(ctx, "Simulate", err)
+	}
+	return &trackingv1.SimulateResponse{SimulationId: id}, nil
 }
 
 // GetSnapshot returns the customer's viewer snapshot as the JSON the public

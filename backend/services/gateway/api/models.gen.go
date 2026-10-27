@@ -861,7 +861,9 @@ type SimulateDeliveryRequest struct {
 	// SignalGap Stop sending fixes for a while, to test the stale and lost states.
 	SignalGap *struct {
 		// AfterS Seconds of simulated time after the start.
-		AfterS    int `json:"after_s"`
+		AfterS int `json:"after_s"`
+
+		// DurationS Seconds of real time without fixes, so the stale (30 s) and lost (5 min) states show at any speed factor. The courier keeps driving at real-time speed meanwhile.
 		DurationS int `json:"duration_s"`
 	} `json:"signal_gap,omitempty"`
 

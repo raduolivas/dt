@@ -35,6 +35,7 @@ type fakeTracking struct {
 	trail   *trackingv1.TrailPage
 	proofs  *trackingv1.ProofPoints
 	ingest  *trackingv1.IngestResponse
+	sim     *trackingv1.SimulateResponse
 	failing func(ctx context.Context) error
 }
 
@@ -89,6 +90,13 @@ func (f *fakeTracking) IngestLocations(ctx context.Context, r *trackingv1.Ingest
 	return f.ingest, nil
 }
 
+func (f *fakeTracking) Simulate(ctx context.Context, r *trackingv1.SimulateRequest) (*trackingv1.SimulateResponse, error) {
+	if err := f.rec(ctx, "simulate", r); err != nil {
+		return nil, err
+	}
+	return f.sim, nil
+}
+
 func ll(lat, lng float64) *eventsv1.LatLng { return &eventsv1.LatLng{Lat: lat, Lng: lng} }
 
 func ts(s string) *timestamppb.Timestamp {
@@ -103,6 +111,7 @@ func newFakeTracking() *fakeTracking {
 	speed, heading, eta, dist, prog, acc := 17.5, 84.0, int32(420), 1350.0, 0.42, 6.5
 	return &fakeTracking{
 		ingest: &trackingv1.IngestResponse{Accepted: 2, Dropped: 1},
+		sim:    &trackingv1.SimulateResponse{SimulationId: "sim_01j9z3k8m2q4r6s8t0v2w4x6y8"},
 		view: &trackingv1.PartnerView{
 			DeliveryId: delID, DeliveryModel: "direct", Status: "confirmed",
 			Courier: &trackingv1.PartnerCourier{

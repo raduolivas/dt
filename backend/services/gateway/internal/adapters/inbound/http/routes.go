@@ -129,7 +129,15 @@ func Routes(deps Deps) []Route {
 		auditedRead(route("deliveries.list_trail", http.MethodGet, "/v1/deliveries/{id}/trail", read, http.StatusOK, t.listTrail)),
 		auditedRead(route("deliveries.list_proof_points", http.MethodGet, "/v1/deliveries/{id}/proof-points", read, http.StatusOK, t.listProofPoints)),
 		relay(route("couriers.report_locations", http.MethodPost, "/v1/couriers/{id}/locations", couriers, http.StatusOK, t.reportLocations)),
+		testOnly(route("deliveries.simulate", http.MethodPost, "/v1/test/deliveries/{id}/simulate", write, http.StatusAccepted, t.simulate)),
 	}
+}
+
+// testOnly refuses live credentials (403 environment_not_allowed): sandbox
+// routes such as the simulator.
+func testOnly(r Route) Route {
+	r.Env = TestOnly
+	return r
 }
 
 // auditedRead makes the Audit hook record a GET route.

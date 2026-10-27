@@ -2511,6 +2511,8 @@ components:
               type: integer
               minimum: 0
               maximum: 3600
+              description: Seconds of real time without fixes, so the stale (30 s) and lost (5 min) states show
+                at any speed factor. The courier keeps driving at real-time speed meanwhile.
     SimulationStarted:
       type: object
       required: [simulation_id]

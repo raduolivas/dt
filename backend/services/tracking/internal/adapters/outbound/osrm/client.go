@@ -1,5 +1,5 @@
 // Package osrm is the routing adapter: an HTTP client for osrm-routed
-// (/route and /match), one base URL per profile.
+// (/route, /match and /nearest), one base URL per profile.
 package osrm
 
 import (
@@ -36,7 +36,10 @@ type Client struct {
 	http *http.Client
 }
 
-var _ app.Router = (*Client)(nil)
+var (
+	_ app.Router      = (*Client)(nil)
+	_ app.RoadSnapper = (*Client)(nil)
+)
 
 // New returns a client for the given base URLs by profile ("car", "bike").
 // timeout bounds each request.
@@ -62,6 +65,9 @@ type response struct {
 	Matchings []struct {
 		Geometry geometry `json:"geometry"`
 	} `json:"matchings"`
+	Waypoints []struct {
+		Location [2]float64 `json:"location"`
+	} `json:"waypoints"`
 }
 
 // Route implements app.Router.
@@ -116,6 +122,19 @@ func (c *Client) Match(ctx context.Context, profile string, fixes []domain.Fix) 
 		return nil, errors.New("osrm: match: empty response")
 	}
 	return out, nil
+}
+
+// Nearest implements app.RoadSnapper: the closest point on the road network.
+func (c *Client) Nearest(ctx context.Context, profile string, p domain.LatLng) (domain.LatLng, error) {
+	var r response
+	if err := c.get(ctx, profile, "nearest", coord(p), url.Values{"number": {"1"}}, &r); err != nil {
+		return domain.LatLng{}, err
+	}
+	if len(r.Waypoints) == 0 {
+		return domain.LatLng{}, errors.New("osrm: nearest: empty response")
+	}
+	l := r.Waypoints[0].Location
+	return domain.LatLng{Lat: l[1], Lng: l[0]}, nil
 }
 
 func (c *Client) get(ctx context.Context, profile, service, coords string, q url.Values, out *response) error {

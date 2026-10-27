@@ -133,3 +133,42 @@ func OffRouteM(route []LatLng, p LatLng) float64 {
 	}
 	return best
 }
+
+// Destination is the point distM metres from p along the initial bearing
+// bearingDeg (degrees clockwise from north), on a sphere.
+func Destination(p LatLng, bearingDeg, distM float64) LatLng {
+	d := distM / earthRadiusM
+	th, lat1, lng1 := rad(bearingDeg), rad(p.Lat), rad(p.Lng)
+	lat2 := math.Asin(math.Sin(lat1)*math.Cos(d) + math.Cos(lat1)*math.Sin(d)*math.Cos(th))
+	lng2 := lng1 + math.Atan2(math.Sin(th)*math.Sin(d)*math.Cos(lat1), math.Cos(d)-math.Sin(lat1)*math.Sin(lat2))
+	return LatLng{Lat: lat2 * 180 / math.Pi, Lng: lng2 * 180 / math.Pi}
+}
+
+// Along is the point distM metres along path (clamped to its ends) and the
+// heading of the segment it lies on, in degrees clockwise from north.
+func Along(path []LatLng, distM float64) (LatLng, float64) {
+	if len(path) == 0 {
+		return LatLng{}, 0
+	}
+	for i := 1; i < len(path); i++ {
+		a, b := path[i-1], path[i]
+		seg := distanceM(a, b)
+		if distM <= seg || i == len(path)-1 {
+			t := 1.0
+			if seg > 0 {
+				t = math.Max(0, math.Min(1, distM/seg))
+			}
+			return LatLng{Lat: a.Lat + t*(b.Lat-a.Lat), Lng: a.Lng + t*(b.Lng-a.Lng)}, bearing(a, b)
+		}
+		distM -= seg
+	}
+	return path[0], 0
+}
+
+// bearing is the initial bearing from a to b in degrees [0, 360).
+func bearing(a, b LatLng) float64 {
+	lat1, lat2, dLng := rad(a.Lat), rad(b.Lat), rad(b.Lng-a.Lng)
+	y := math.Sin(dLng) * math.Cos(lat2)
+	x := math.Cos(lat1)*math.Sin(lat2) - math.Sin(lat1)*math.Cos(lat2)*math.Cos(dLng)
+	return math.Mod(math.Atan2(y, x)*180/math.Pi+360, 360)
+}

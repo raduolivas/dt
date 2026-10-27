@@ -1,6 +1,7 @@
 // Command deliveries runs the deliveries service: an internal Connect RPC
-// API, the tenant settings consumer, the pickup confirmation sweeper and the
-// outbox relay that publishes the deliveries.* events.
+// API, the tenant settings consumer, the tracking arrivals consumer (which
+// applies arriving), the pickup confirmation sweeper and the outbox relay
+// that publishes the deliveries.* events.
 package main
 
 import (
@@ -89,7 +90,15 @@ func run(ctx context.Context) error {
 				return outbox.Consume(ctx, d.JS, d.DB, d.Log, consumer.SettingsStream,
 					consumer.SettingsConfig, consumer.Settings(repo.ApplySettings, d.Log))
 			}
-			return []bootstrap.Worker{relay.Run, settings, sweeper.Run}, nil
+			// TRACKING belongs to tracking: wait for it like ACCOUNTS.
+			arrivals := func(ctx context.Context) error {
+				if err := outbox.WaitForStream(ctx, d.JS, outbox.StreamTracking.Name, d.Log); err != nil {
+					return err
+				}
+				return outbox.Consume(ctx, d.JS, d.DB, d.Log, consumer.TrackingStream,
+					consumer.TrackingConfig, consumer.Tracking(svc, d.Log))
+			}
+			return []bootstrap.Worker{relay.Run, settings, arrivals, sweeper.Run}, nil
 		},
 	})
 }
