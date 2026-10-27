@@ -137,11 +137,14 @@ latency: dtctl ## Measure fix-to-viewer latency against the running stack (after
 	cd backend/tools/latency && DT_API_KEY="$$secret" go run . -deliveries 20 -viewers 5 -duration 2m
 
 # ---- security and CI --------------------------------------------------------
-.PHONY: secrets ci
+.PHONY: secrets ci aws-bootstrap
 
 secrets: ## Scan the repository and its history for leaked secrets
 	docker run --rm -v "$$PWD:/repo" \
 	  -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/repo \
 	  zricethezav/gitleaks:v8.30.1 detect --source /repo --redact --no-banner
+
+aws-bootstrap: ## Owner only, from CloudShell in the AWS management account: apply infra/aws/bootstrap (see docs/runbooks/aws-account-setup.md)
+	scripts/aws-bootstrap.sh
 
 ci: lint test build-web audit-web vuln secrets ## Run the CI checks locally

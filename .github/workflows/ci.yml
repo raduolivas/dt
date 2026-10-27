@@ -130,6 +130,33 @@ jobs:
           name: sbom-${{ matrix.service }}
           path: sbom-${{ matrix.service }}.cdx.json
 
+  iac:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: 1.13.2
+          tofu_wrapper: false
+      - name: Format, init and validate every stack (no backend, no credentials)
+        run: |
+          for dir in infra/aws/*/; do
+            echo "::group::${dir}"
+            tofu -chdir="${dir}" fmt -check -recursive
+            tofu -chdir="${dir}" init -backend=false -input=false
+            tofu -chdir="${dir}" validate
+            echo "::endgroup::"
+          done
+      - name: Scan the IaC for misconfigurations
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra/aws
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+
   smoke:
     needs: go
     runs-on: ubuntu-24.04

@@ -14,3 +14,11 @@ backend/tools/dtctl/dtctl
 infra/compose/certs/
 # OSRM routing data (scripts/osrm-prepare.sh)
 infra/compose/osrm/
+# OpenTofu
+infra/aws/**/.terraform/
+infra/aws/**/terraform.tfvars
+infra/aws/**/*.auto.tfvars
+infra/aws/**/backend_override.tf
+infra/aws/**/*.tfstate
+infra/aws/**/*.tfstate.*
+infra/aws/**/*.tfplan
