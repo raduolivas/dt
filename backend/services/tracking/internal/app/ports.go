@@ -50,6 +50,28 @@ type StateStore interface {
 	// cached set. A set that is not cached is left alone: the next read
 	// rebuilds it from Postgres.
 	SetCourierActive(ctx context.Context, courierID, deliveryID string, active bool) error
+	// SetActive adds (active) or removes the delivery in dt:active, the set
+	// of non-final deliveries with a visible courier that the signal sweeper
+	// scans, scored by since (the last fix, else when the courier became
+	// visible). The entry carries the scope.
+	SetActive(ctx context.Context, s Scope, deliveryID string, since time.Time, active bool) error
+	// ActiveSince returns the dt:active entries scored at or before t.
+	ActiveSince(ctx context.Context, t time.Time) ([]ActiveDelivery, error)
+}
+
+// ActiveDelivery is a dt:active entry.
+type ActiveDelivery struct {
+	Scope
+	DeliveryID string
+}
+
+// Lease is a lock with a time to live, held by one instance at a time.
+type Lease interface {
+	// Hold takes the lease for holder, or renews it when holder has it, for
+	// ttl. It reports whether holder has the lease.
+	Hold(ctx context.Context, holder string, ttl time.Duration) (bool, error)
+	// Release frees the lease if holder has it.
+	Release(ctx context.Context, holder string) error
 }
 
 // ReadModel reads the tracking read model (Postgres).
@@ -152,4 +174,43 @@ type Router interface {
 	Route(ctx context.Context, profile string, pts ...domain.LatLng) (path []domain.LatLng, seconds int, err error)
 	// Match snaps fixes to the road network and returns the matched path.
 	Match(ctx context.Context, profile string, fixes []domain.Fix) ([]domain.LatLng, error)
+}
+
+// FeedHandler receives what a ViewerFeed delivers. Its methods are called
+// from the feed's receive loop and must not block.
+type FeedHandler interface {
+	// Snapshot is a viewer snapshot (JSON) of a subscribed delivery.
+	Snapshot(deliveryID string, snapshot []byte)
+	// Revoked names a tracking link the gateway revoked.
+	Revoked(linkID string)
+	// Expiry is a tracking link's expiry, announced by the gateway.
+	Expiry(linkID string, expiresAt time.Time)
+	// Resync follows a reconnection: messages may have been missed, so
+	// open streams must re-read their state.
+	Resync()
+}
+
+// ViewerFeed fans viewer snapshots out to every instance (dt:snap:<del_id>)
+// and carries the gateway's link revocations and expiries.
+type ViewerFeed interface {
+	// Run receives until ctx ends.
+	Run(ctx context.Context, h FeedHandler) error
+	// Subscribe starts (or counts one more user of) the delivery's
+	// snapshots. It returns once the subscription is active, so a state
+	// read afterwards misses no later publish.
+	Subscribe(ctx context.Context, deliveryID string) error
+	// Unsubscribe ends one Subscribe.
+	Unsubscribe(ctx context.Context, deliveryID string)
+}
+
+// ViewerLinks reads what the gateway announced about tracking links, and
+// limits viewer polling.
+type ViewerLinks interface {
+	// Revoked reports whether the link is deny-listed.
+	Revoked(ctx context.Context, linkID string) (bool, error)
+	// Expiry returns the link's announced expiry; false when none is.
+	Expiry(ctx context.Context, linkID string) (time.Time, bool, error)
+	// AllowSnapshot charges one snapshot read to key (30 a minute). When it
+	// is refused, retryAfter says when to try again.
+	AllowSnapshot(ctx context.Context, key string) (ok bool, retryAfter time.Duration, err error)
 }

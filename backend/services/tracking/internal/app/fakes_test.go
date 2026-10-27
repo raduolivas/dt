@@ -38,6 +38,9 @@ type fakeStates struct {
 	beforeP func()              // runs before each Put (to simulate a racing writer)
 	puts    int
 	failPut map[string]error // delivery id -> Put error
+
+	activeSet  map[string]activeEntry // dt:active
+	failActive bool
 }
 
 func newFakeStates() *fakeStates {
@@ -371,4 +374,59 @@ func (f *fakeSampler) Allow(_ context.Context, id string) (bool, error) {
 	}
 	f.seen[id] = true
 	return true, nil
+}
+
+type activeEntry struct {
+	sc    Scope
+	score time.Time
+}
+
+func (f *fakeStates) SetActive(_ context.Context, s Scope, id string, score time.Time, active bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failActive {
+		return context.DeadlineExceeded
+	}
+	if f.activeSet == nil {
+		f.activeSet = map[string]activeEntry{}
+	}
+	if active {
+		f.activeSet[id] = activeEntry{s, score}
+	} else {
+		delete(f.activeSet, id)
+	}
+	return nil
+}
+
+func (f *fakeStates) ActiveSince(_ context.Context, before time.Time) ([]ActiveDelivery, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []ActiveDelivery
+	for id, e := range f.activeSet {
+		if !e.score.After(before) {
+			out = append(out, ActiveDelivery{Scope: e.sc, DeliveryID: id})
+		}
+	}
+	slices.SortFunc(out, func(a, b ActiveDelivery) int { return f.activeSet[a.DeliveryID].score.Compare(f.activeSet[b.DeliveryID].score) })
+	return out, nil
+}
+
+func (f *fakeStates) isActive(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.activeSet[id]
+	return ok
+}
+
+func (f *fakeStates) activeScore(id string) (time.Time, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e, ok := f.activeSet[id]
+	return e.score, ok
+}
+
+func (f *fakeStates) activeScope(id string) Scope {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.activeSet[id].sc
 }

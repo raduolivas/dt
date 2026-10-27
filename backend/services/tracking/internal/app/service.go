@@ -21,6 +21,8 @@ const (
 	EventArrivalDetected  = "tracking.arrival_detected"
 	EventEtaChanged       = "tracking.eta_changed"
 	EventLocationReported = "courier.location_reported"
+	EventSignalLost       = "tracking.courier_signal_lost"
+	EventSignalRestored   = "tracking.courier_signal_restored"
 )
 
 // casAttempts is the first try plus three retries on a version conflict.
@@ -118,6 +120,7 @@ func (s *Service) applyOnce(ctx context.Context, reads ReadModel, memo *routeMem
 		return false, err
 	}
 	s.refreshRoute(ctx, memo, &st, now)
+	st.Signal = domain.ViewerSignal(st, now)
 	st.Version = domain.NextVersion(prevVersion, now)
 	after, err := viewerContent(st, now)
 	if err != nil {
@@ -158,6 +161,7 @@ func (s *Service) applyOnce(ctx context.Context, reads ReadModel, memo *routeMem
 	}
 	// From here on Apply never fails: the state advanced, and an error would
 	// make Ingest drop the trail rows of fixes that were accepted.
+	s.trackActive(ctx, sc, st)
 	if viewerChanged {
 		// Best effort: a missed publish is repaired by the next change and
 		// by viewers reading the snapshot on (re)connect.
@@ -169,14 +173,30 @@ func (s *Service) applyOnce(ctx context.Context, reads ReadModel, memo *routeMem
 }
 
 // viewerContent is the viewer snapshot at now without its version and
-// updated_at, for change detection.
+// updated_at, plus the stored signal, for change detection. The snapshot's
+// signal follows the clock, so before and after a mutation (both at now)
+// it is the same; the stored signal is what was last published, so a
+// signal that changed with time alone still counts as a change.
 func viewerContent(st domain.State, now time.Time) (string, error) {
 	st.ViewerVersion, st.UpdatedAt = 0, time.Time{}
 	b, err := json.Marshal(domain.Snapshot(st, now))
 	if err != nil {
 		return "", fmt.Errorf("marshal snapshot: %w", err)
 	}
-	return string(b), nil
+	return string(b) + "|" + string(st.Signal), nil
+}
+
+// trackActive keeps the delivery's dt:active entry in step with st. A
+// failure is logged: the sweeper drops stale entries, and the next Apply
+// writes the entry again.
+func (s *Service) trackActive(ctx context.Context, sc Scope, st domain.State) {
+	since, active := domain.SweepActive(st)
+	if active && since.IsZero() {
+		since = st.UpdatedAt
+	}
+	if err := s.States.SetActive(ctx, sc, st.DeliveryID, since, active); err != nil {
+		s.log().WarnContext(ctx, "active_set_update_failed", "delivery_id", st.DeliveryID, "error", err)
+	}
 }
 
 // dueEvents refreshes the stored ETA and returns the arrival and ETA events
@@ -197,6 +217,7 @@ func dueEvents(st *domain.State, now time.Time) []pendingEvent {
 			DeliveryId: st.DeliveryID, EtaSeconds: toInt32(v), EtaState: string(es), At: timestamppb.New(now),
 		}, func(st *domain.State) { st.LastEtaEventSec, st.LastEtaEventAt = prevSec, prevAt }})
 	}
+	out = append(out, signalEvents(st, now)...)
 	if domain.ArrivalDue(*st, now) {
 		st.ArrivalSent = true
 		ev := &eventsv1.ArrivalDetected{DeliveryId: st.DeliveryID, At: timestamppb.New(now)}
@@ -236,4 +257,30 @@ func toInt32(v int) int32 {
 		return math.MinInt32
 	}
 	return int32(v)
+}
+
+// signalEvents returns tracking.courier_signal_lost when the shown signal
+// is lost and the gap has not been reported, and
+// tracking.courier_signal_restored when fixes return after a reported gap
+// (the signal is live or stale again). It uses st.Signal, set by the caller.
+func signalEvents(st *domain.State, now time.Time) []pendingEvent {
+	if st.Courier == nil {
+		return nil
+	}
+	courierID := st.Courier.ID
+	switch {
+	case st.Signal == domain.SignalLost && !st.SignalLostSent:
+		st.SignalLostSent = true
+		ev := &eventsv1.CourierSignalLost{DeliveryId: st.DeliveryID, CourierId: courierID}
+		if st.LastFix != nil {
+			ev.LastFixAt = timestamppb.New(st.LastFix.T)
+		}
+		return []pendingEvent{{EventSignalLost, ev, func(st *domain.State) { st.SignalLostSent = false }}}
+	case st.SignalLostSent && (st.Signal == domain.SignalLive || st.Signal == domain.SignalStale):
+		st.SignalLostSent = false
+		return []pendingEvent{{EventSignalRestored, &eventsv1.CourierSignalRestored{
+			DeliveryId: st.DeliveryID, CourierId: courierID, At: timestamppb.New(now),
+		}, func(st *domain.State) { st.SignalLostSent = true }}}
+	}
+	return nil
 }

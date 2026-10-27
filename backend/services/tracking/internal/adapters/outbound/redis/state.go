@@ -32,6 +32,9 @@ const (
 	sampleTTL = time.Minute
 )
 
+// snapPrefix starts every viewer snapshot channel.
+const snapPrefix = "dt:snap:"
+
 // scopeMember marks the tenant and environment a courier set belongs to;
 // "@" never starts a delivery id.
 const scopeMember = "@scope:"
@@ -39,7 +42,7 @@ const scopeMember = "@scope:"
 func stateKey(id string) string          { return "dt:state:" + id }
 func activeKey(cou string) string        { return "dt:courier:" + cou + ":active" }
 func sampleKey(cou string) string        { return "dt:courier:" + cou + ":reported" }
-func snapChannel(id string) string       { return "dt:snap:" + id }
+func snapChannel(id string) string       { return snapPrefix + id }
 func scopeTag(tenant, env string) string { return scopeMember + tenant + "|" + env }
 
 // CourierSource lists a courier's non-final deliveries from Postgres; it

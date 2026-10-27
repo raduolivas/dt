@@ -150,7 +150,14 @@ type State struct {
 	// LastEtaEventSec is the ETA last published as an event.
 	LastEtaEventSec *int
 
-	ArrivalSent    bool
+	ArrivalSent bool
+	// Signal is the courier signal as last evaluated and published (an
+	// Apply or the sweeper; "" while no courier is shown). The snapshot
+	// derives the signal from the clock, so a change driven by time alone
+	// (live → stale → lost) is detected by comparing it with this.
+	Signal Signal
+	// SignalLostSent is true from tracking.courier_signal_lost until the
+	// signal is restored: one event per gap.
 	SignalLostSent bool
 
 	// Version is the state revision: it increases with every stored change
