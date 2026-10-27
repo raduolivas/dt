@@ -125,6 +125,12 @@ type Projection interface {
 	// CourierDeliveries returns the ids of the courier's non-final deliveries.
 	CourierDeliveries(ctx context.Context, courierID string) ([]string, error)
 	PutProofPoint(ctx context.Context, p ProofPoint) error
+	// TrailPoints returns the positions of every raw fix of the delivery,
+	// in trail order.
+	TrailPoints(ctx context.Context, deliveryID string) ([]domain.LatLng, error)
+	// ReplaceTrail stores route as the delivery's simplified route, unless
+	// it has one, and deletes the delivery's raw fixes.
+	ReplaceTrail(ctx context.Context, deliveryID string, route []domain.LatLng, at time.Time) error
 }
 
 // SettingsProjection stores tenant settings in a consumer transaction.
@@ -276,4 +282,30 @@ type Deliveries interface {
 // RoadSnapper snaps a point to the nearest road (OSRM /nearest).
 type RoadSnapper interface {
 	Nearest(ctx context.Context, profile string, p domain.LatLng) (domain.LatLng, error)
+}
+
+// RetentionStore is what the nightly retention job needs of the trail and
+// read model (Postgres). Tenant data is reached one scope at a time.
+type RetentionStore interface {
+	// EnsurePartitions creates the trail's UTC day partitions from day(from)
+	// through daysAhead days later.
+	EnsurePartitions(ctx context.Context, from time.Time, daysAhead int) error
+	// RetentionScopes returns every scope that has deliveries.
+	RetentionScopes(ctx context.Context) ([]Scope, error)
+	// UnsimplifiedBefore returns the scope's deliveries that have a raw fix
+	// before before and no simplified route.
+	UnsimplifiedBefore(ctx context.Context, s Scope, before time.Time) ([]string, error)
+	// TrailPoints returns the positions of every raw fix of the delivery,
+	// in trail order.
+	TrailPoints(ctx context.Context, s Scope, deliveryID string) ([]domain.LatLng, error)
+	// PutSimplifiedRoute stores route as the delivery's simplified route,
+	// unless it has one.
+	PutSimplifiedRoute(ctx context.Context, s Scope, deliveryID string, route []domain.LatLng, at time.Time) error
+	// DropTrailPartitionsBefore drops the day partitions of days before
+	// day (all scopes) and returns how many it dropped.
+	DropTrailPartitionsBefore(ctx context.Context, day time.Time) (int, error)
+	// DeleteFinalBefore deletes the scope's deliveries that became final
+	// before before, with their simplified routes and proof points, and
+	// returns how many deliveries it deleted.
+	DeleteFinalBefore(ctx context.Context, s Scope, before time.Time) (int64, error)
 }

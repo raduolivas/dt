@@ -1,7 +1,8 @@
 // Command deliveries runs the deliveries service: an internal Connect RPC
 // API, the tenant settings consumer, the tracking arrivals consumer (which
-// applies arriving), the pickup confirmation sweeper and the outbox relay
-// that publishes the deliveries.* events.
+// applies arriving), the pickup confirmation sweeper, the nightly retention
+// job (02:00 UTC) and the outbox relay that publishes the deliveries.*
+// events.
 package main
 
 import (
@@ -20,6 +21,7 @@ import (
 	"github.com/raduolivas/dt/backend/pkg/bootstrap"
 	"github.com/raduolivas/dt/backend/pkg/httpx"
 	"github.com/raduolivas/dt/backend/pkg/ids"
+	"github.com/raduolivas/dt/backend/pkg/nightly"
 	"github.com/raduolivas/dt/backend/pkg/outbox"
 	"github.com/raduolivas/dt/backend/pkg/rpcauth"
 	"github.com/raduolivas/dt/backend/pkg/sealbox"
@@ -58,6 +60,11 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("deliveries: config: %w", err)
 	}
 
+	holder, err := nightly.NewHolder()
+	if err != nil {
+		return fmt.Errorf("deliveries: %w", err)
+	}
+
 	return bootstrap.Run(ctx, bootstrap.Options{
 		TLS:        serverTLS,
 		Name:       "deliveries",
@@ -77,7 +84,7 @@ func run(ctx context.Context) error {
 				return nil, err
 			}
 			repo := postgres.New(d.DB, box)
-			svc := &app.Service{Repo: repo, Clock: systemClock{}, IDs: idGen{}}
+			svc := &app.Service{Repo: repo, Clock: systemClock{}, IDs: idGen{}, Retention: repo, Log: d.Log}
 			if err := rpc.Mount(mux, svc, token, d.Log); err != nil {
 				return nil, err
 			}
@@ -98,7 +105,9 @@ func run(ctx context.Context) error {
 				return outbox.Consume(ctx, d.JS, d.DB, d.Log, consumer.TrackingStream,
 					consumer.TrackingConfig, consumer.Tracking(svc, d.Log))
 			}
-			return []bootstrap.Worker{relay.Run, settings, arrivals, sweeper.Run}, nil
+			retention := &nightly.Job{Name: "deliveries_retention", Lease: nightly.NewPostgresLease(d.DB, "deliveries_retention"),
+				Holder: holder, Do: svc.RunRetention, Log: d.Log}
+			return []bootstrap.Worker{relay.Run, settings, arrivals, sweeper.Run, retention.Run}, nil
 		},
 	})
 }

@@ -119,3 +119,10 @@ RETURNING id;
 SELECT id FROM tracking_links
 WHERE delivery_id = @delivery_id AND revoked_at >= @since
 ORDER BY revoked_at;
+
+-- name: DeleteExpiredLinks :execrows
+DELETE FROM tracking_links
+WHERE revoked_at < @revoked_before::timestamptz OR expires_at < @expires_before::timestamptz;
+
+-- name: DeleteLinkExpiriesBefore :exec
+DELETE FROM tracking_link_expiry WHERE expires_at < @expires_before::timestamptz;

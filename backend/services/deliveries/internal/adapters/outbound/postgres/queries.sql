@@ -120,3 +120,26 @@ SELECT * FROM pickup_watch WHERE delivery_id = $1 FOR UPDATE;
 
 -- name: MarkPickupWatchWarned :exec
 UPDATE pickup_watch SET warned_at = $2 WHERE delivery_id = $1;
+
+-- name: RetentionScopes :many
+-- Read across tenants: retention_scopes holds no personal data.
+SELECT tenant_id, environment FROM retention_scopes ORDER BY tenant_id, environment;
+
+-- name: FinalDeliveriesBefore :many
+-- Deliveries whose transition to their final status occurred before @before.
+SELECT d.id FROM deliveries d
+WHERE d.status IN ('delivered', 'cancelled', 'failed')
+  AND EXISTS (SELECT 1 FROM delivery_history h
+              WHERE h.delivery_id = d.id AND h.outcome = 'applied' AND h.to_status = d.status
+                AND h.occurred_at < @before)
+ORDER BY d.id
+LIMIT @row_limit;
+
+-- name: DeletePickupWatches :exec
+DELETE FROM pickup_watch WHERE delivery_id = ANY(@delivery_ids::text[]);
+
+-- name: DeleteHistories :exec
+DELETE FROM delivery_history WHERE delivery_id = ANY(@delivery_ids::text[]);
+
+-- name: DeleteDeliveries :execrows
+DELETE FROM deliveries WHERE id = ANY(@delivery_ids::text[]);

@@ -124,6 +124,23 @@ func (s *TrackingLinkStore) RevokedSince(ctx context.Context, deliveryID string,
 	return ids, nil
 }
 
+// DeleteExpired implements app.LinkStore, in one transaction.
+func (s *TrackingLinkStore) DeleteExpired(ctx context.Context, revokedBefore, expiresBefore time.Time) (int64, error) {
+	var n int64
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := s.q.WithTx(tx)
+		var err error
+		if n, err = q.DeleteExpiredLinks(ctx, db.DeleteExpiredLinksParams{RevokedBefore: revokedBefore, ExpiresBefore: expiresBefore}); err != nil {
+			return fmt.Errorf("delete expired links: %w", err)
+		}
+		if err := q.DeleteLinkExpiriesBefore(ctx, expiresBefore); err != nil {
+			return fmt.Errorf("delete link expiries: %w", err)
+		}
+		return nil
+	})
+	return n, err
+}
+
 func toLink(r db.GetTrackingLinkRow) domain.TrackingLink {
 	return domain.TrackingLink{ID: r.ID, TenantID: r.TenantID, Env: domain.Environment(r.Environment),
 		DeliveryID: r.DeliveryID, CreatedAt: r.CreatedAt.UTC(), RevokedAt: utc(r.RevokedAt), ExpiresAt: utc(r.ExpiresAt)}

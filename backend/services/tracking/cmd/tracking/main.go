@@ -1,8 +1,9 @@
 // Command tracking runs the tracking service: the read model consumers of
 // the DELIVERIES and ACCOUNTS streams, the internal Connect RPC API (on its
 // own mTLS port), the trail writer, the outbox relay that publishes the
-// tracking.* events, the signal sweeper and the sandbox simulator (which
-// drives deliveries through the deliveries internal RPC). Its main port (PORT) carries the
+// tracking.* events, the signal sweeper, the nightly retention job (02:00
+// UTC) and the sandbox simulator (which drives deliveries through the
+// deliveries internal RPC). Its main port (PORT) carries the
 // health endpoints and the public viewer endpoints (snapshot, WebSocket and
 // SSE streams), so it is never mTLS; viewer routes are never on the
 // internal RPC port.
@@ -29,6 +30,7 @@ import (
 
 	"github.com/raduolivas/dt/backend/pkg/bootstrap"
 	"github.com/raduolivas/dt/backend/pkg/httpx"
+	"github.com/raduolivas/dt/backend/pkg/nightly"
 	"github.com/raduolivas/dt/backend/pkg/otelx"
 	"github.com/raduolivas/dt/backend/pkg/outbox"
 	"github.com/raduolivas/dt/backend/pkg/rpcauth"
@@ -47,9 +49,6 @@ import (
 // defaultInternalRPCPort is the internal RPC port when INTERNAL_RPC_PORT is
 // unset (the next free one after accounts' 8084).
 const defaultInternalRPCPort = 8085
-
-// partitionsAhead is how many days of trail partitions exist beyond today.
-const partitionsAhead = 3
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -128,13 +127,13 @@ func run(ctx context.Context) error {
 				return nil, err
 			}
 			repo := postgres.New(d.DB)
-			if err := repo.EnsurePartitions(ctx, time.Now(), partitionsAhead); err != nil {
+			if err := repo.EnsurePartitions(ctx, time.Now(), app.PartitionsAhead); err != nil {
 				return nil, err
 			}
 			states := redis.NewStates(d.Redis, repo.CourierActiveDeliveries)
 			trail := postgres.NewTrailWriter(d.DB, d.Log)
 			svc := &app.Service{
-				States: states, Reads: repo, Partner: repo, Trail: trail, Pub: redis.NewPublisher(d.Redis),
+				States: states, Reads: repo, Partner: repo, Trail: trail, Retention: repo, Pub: redis.NewPublisher(d.Redis),
 				Events: repo, Sampler: states, Clock: systemClock{}, Log: d.Log,
 			}
 			// Without OSRM URLs no routes are built (and the ETA stays
@@ -185,7 +184,9 @@ func run(ctx context.Context) error {
 			})
 			hub.Mount(mux)
 			sweeper := &app.Sweeper{Svc: svc, Lease: redis.NewLease(d.Redis, redis.SweeperLeaseKey), ID: holder}
-			return append([]bootstrap.Worker{rpcSrv.Serve, relay.Run, trail.Run, deliveries, accounts, hub.Run, sweeper.Run},
+			retention := &nightly.Job{Name: "tracking_retention", Lease: redis.NewLease(d.Redis, redis.RetentionLeaseKey),
+				Holder: holder, Do: svc.RunRetention, Log: d.Log}
+			return append([]bootstrap.Worker{rpcSrv.Serve, relay.Run, trail.Run, deliveries, accounts, hub.Run, sweeper.Run, retention.Run},
 				simWorkers...), nil
 		},
 	})

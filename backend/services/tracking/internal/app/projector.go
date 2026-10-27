@@ -161,12 +161,19 @@ func (s *Service) OnDeliveryUpdated(ctx context.Context, p Projection, sc Scope,
 	return s.sync(ctx, p, sc, rec, nil)
 }
 
-// OnPersonalDataErased records the erasure time. Replacing the raw trail
-// with the simplified route is the retention job's (Task 11).
+// OnPersonalDataErased records the erasure time and replaces the raw trail
+// with its simplified route at once (proof points stay). A repeat replaces
+// any raw fix stored since and keeps the first erasure time.
 func (s *Service) OnPersonalDataErased(ctx context.Context, p Projection, _ Scope, v uint64, id string, at time.Time) error {
 	rec, ok, err := p.Delivery(ctx, id)
-	if err != nil || !ok || rec.ErasedAt != nil {
+	if err != nil || !ok {
 		return err
+	}
+	if err := replaceTrail(ctx, p, id, at); err != nil {
+		return err
+	}
+	if rec.ErasedAt != nil {
+		return nil
 	}
 	rec.ErasedAt = &at
 	rec.EventVersion = max(rec.EventVersion, v)

@@ -60,12 +60,42 @@ func (q *Queries) ClearHistoryReasons(ctx context.Context, deliveryID string) er
 	return err
 }
 
+const deleteDeliveries = `-- name: DeleteDeliveries :execrows
+DELETE FROM deliveries WHERE id = ANY($1::text[])
+`
+
+func (q *Queries) DeleteDeliveries(ctx context.Context, deliveryIds []string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteDeliveries, deliveryIds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteHistories = `-- name: DeleteHistories :exec
+DELETE FROM delivery_history WHERE delivery_id = ANY($1::text[])
+`
+
+func (q *Queries) DeleteHistories(ctx context.Context, deliveryIds []string) error {
+	_, err := q.db.Exec(ctx, deleteHistories, deliveryIds)
+	return err
+}
+
 const deletePickupWatch = `-- name: DeletePickupWatch :exec
 DELETE FROM pickup_watch WHERE delivery_id = $1
 `
 
 func (q *Queries) DeletePickupWatch(ctx context.Context, deliveryID string) error {
 	_, err := q.db.Exec(ctx, deletePickupWatch, deliveryID)
+	return err
+}
+
+const deletePickupWatches = `-- name: DeletePickupWatches :exec
+DELETE FROM pickup_watch WHERE delivery_id = ANY($1::text[])
+`
+
+func (q *Queries) DeletePickupWatches(ctx context.Context, deliveryIds []string) error {
+	_, err := q.db.Exec(ctx, deletePickupWatches, deliveryIds)
 	return err
 }
 
@@ -106,6 +136,42 @@ func (q *Queries) DuePickupWatches(ctx context.Context, arg DuePickupWatchesPara
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const finalDeliveriesBefore = `-- name: FinalDeliveriesBefore :many
+SELECT d.id FROM deliveries d
+WHERE d.status IN ('delivered', 'cancelled', 'failed')
+  AND EXISTS (SELECT 1 FROM delivery_history h
+              WHERE h.delivery_id = d.id AND h.outcome = 'applied' AND h.to_status = d.status
+                AND h.occurred_at < $1)
+ORDER BY d.id
+LIMIT $2
+`
+
+type FinalDeliveriesBeforeParams struct {
+	Before   time.Time
+	RowLimit int32
+}
+
+// Deliveries whose transition to their final status occurred before @before.
+func (q *Queries) FinalDeliveriesBefore(ctx context.Context, arg FinalDeliveriesBeforeParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, finalDeliveriesBefore, arg.Before, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -589,6 +655,31 @@ type MarkPickupWatchWarnedParams struct {
 func (q *Queries) MarkPickupWatchWarned(ctx context.Context, arg MarkPickupWatchWarnedParams) error {
 	_, err := q.db.Exec(ctx, markPickupWatchWarned, arg.DeliveryID, arg.WarnedAt)
 	return err
+}
+
+const retentionScopes = `-- name: RetentionScopes :many
+SELECT tenant_id, environment FROM retention_scopes ORDER BY tenant_id, environment
+`
+
+// Read across tenants: retention_scopes holds no personal data.
+func (q *Queries) RetentionScopes(ctx context.Context) ([]RetentionScope, error) {
+	rows, err := q.db.Query(ctx, retentionScopes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RetentionScope
+	for rows.Next() {
+		var i RetentionScope
+		if err := rows.Scan(&i.TenantID, &i.Environment); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateDelivery = `-- name: UpdateDelivery :execrows

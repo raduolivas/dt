@@ -116,6 +116,29 @@ func (m *MemLinks) Expire(_ context.Context, deliveryID string, at time.Time) (t
 	return exp, ids, nil
 }
 
+// DeleteExpired implements app.LinkStore.
+func (m *MemLinks) DeleteExpired(_ context.Context, revokedBefore, expiresBefore time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fail != nil {
+		return 0, m.fail
+	}
+	var n int64
+	for id, l := range m.links {
+		if (l.RevokedAt != nil && l.RevokedAt.Before(revokedBefore)) || (l.ExpiresAt != nil && l.ExpiresAt.Before(expiresBefore)) {
+			delete(m.links, id)
+			delete(m.hashes, id)
+			n++
+		}
+	}
+	for del, at := range m.expires {
+		if at.Before(expiresBefore) {
+			delete(m.expires, del)
+		}
+	}
+	return n, nil
+}
+
 // RevokedSince implements app.LinkStore.
 func (m *MemLinks) RevokedSince(_ context.Context, deliveryID string, since time.Time) ([]string, error) {
 	m.mu.Lock()

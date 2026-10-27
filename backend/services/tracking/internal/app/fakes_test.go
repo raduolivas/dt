@@ -127,11 +127,12 @@ type fakeRead struct {
 	trail    map[string][]trailFix
 	proofs   []ProofPoint
 	prep     map[string]*int
+	routes   map[string][]domain.LatLng
 }
 
 func newFakeRead() *fakeRead {
 	return &fakeRead{recs: map[string]DeliveryRecord{}, couriers: map[string]domain.Courier{},
-		trail: map[string][]trailFix{}, prep: map[string]*int{}}
+		trail: map[string][]trailFix{}, prep: map[string]*int{}, routes: map[string][]domain.LatLng{}}
 }
 
 func (f *fakeRead) LoadState(_ context.Context, sc Scope, id string) (domain.State, error) {
@@ -225,6 +226,26 @@ func (f *fakeRead) PutProofPoint(_ context.Context, p ProofPoint) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.proofs = append(f.proofs, p)
+	return nil
+}
+
+func (f *fakeRead) TrailPoints(_ context.Context, id string) ([]domain.LatLng, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain.LatLng
+	for _, x := range f.trail[id] {
+		out = append(out, x.f.Pos)
+	}
+	return out, nil
+}
+
+func (f *fakeRead) ReplaceTrail(_ context.Context, id string, route []domain.LatLng, _ time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.routes[id]; !ok {
+		f.routes[id] = route
+	}
+	delete(f.trail, id)
 	return nil
 }
 

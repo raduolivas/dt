@@ -124,6 +124,24 @@ func (q *Queries) DeleteExpiredIdempotencyRecords(ctx context.Context, arg Delet
 	return result.RowsAffected(), nil
 }
 
+const deleteExpiredLinks = `-- name: DeleteExpiredLinks :execrows
+DELETE FROM tracking_links
+WHERE revoked_at < $1::timestamptz OR expires_at < $2::timestamptz
+`
+
+type DeleteExpiredLinksParams struct {
+	RevokedBefore time.Time
+	ExpiresBefore time.Time
+}
+
+func (q *Queries) DeleteExpiredLinks(ctx context.Context, arg DeleteExpiredLinksParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredLinks, arg.RevokedBefore, arg.ExpiresBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteIdempotencyRecordsForResource = `-- name: DeleteIdempotencyRecordsForResource :execrows
 DELETE FROM idempotency_records
 WHERE tenant_id = $1 AND environment = $2 AND resource_id = $3
@@ -143,6 +161,15 @@ func (q *Queries) DeleteIdempotencyRecordsForResource(ctx context.Context, arg D
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteLinkExpiriesBefore = `-- name: DeleteLinkExpiriesBefore :exec
+DELETE FROM tracking_link_expiry WHERE expires_at < $1::timestamptz
+`
+
+func (q *Queries) DeleteLinkExpiriesBefore(ctx context.Context, expiresBefore time.Time) error {
+	_, err := q.db.Exec(ctx, deleteLinkExpiriesBefore, expiresBefore)
+	return err
 }
 
 const expireUnrevokedLinks = `-- name: ExpireUnrevokedLinks :many

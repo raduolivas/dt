@@ -66,6 +66,11 @@ type ProofPoint struct {
 	Environment string
 }
 
+type RetentionScope struct {
+	TenantID    string
+	Environment string
+}
+
 type SimplifiedRoute struct {
 	DeliveryID  string
 	TenantID    string

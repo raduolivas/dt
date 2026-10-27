@@ -70,8 +70,13 @@ type Lease struct {
 
 var _ app.Lease = (*Lease)(nil)
 
-// SweeperLeaseKey is the signal sweeper's lease.
-const SweeperLeaseKey = "dt:lease:sweeper"
+// Lease keys.
+const (
+	// SweeperLeaseKey is the signal sweeper's lease.
+	SweeperLeaseKey = "dt:lease:sweeper"
+	// RetentionLeaseKey is the nightly retention job's lease.
+	RetentionLeaseKey = "dt:lease:retention"
+)
 
 // NewLease returns the lease stored at key.
 func NewLease(rdb *goredis.Client, key string) *Lease { return &Lease{rdb: rdb, key: key} }

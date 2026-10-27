@@ -251,27 +251,28 @@ func TestEnsurePartitionsIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestPartitionFunctionIsLockedDown: the SECURITY DEFINER helper runs as the
-// schema owner, so only the tracking runtime role may call it, and its
-// search_path is pinned with pg_temp last.
+// TestPartitionFunctionIsLockedDown: the SECURITY DEFINER helpers run as
+// the schema owner, so only the tracking runtime role may call them, and
+// their search_path is pinned with pg_temp last.
 func TestPartitionFunctionIsLockedDown(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
-	const fn = "tracking.ensure_trail_partition(date)"
-	for role, want := range map[string]bool{"svc_tracking": true, "svc_deliveries": false, "svc_gateway": false} {
-		var got bool
-		if err := e.admin.QueryRow(ctx, `SELECT has_function_privilege($1, $2, 'EXECUTE')`, role, fn).Scan(&got); err != nil {
+	for _, fn := range []string{"tracking.ensure_trail_partition(date)", "tracking.drop_trail_partitions_before(date)"} {
+		for role, want := range map[string]bool{"svc_tracking": true, "svc_deliveries": false, "svc_gateway": false} {
+			var got bool
+			if err := e.admin.QueryRow(ctx, `SELECT has_function_privilege($1, $2, 'EXECUTE')`, role, fn).Scan(&got); err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Errorf("%s: %s EXECUTE = %v, want %v", fn, role, got, want)
+			}
+		}
+		var cfg []string
+		if err := e.admin.QueryRow(ctx, `SELECT proconfig FROM pg_proc WHERE oid = $1::regprocedure`, fn).Scan(&cfg); err != nil {
 			t.Fatal(err)
 		}
-		if got != want {
-			t.Errorf("%s EXECUTE = %v, want %v", role, got, want)
+		if len(cfg) != 1 || cfg[0] != "search_path=tracking, extensions, pg_temp" {
+			t.Fatalf("%s: proconfig = %v", fn, cfg)
 		}
-	}
-	var cfg []string
-	if err := e.admin.QueryRow(ctx, `SELECT proconfig FROM pg_proc WHERE oid = $1::regprocedure`, fn).Scan(&cfg); err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg) != 1 || cfg[0] != "search_path=tracking, extensions, pg_temp" {
-		t.Fatalf("proconfig = %v", cfg)
 	}
 }

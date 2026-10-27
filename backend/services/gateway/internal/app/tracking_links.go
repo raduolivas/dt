@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/raduolivas/dt/backend/pkg/ids"
@@ -36,6 +37,10 @@ type LinkStore interface {
 	// RevokedSince returns the ids of the delivery's links revoked at or
 	// after since.
 	RevokedSince(ctx context.Context, deliveryID string, since time.Time) ([]string, error)
+	// DeleteExpired deletes the links revoked before revokedBefore or
+	// expiring before expiresBefore, and the link expiries before
+	// expiresBefore. It returns how many links it deleted.
+	DeleteExpired(ctx context.Context, revokedBefore, expiresBefore time.Time) (int64, error)
 }
 
 // LinkHasher computes the stored form of a link token: HMAC-SHA256 under
@@ -69,6 +74,8 @@ type TrackingLinks struct {
 	// Expiries announces link expiries to the tracking service. Required.
 	Expiries ExpiryAnnouncer
 	Clock    Clock
+	// Log defaults to a discarding logger.
+	Log *slog.Logger
 }
 
 // Issue creates the delivery's tracking link and returns it with its token
@@ -189,5 +196,26 @@ func (t *TrackingLinks) ExpireOnFinal(ctx context.Context, deliveryID string, fi
 			return err
 		}
 	}
+	return nil
+}
+
+// LinkRetentionMonths is how long a tracking link is kept after its
+// delivery became final or it was revoked (M3 design §4.2, ruling R25).
+const LinkRetentionMonths = 13
+
+// RunRetention is the nightly retention job for the night of now: it
+// deletes the links revoked, or of deliveries final, more than
+// LinkRetentionMonths ago. It is idempotent and logs counts only.
+func (t *TrackingLinks) RunRetention(ctx context.Context, now time.Time) error {
+	before := now.UTC().AddDate(0, -LinkRetentionMonths, 0)
+	n, err := t.Store.DeleteExpired(ctx, before, domain.LinkExpiry(before))
+	if err != nil {
+		return fmt.Errorf("delete expired tracking links: %w", err)
+	}
+	log := t.Log
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	log.InfoContext(ctx, "tracking_links_retention_done", "deleted", n)
 	return nil
 }

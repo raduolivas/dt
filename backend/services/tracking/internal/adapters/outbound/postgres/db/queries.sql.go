@@ -75,6 +75,45 @@ func (q *Queries) CourierKnown(ctx context.Context, courierID string) (bool, err
 	return known, err
 }
 
+const deleteDeliveriesFinalBefore = `-- name: DeleteDeliveriesFinalBefore :execrows
+DELETE FROM deliveries WHERE final_at < $1::timestamptz
+`
+
+func (q *Queries) DeleteDeliveriesFinalBefore(ctx context.Context, before time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteDeliveriesFinalBefore, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteDeliveryTrail = `-- name: DeleteDeliveryTrail :exec
+DELETE FROM trail_fixes WHERE delivery_id = $1
+`
+
+func (q *Queries) DeleteDeliveryTrail(ctx context.Context, deliveryID string) error {
+	_, err := q.db.Exec(ctx, deleteDeliveryTrail, deliveryID)
+	return err
+}
+
+const deleteProofPointsFinalBefore = `-- name: DeleteProofPointsFinalBefore :exec
+DELETE FROM proof_points p USING deliveries d WHERE d.id = p.delivery_id AND d.final_at < $1::timestamptz
+`
+
+func (q *Queries) DeleteProofPointsFinalBefore(ctx context.Context, before time.Time) error {
+	_, err := q.db.Exec(ctx, deleteProofPointsFinalBefore, before)
+	return err
+}
+
+const deleteSimplifiedRoutesFinalBefore = `-- name: DeleteSimplifiedRoutesFinalBefore :exec
+DELETE FROM simplified_routes s USING deliveries d WHERE d.id = s.delivery_id AND d.final_at < $1::timestamptz
+`
+
+func (q *Queries) DeleteSimplifiedRoutesFinalBefore(ctx context.Context, before time.Time) error {
+	_, err := q.db.Exec(ctx, deleteSimplifiedRoutesFinalBefore, before)
+	return err
+}
+
 const deliveryErasure = `-- name: DeliveryErasure :one
 SELECT erased_at FROM deliveries WHERE id = $1
 `
@@ -85,6 +124,17 @@ func (q *Queries) DeliveryErasure(ctx context.Context, id string) (*time.Time, e
 	var erased_at *time.Time
 	err := row.Scan(&erased_at)
 	return erased_at, err
+}
+
+const dropTrailPartitionsBefore = `-- name: DropTrailPartitionsBefore :one
+SELECT drop_trail_partitions_before($1::date)::int AS dropped
+`
+
+func (q *Queries) DropTrailPartitionsBefore(ctx context.Context, day pgtype.Date) (int32, error) {
+	row := q.db.QueryRow(ctx, dropTrailPartitionsBefore, day)
+	var dropped int32
+	err := row.Scan(&dropped)
+	return dropped, err
 }
 
 const ensureTrailPartition = `-- name: EnsureTrailPartition :exec
@@ -230,6 +280,32 @@ func (q *Queries) InsertProofPoint(ctx context.Context, arg InsertProofPointPara
 	return err
 }
 
+const insertSimplifiedRoute = `-- name: InsertSimplifiedRoute :exec
+INSERT INTO simplified_routes (delivery_id, tenant_id, environment, points, created_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (delivery_id) DO NOTHING
+`
+
+type InsertSimplifiedRouteParams struct {
+	DeliveryID  string
+	TenantID    string
+	Environment string
+	Points      []byte
+	CreatedAt   time.Time
+}
+
+// The first route stored wins.
+func (q *Queries) InsertSimplifiedRoute(ctx context.Context, arg InsertSimplifiedRouteParams) error {
+	_, err := q.db.Exec(ctx, insertSimplifiedRoute,
+		arg.DeliveryID,
+		arg.TenantID,
+		arg.Environment,
+		arg.Points,
+		arg.CreatedAt,
+	)
+	return err
+}
+
 const latestFix = `-- name: LatestFix :one
 SELECT t, lat, lng, accuracy_m, speed_mps, heading_deg, source
 FROM trail_fixes WHERE delivery_id = $1 AND courier_id = $2 ORDER BY t DESC, id DESC LIMIT 1
@@ -363,6 +439,31 @@ func (q *Queries) LockDelivery(ctx context.Context, id string) (LockDeliveryRow,
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const retentionScopes = `-- name: RetentionScopes :many
+SELECT tenant_id, environment FROM retention_scopes ORDER BY tenant_id, environment
+`
+
+// Read across tenants: retention_scopes holds no personal data.
+func (q *Queries) RetentionScopes(ctx context.Context) ([]RetentionScope, error) {
+	rows, err := q.db.Query(ctx, retentionScopes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RetentionScope
+	for rows.Next() {
+		var i RetentionScope
+		if err := rows.Scan(&i.TenantID, &i.Environment); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const setTenantPrep = `-- name: SetTenantPrep :execrows
@@ -510,6 +611,64 @@ func (q *Queries) TrailPage(ctx context.Context, arg TrailPageParams) ([]TrailPa
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const trailPoints = `-- name: TrailPoints :many
+SELECT lat, lng FROM trail_fixes WHERE delivery_id = $1 ORDER BY t, id
+`
+
+type TrailPointsRow struct {
+	Lat float64
+	Lng float64
+}
+
+// Every raw position of the delivery, in trail order.
+func (q *Queries) TrailPoints(ctx context.Context, deliveryID string) ([]TrailPointsRow, error) {
+	rows, err := q.db.Query(ctx, trailPoints, deliveryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TrailPointsRow
+	for rows.Next() {
+		var i TrailPointsRow
+		if err := rows.Scan(&i.Lat, &i.Lng); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const unsimplifiedTrailBefore = `-- name: UnsimplifiedTrailBefore :many
+SELECT DISTINCT f.delivery_id FROM trail_fixes f
+WHERE f.t < $1
+  AND NOT EXISTS (SELECT 1 FROM simplified_routes s WHERE s.delivery_id = f.delivery_id)
+ORDER BY f.delivery_id
+`
+
+// Deliveries with a fix before @before and no simplified route yet.
+func (q *Queries) UnsimplifiedTrailBefore(ctx context.Context, before time.Time) ([]string, error) {
+	rows, err := q.db.Query(ctx, unsimplifiedTrailBefore, before)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var delivery_id string
+		if err := rows.Scan(&delivery_id); err != nil {
+			return nil, err
+		}
+		items = append(items, delivery_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

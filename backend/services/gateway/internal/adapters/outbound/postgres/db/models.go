@@ -60,6 +60,12 @@ type Inbox struct {
 	ProcessedAt time.Time
 }
 
+type JobLease struct {
+	Name      string
+	Holder    string
+	ExpiresAt time.Time
+}
+
 type Outbox struct {
 	EventID     string
 	Subject     string

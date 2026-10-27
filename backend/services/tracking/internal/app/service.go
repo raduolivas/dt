@@ -45,9 +45,11 @@ type Service struct {
 	// Partner serves the partner's trail and proof-point reads.
 	Partner PartnerReads
 	Trail   TrailWriter
-	Pub     Publisher
-	Events  Events
-	Sampler Sampler
+	// Retention serves the nightly retention job.
+	Retention RetentionStore
+	Pub       Publisher
+	Events    Events
+	Sampler   Sampler
 	// Router is optional: without one no routes are built and the ETA
 	// stays unknown until a route is known.
 	Router Router

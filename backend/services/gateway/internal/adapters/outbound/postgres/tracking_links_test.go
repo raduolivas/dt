@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -176,5 +177,74 @@ func TestLinkTokenHashIsPeppered(t *testing.T) {
 	}
 	if _, err := b.Resolve(ctx, tok, t0); !errors.Is(err, app.ErrLinkInvalid) {
 		t.Fatalf("other pepper: %v", err)
+	}
+}
+
+func TestTrackingLinksRetention13Months(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	pool, _ := setup(t)
+	s, c := postgres.NewTrackingLinkStore(pool), &fixedNow{t: t0}
+	tl := &app.TrackingLinks{Store: s, Hasher: apptest.Hasher{}, Revoker: &apptest.MemRevoker{}, Expiries: &apptest.MemExpiries{},
+		Clock: c, Log: slog.New(slog.DiscardHandler)}
+	now := t0.AddDate(1, 2, 0)
+	gone, kept := now.AddDate(0, -13, -1), now.AddDate(0, -12, -29)
+	const (
+		delGone    = "del_01j9z3k8m2q4r6s8t0v2w4x6a1" // final 13 months 1 day ago
+		delKept    = "del_01j9z3k8m2q4r6s8t0v2w4x6a2" // final 12 months 29 days ago
+		delRotGone = "del_01j9z3k8m2q4r6s8t0v2w4x6a3" // link revoked 13 months 1 day ago
+		delRotKept = "del_01j9z3k8m2q4r6s8t0v2w4x6a4" // link revoked 12 months 29 days ago
+	)
+	issue := func(del string) domain.TrackingLink {
+		l, _, err := tl.Issue(ctx, linkOwner, del)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return l
+	}
+	rotate := func(del string, at time.Time) domain.TrackingLink {
+		c.t = at
+		l, _, err := tl.Rotate(ctx, linkOwner, del)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return l
+	}
+	finalGone, finalKept := issue(delGone), issue(delKept)
+	if err := tl.ExpireOnFinal(ctx, delGone, gone); err != nil {
+		t.Fatal(err)
+	}
+	if err := tl.ExpireOnFinal(ctx, delKept, kept); err != nil {
+		t.Fatal(err)
+	}
+	revGone, revKept := issue(delRotGone), issue(delRotKept)
+	current1, current2 := rotate(delRotGone, gone), rotate(delRotKept, kept)
+
+	for range 2 { // idempotent
+		if err := tl.RunRetention(ctx, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for id, want := range map[string]bool{finalGone.ID: false, finalKept.ID: true, revGone.ID: false,
+		revKept.ID: true, current1.ID: true, current2.ID: true} {
+		_, err := s.Get(ctx, id)
+		if got := err == nil; got != want || (err != nil && !errors.Is(err, app.ErrNotFound)) {
+			t.Errorf("link %s kept = %v (%v), want %v", id, got, err, want)
+		}
+	}
+	var expiries []string
+	rows, err := pool.Query(ctx, `SELECT delivery_id FROM tracking_link_expiry ORDER BY delivery_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			t.Fatal(err)
+		}
+		expiries = append(expiries, d)
+	}
+	if len(expiries) != 1 || expiries[0] != delKept {
+		t.Fatalf("expiries kept = %v", expiries)
 	}
 }

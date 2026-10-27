@@ -102,3 +102,39 @@ ORDER BY t, id LIMIT @page_size;
 
 -- name: EnsureTrailPartition :exec
 SELECT ensure_trail_partition(@day::date);
+
+-- name: RetentionScopes :many
+-- Read across tenants: retention_scopes holds no personal data.
+SELECT tenant_id, environment FROM retention_scopes ORDER BY tenant_id, environment;
+
+-- name: UnsimplifiedTrailBefore :many
+-- Deliveries with a fix before @before and no simplified route yet.
+SELECT DISTINCT f.delivery_id FROM trail_fixes f
+WHERE f.t < @before
+  AND NOT EXISTS (SELECT 1 FROM simplified_routes s WHERE s.delivery_id = f.delivery_id)
+ORDER BY f.delivery_id;
+
+-- name: TrailPoints :many
+-- Every raw position of the delivery, in trail order.
+SELECT lat, lng FROM trail_fixes WHERE delivery_id = $1 ORDER BY t, id;
+
+-- name: InsertSimplifiedRoute :exec
+-- The first route stored wins.
+INSERT INTO simplified_routes (delivery_id, tenant_id, environment, points, created_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (delivery_id) DO NOTHING;
+
+-- name: DeleteDeliveryTrail :exec
+DELETE FROM trail_fixes WHERE delivery_id = $1;
+
+-- name: DropTrailPartitionsBefore :one
+SELECT drop_trail_partitions_before(@day::date)::int AS dropped;
+
+-- name: DeleteSimplifiedRoutesFinalBefore :exec
+DELETE FROM simplified_routes s USING deliveries d WHERE d.id = s.delivery_id AND d.final_at < @before::timestamptz;
+
+-- name: DeleteProofPointsFinalBefore :exec
+DELETE FROM proof_points p USING deliveries d WHERE d.id = p.delivery_id AND d.final_at < @before::timestamptz;
+
+-- name: DeleteDeliveriesFinalBefore :execrows
+DELETE FROM deliveries WHERE final_at < @before::timestamptz;

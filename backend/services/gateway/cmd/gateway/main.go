@@ -1,6 +1,7 @@
 // Command gateway runs the gateway service: the public partner API edge
 // (secret key authentication, scopes, rate limits, idempotency, audit log)
-// over the key read model it builds from the accounts apikey.* events.
+// over the key read model it builds from the accounts apikey.* events, and
+// the nightly tracking-link retention job (02:00 UTC).
 package main
 
 import (
@@ -28,6 +29,7 @@ import (
 	"github.com/raduolivas/dt/backend/pkg/apikey"
 	"github.com/raduolivas/dt/backend/pkg/bootstrap"
 	"github.com/raduolivas/dt/backend/pkg/httpx"
+	"github.com/raduolivas/dt/backend/pkg/nightly"
 	"github.com/raduolivas/dt/backend/pkg/outbox"
 	"github.com/raduolivas/dt/backend/pkg/rpcauth"
 	"github.com/raduolivas/dt/backend/pkg/sealbox"
@@ -94,6 +96,11 @@ func run(ctx context.Context, ready func(addr string)) error {
 		return fmt.Errorf("gateway: config: %w", err)
 	}
 
+	holder, err := nightly.NewHolder()
+	if err != nil {
+		return fmt.Errorf("gateway: %w", err)
+	}
+
 	// js is set by Setup; the accounts_stream check reads it per probe.
 	var js atomic.Pointer[jetstream.JetStream]
 
@@ -123,7 +130,7 @@ func run(ctx context.Context, ready func(addr string)) error {
 			audit := postgres.NewAuditStore(d.DB)
 
 			revoker := redislimit.NewRevoker(d.Redis)
-			links := &app.TrackingLinks{Store: postgres.NewTrackingLinkStore(d.DB), Hasher: keyhash.New(pepper), Revoker: revoker, Expiries: revoker, Clock: clock}
+			links := &app.TrackingLinks{Store: postgres.NewTrackingLinkStore(d.DB), Hasher: keyhash.New(pepper), Revoker: revoker, Expiries: revoker, Clock: clock, Log: d.Log}
 			httpapi.MountViewer(mux, httpapi.ViewerDeps{
 				Viewer: &app.Viewer{Links: links, Tokens: app.SignerTokens{Signer: signer, Verifier: signer.Verifier()},
 					Snapshots: trackingadapter.NewSnapshots(trackingRPC), Limiter: limiter},
@@ -163,7 +170,9 @@ func run(ctx context.Context, ready func(addr string)) error {
 			}
 			sweeper := &app.IdempotencySweeper{Store: idem, Clock: clock, Log: d.Log}
 			retention := &app.AuditRetention{Store: audit, Clock: clock, Log: d.Log}
-			return []bootstrap.Worker{consume, consumeDeliveries, watchLag, sweeper.Run, retention.Run}, nil
+			linkRetention := &nightly.Job{Name: "gateway_retention", Lease: nightly.NewPostgresLease(d.DB, "gateway_retention"),
+				Holder: holder, Do: links.RunRetention, Log: d.Log}
+			return []bootstrap.Worker{consume, consumeDeliveries, watchLag, sweeper.Run, retention.Run, linkRetention.Run}, nil
 		},
 	})
 }
