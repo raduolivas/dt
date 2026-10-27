@@ -81,8 +81,9 @@ elif [[ "${phase}" == "b" ]]; then
   exit 1
 else
   # First run, or a re-run after a partial one (a local terraform.tfstate is kept and reused).
+  # -reconfigure also switches back to local state after a failed migration.
   rm -f backend_override.tf
-  tofu init -input=false
+  tofu init -input=false -reconfigure
 fi
 
 # Adopt what AWS may already have created. The imports go in a git-ignored
@@ -105,9 +106,12 @@ fi
 # AWS allows one DIMENSIONAL/SERVICE anomaly monitor per account and may have
 # created a default one. Reuse it unless this stack already owns dt-services.
 if ! grep -qx 'aws_ce_anomaly_monitor.services\[0\]' <<<"${state_list}"; then
-  monitor_arn="$(aws ce get-anomaly-monitors \
+  if ! monitor_arn="$(aws ce get-anomaly-monitors \
     --query "AnomalyMonitors[?MonitorType=='DIMENSIONAL' && MonitorDimension=='SERVICE'].MonitorArn | [0]" \
-    --output text 2>/dev/null || true)"
+    --output text)"; then
+    echo "WARNING: could not list cost anomaly monitors; creating dt-services. If apply fails because a service monitor already exists, re-run after fixing access to Cost Explorer." >&2
+    monitor_arn=""
+  fi
   if [[ -n "${monitor_arn}" && "${monitor_arn}" != "None" ]]; then
     echo "Reusing the existing service anomaly monitor ${monitor_arn}."
     export TF_VAR_anomaly_monitor_arn="${monitor_arn}"
