@@ -123,6 +123,8 @@ func TestSimulateRPCErrors(t *testing.T) {
 	}{
 		{app.ErrSimulationState, connect.CodeFailedPrecondition, "simulation_state"},
 		{app.ErrNotFound, connect.CodeNotFound, "not_found"},
+		{&app.RejectedError{Code: "courier_not_found", Err: errors.New("x")}, connect.CodeFailedPrecondition, "courier_not_found"},
+		{&app.RejectedError{Code: "validation_failed", Err: errors.New("x")}, connect.CodeInvalidArgument, "validation_failed"},
 		{errors.New("deliveries down"), connect.CodeUnavailable, "tracking_unavailable"},
 	} {
 		sim.err = c2.err

@@ -67,11 +67,19 @@ func scope(s app.Scope) *deliveriesv1.Scope {
 	return &deliveriesv1.Scope{TenantId: s.TenantID, Environment: env}
 }
 
+// rejections are the deliveries problem codes of a refused call (a
+// 4xx-class answer), passed on to the partner as they are.
+var rejections = map[string]bool{
+	"validation_failed": true, "external_id_conflict": true, "dropoff_locked": true,
+	"delivery_active": true, "model_not_allowed": true, "courier_not_found": true,
+}
+
 // call runs fn with a client call context (the auth interceptor and the
 // dt-code trailer live on it) and maps a failure: not_found is
 // app.ErrNotFound, invalid_transition is app.ErrSimulationState (the
-// delivery moved on under the simulation), anything else is returned
-// wrapped.
+// delivery moved on under the simulation), another refusal is an
+// *app.RejectedError with its code, and anything else (transport, an
+// unavailable service) is returned wrapped.
 func call[T any](ctx context.Context, op string, fn func(context.Context) (T, error)) (T, error) {
 	ctx, info := connect.NewClientContext(ctx)
 	res, err := fn(ctx)
@@ -83,6 +91,8 @@ func call[T any](ctx context.Context, op string, fn func(context.Context) (T, er
 		err = fmt.Errorf("deliveries %s: %w", op, app.ErrNotFound)
 	case code == "invalid_transition":
 		err = fmt.Errorf("deliveries %s: %w", op, app.ErrSimulationState)
+	case rejections[code]:
+		err = &app.RejectedError{Code: code, Err: fmt.Errorf("deliveries %s: %w", op, err)}
 	default:
 		err = fmt.Errorf("deliveries %s: %w", op, err)
 	}

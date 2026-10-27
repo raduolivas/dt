@@ -83,9 +83,9 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("tracking: config: %w", err)
 	}
-	var deliveries *deliveriesrpc.Client
+	var deliveriesClient *deliveriesrpc.Client
 	if u := os.Getenv("DELIVERIES_RPC_URL"); u != "" {
-		if deliveries, err = deliveriesrpc.New(u, token, clientTLS); err != nil {
+		if deliveriesClient, err = deliveriesrpc.New(u, token, clientTLS); err != nil {
 			return fmt.Errorf("tracking: config: %w", err)
 		}
 	}
@@ -149,8 +149,12 @@ func run(ctx context.Context) error {
 			// Without DELIVERIES_RPC_URL the sandbox simulator is off
 			// (Simulate answers Unimplemented).
 			var sim rpc.Simulator
-			if deliveries != nil {
-				sim = &app.Simulator{Svc: svc, Deliveries: deliveries, Snapper: snapper, Base: ctx, Log: d.Log}
+			var simWorkers []bootstrap.Worker
+			if deliveriesClient != nil {
+				s := &app.Simulator{Svc: svc, Deliveries: deliveriesClient, Snapper: snapper, Log: d.Log}
+				// On shutdown the worker stops the runs and waits for them,
+				// before the pools close.
+				sim, simWorkers = s, []bootstrap.Worker{s.Run}
 			} else {
 				d.Log.Warn("DELIVERIES_RPC_URL is unset: the sandbox simulator is off")
 			}
@@ -181,7 +185,8 @@ func run(ctx context.Context) error {
 			})
 			hub.Mount(mux)
 			sweeper := &app.Sweeper{Svc: svc, Lease: redis.NewLease(d.Redis, redis.SweeperLeaseKey), ID: holder}
-			return []bootstrap.Worker{rpcSrv.Serve, relay.Run, trail.Run, deliveries, accounts, hub.Run, sweeper.Run}, nil
+			return append([]bootstrap.Worker{rpcSrv.Serve, relay.Run, trail.Run, deliveries, accounts, hub.Run, sweeper.Run},
+				simWorkers...), nil
 		},
 	})
 }

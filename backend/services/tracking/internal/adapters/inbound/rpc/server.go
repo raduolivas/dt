@@ -168,9 +168,20 @@ func (s *Server) Simulate(ctx context.Context, req *trackingv1.SimulateRequest) 
 		gap = &app.SignalGap{AfterS: int(g.GetAfterS()), DurationS: int(g.GetDurationS())}
 	}
 	id, err := s.sim.Start(ctx, sc, req.GetDeliveryId(), speed, gap)
-	if errors.Is(err, app.ErrSimulationState) {
+	var rej *app.RejectedError
+	switch {
+	case errors.Is(err, app.ErrSimulationState):
 		rpcauth.SetCode(ctx, "simulation_state")
 		return nil, connect.NewError(connect.CodeFailedPrecondition, "the delivery is final or already being simulated")
+	case errors.As(err, &rej):
+		// Deliveries refused a call (e.g. courier_not_found on the
+		// assignment): the partner gets that answer, not a 503.
+		rpcauth.SetCode(ctx, rej.Code)
+		code := connect.CodeFailedPrecondition
+		if rej.Code == "validation_failed" {
+			code = connect.CodeInvalidArgument
+		}
+		return nil, connect.NewError(code, "deliveries refused the simulation")
 	}
 	if err != nil {
 		return nil, s.fail(ctx, "Simulate", err)

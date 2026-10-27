@@ -17,6 +17,22 @@ import (
 // or a simulation of it is already running (409 simulation_state).
 var ErrSimulationState = errors.New("simulation: the delivery is final or already being simulated")
 
+// ErrSimulatorClosed means the simulator is shutting down.
+var ErrSimulatorClosed = errors.New("simulation: the simulator is shutting down")
+
+// RejectedError is a deliveries refusal the simulator passes on to its
+// caller: Code is the deliveries problem code (validation_failed,
+// courier_not_found, model_not_allowed, ...).
+type RejectedError struct {
+	Code string
+	Err  error
+}
+
+func (e *RejectedError) Error() string {
+	return "deliveries rejected the call: " + e.Code + ": " + e.Err.Error()
+}
+func (e *RejectedError) Unwrap() error { return e.Err }
+
 // Simulator limits and behaviour (design §6).
 const (
 	// SimCourierExternalID is the external id of the test courier the
@@ -67,9 +83,14 @@ type Simulator struct {
 	Log *slog.Logger
 
 	mu      sync.Mutex
-	running map[string]bool // delivery ids
+	running map[string]context.CancelFunc // by runKey
+	closed  bool
 	wg      sync.WaitGroup
 }
+
+// runKey keys a run by tenant, environment and delivery, so one tenant's
+// run never shows through to another.
+func runKey(sc Scope, deliveryID string) string { return sc.TenantID + "|" + sc.Env + "|" + deliveryID }
 
 func (s *Simulator) log() *slog.Logger {
 	if s.Log == nil {
@@ -92,34 +113,62 @@ func (s *Simulator) sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func (s *Simulator) reserve(id string) bool {
+// reserve claims key with the run's cancel func.
+func (s *Simulator) reserve(key string, cancel context.CancelFunc) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.running[id] {
-		return false
+	if s.closed {
+		return ErrSimulatorClosed
+	}
+	if _, ok := s.running[key]; ok {
+		return ErrSimulationState
 	}
 	if s.running == nil {
-		s.running = map[string]bool{}
+		s.running = map[string]context.CancelFunc{}
 	}
-	s.running[id] = true
-	return true
+	s.running[key] = cancel
+	s.wg.Add(1)
+	return nil
 }
 
-func (s *Simulator) release(id string) {
+func (s *Simulator) release(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.running, id)
+	delete(s.running, key)
+	s.wg.Done()
 }
 
 // Wait blocks until every run started so far has ended.
 func (s *Simulator) Wait() { s.wg.Wait() }
 
+// Close stops every run, waits for them to end and refuses new ones.
+func (s *Simulator) Close() {
+	s.mu.Lock()
+	s.closed = true
+	for _, cancel := range s.running {
+		cancel()
+	}
+	s.mu.Unlock()
+	s.wg.Wait()
+}
+
+// Run is a service worker: when ctx ends it stops the runs and waits for
+// them, so none is still ingesting or reporting while the pools close.
+func (s *Simulator) Run(ctx context.Context) error {
+	<-ctx.Done()
+	s.Close()
+	return nil
+}
+
 // Start checks the request, assigns the simulated courier when the delivery
 // has none (upserting "dt-simulator"), and starts the run in the
 // background. speedFactor 0 is 1. It returns ErrInvalidArgument for a speed
 // outside 1–20, a gap value outside 0–3600 or a live scope (sandbox only),
-// ErrNotFound for a delivery outside the scope, and ErrSimulationState for
-// a final delivery or one already being simulated.
+// ErrNotFound for a delivery outside the scope (checked before the run
+// guard, which is per tenant and environment), ErrSimulationState for a
+// final delivery or one already being simulated, ErrSimulatorClosed during
+// shutdown and an *RejectedError when deliveries refuses the courier
+// assignment.
 func (s *Simulator) Start(ctx context.Context, sc Scope, deliveryID string, speedFactor float64, gap *SignalGap) (string, error) {
 	if speedFactor == 0 {
 		speedFactor = 1
@@ -133,24 +182,35 @@ func (s *Simulator) Start(ctx context.Context, sc Scope, deliveryID string, spee
 	if sc.Env != "test" {
 		return "", fmt.Errorf("%w: the simulator runs in the test environment only", ErrInvalidArgument)
 	}
-	if !s.reserve(deliveryID) {
-		return "", ErrSimulationState
-	}
-	r, err := s.prepare(ctx, sc, deliveryID, speedFactor, gap)
+	// The scoped read comes first: a delivery outside the scope is
+	// ErrNotFound whether or not another tenant's run holds it.
+	d, err := s.Deliveries.Get(ctx, sc, deliveryID)
 	if err != nil {
-		s.release(deliveryID)
 		return "", err
+	}
+	if d.Status.IsFinal() {
+		return "", ErrSimulationState
 	}
 	base := s.Base
 	if base == nil {
 		base = context.Background()
 	}
-	s.wg.Add(1)
+	runCtx, cancel := context.WithTimeout(base, simMaxRun)
+	key := runKey(sc, deliveryID)
+	if err := s.reserve(key, cancel); err != nil {
+		cancel()
+		return "", err
+	}
+	r, err := s.prepare(ctx, sc, d, speedFactor, gap)
+	if err != nil {
+		cancel()
+		s.release(key)
+		return "", err
+	}
 	go func() {
-		defer s.wg.Done()
-		defer s.release(deliveryID)
-		ctx, cancel := context.WithTimeout(base, simMaxRun)
+		defer s.release(key)
 		defer cancel()
+		ctx := runCtx
 		if err := r.run(ctx); err != nil {
 			s.log().WarnContext(ctx, "simulation_stopped", "simulation_id", r.id, "delivery_id", deliveryID, "error", err)
 			return
@@ -160,15 +220,9 @@ func (s *Simulator) Start(ctx context.Context, sc Scope, deliveryID string, spee
 	return r.id, nil
 }
 
-// prepare reads the delivery and assigns the simulated courier if needed.
-func (s *Simulator) prepare(ctx context.Context, sc Scope, deliveryID string, speed float64, gap *SignalGap) (*simRun, error) {
-	d, err := s.Deliveries.Get(ctx, sc, deliveryID)
-	if err != nil {
-		return nil, err
-	}
-	if d.Status.IsFinal() {
-		return nil, ErrSimulationState
-	}
+// prepare assigns the simulated courier if the delivery has none.
+func (s *Simulator) prepare(ctx context.Context, sc Scope, d SimDelivery, speed float64, gap *SignalGap) (*simRun, error) {
+	deliveryID := d.ID
 	if d.Courier == nil {
 		c, err := s.Deliveries.UpsertCourier(ctx, sc, CourierUpsert{
 			ExternalID: SimCourierExternalID, DisplayName: "Sim Courier", Vehicle: "e_bike"})
@@ -360,7 +414,8 @@ func (r *simRun) report(ctx context.Context, rep StatusReport) error {
 		if err = r.s.Deliveries.Report(ctx, r.sc, r.d.ID, rep); err == nil {
 			return nil
 		}
-		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrSimulationState) {
+		var rej *RejectedError
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrSimulationState) || errors.As(err, &rej) {
 			break
 		}
 	}

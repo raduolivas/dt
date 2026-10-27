@@ -119,8 +119,16 @@ func TestClientMapsErrors(t *testing.T) {
 	if err := c.Report(ctx, sc, "del_1", app.StatusReport{EventID: "e", Type: "delivered", Actor: "courier"}); !errors.Is(err, app.ErrSimulationState) {
 		t.Fatalf("invalid transition = %v", err)
 	}
+	for _, code := range []string{"validation_failed", "courier_not_found", "model_not_allowed"} {
+		f.fail = failWith(connect.CodeFailedPrecondition, code)
+		var rej *app.RejectedError
+		if err := c.Assign(ctx, sc, "del_1", "cou_1"); !errors.As(err, &rej) || rej.Code != code {
+			t.Fatalf("%s = %v, want a RejectedError", code, err)
+		}
+	}
 	f.fail = failWith(connect.CodeUnavailable, "")
-	if err := c.Assign(ctx, sc, "del_1", "cou_1"); err == nil || errors.Is(err, app.ErrNotFound) || errors.Is(err, app.ErrSimulationState) {
+	if err := c.Assign(ctx, sc, "del_1", "cou_1"); err == nil || errors.Is(err, app.ErrNotFound) || errors.Is(err, app.ErrSimulationState) ||
+		errors.As(err, new(*app.RejectedError)) {
 		t.Fatalf("unavailable = %v", err)
 	}
 }

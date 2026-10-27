@@ -436,6 +436,12 @@ func TestSimulateTwice409(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-entered
+	// Another tenant never learns the delivery exists, running or not...
+	other := Scope{TenantID: "ten_other", Env: "test"}
+	if _, err := h.sim.Start(ctx, other, simDel, 20, nil); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("other tenant's Start = %v, want ErrNotFound", err)
+	}
+	// ...and its attempt holds nothing: the owner's second start is 409.
 	if _, err := h.sim.Start(ctx, sc, simDel, 20, nil); !errors.Is(err, ErrSimulationState) {
 		t.Fatalf("second Start = %v, want ErrSimulationState", err)
 	}
@@ -473,3 +479,61 @@ func TestSimulateValidatesAndScopes(t *testing.T) {
 		t.Fatalf("deliveries down = %v", err)
 	}
 }
+
+func TestSimulatorCloseStopsRuns(t *testing.T) {
+	h := newSimHarness(t, domain.ModelEndToEnd, "any", domain.StatusCourierAssigned, true)
+	entered := make(chan struct{}, 1)
+	h.sim.Sleep = func(ctx context.Context, _ time.Duration) error {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-ctx.Done() // a run only ends here when it is cancelled
+		return ctx.Err()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- h.sim.Run(ctx) }()
+	if _, err := h.sim.Start(context.Background(), sc, simDel, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not stop the simulation")
+	}
+	statuses, _, _ := h.dels.snapshot()
+	if slices.Contains(statuses, domain.StatusDelivered) {
+		t.Fatalf("a stopped run went on: %v", statuses)
+	}
+	if _, err := h.sim.Start(context.Background(), sc, simDel, 1, nil); !errors.Is(err, ErrSimulatorClosed) {
+		t.Fatalf("Start after Close = %v, want ErrSimulatorClosed", err)
+	}
+}
+
+func TestSimulatorPassesDeliveriesRejections(t *testing.T) {
+	h := newSimHarness(t, domain.ModelEndToEnd, "any", domain.StatusConfirmed, false)
+	rej := &RejectedError{Code: "courier_not_found", Err: errors.New("no such courier")}
+	h.sim.Deliveries = rejectAssign{h.dels, rej}
+	if _, err := h.sim.Start(context.Background(), sc, simDel, 1, nil); !errors.As(err, new(*RejectedError)) {
+		t.Fatalf("Start = %v, want the RejectedError", err)
+	}
+	// The failed start released its reservation.
+	h.sim.Deliveries = h.dels
+	if _, err := h.sim.Start(context.Background(), sc, simDel, 20, nil); err != nil {
+		t.Fatalf("Start after a rejection = %v", err)
+	}
+	h.sim.Wait()
+}
+
+type rejectAssign struct {
+	*simDeliveries
+	err error
+}
+
+func (r rejectAssign) Assign(context.Context, Scope, string, string) error { return r.err }

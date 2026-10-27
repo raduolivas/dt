@@ -89,6 +89,10 @@ func TestSimulateErrors(t *testing.T) {
 	// Running already, or a final delivery.
 	g.track.failing = rpcFail(connect.CodeFailedPrecondition, "simulation_state")
 	wantProblem(t, g.do(g.req(http.MethodPost, simulateTarget(), `{}`)), http.StatusConflict, "simulation_state")
+	// A deliveries refusal tracking passes on (assigning the simulated
+	// courier) keeps its code.
+	g.track.failing = rpcFail(connect.CodeFailedPrecondition, "courier_not_found")
+	wantProblem(t, g.do(g.req(http.MethodPost, simulateTarget(), `{}`)), http.StatusUnprocessableEntity, "courier_not_found")
 	g.track.failing = rpcFail(connect.CodeNotFound, "not_found")
 	wantProblem(t, g.do(g.req(http.MethodPost, simulateTarget(), `{}`)), http.StatusNotFound, "not_found")
 	g.track.failing = rpcFail(connect.CodeUnavailable, "tracking_unavailable")
