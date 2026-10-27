@@ -7,6 +7,13 @@
 // the time the relay answered the request that carried the fix. It prints the
 // p50, p95 and p99 and exits non-zero when the p95 is 1000 ms or more.
 //
+// It also counts loss and anomalies, so a good p95 cannot hide dropped updates:
+//   - lost: fixes the relay accepted for a watched delivery that no viewer
+//     snapshot carried. The run fails when more than 2% are lost.
+//   - negative: a snapshot can arrive before the relay's HTTP response does.
+//     Such a latency is clamped to 0 and counted; it is printed, not a failure.
+//   - a viewer stream that ends before the run does is reported and fails the run.
+//
 // Usage:
 //
 //	latency -api http://127.0.0.1:8080 -stream http://127.0.0.1:8082 -key dt_sk_test_...
@@ -35,8 +42,15 @@ import (
 	"time"
 )
 
-// maxP95 is the budget: the exit status is non-zero at or above it.
-const maxP95 = time.Second
+const (
+	// maxP95 is the budget: the exit status is non-zero at or above it.
+	maxP95 = time.Second
+	// maxLoss is the share of accepted fixes (for watched deliveries) that
+	// may never appear in a viewer's snapshots before the run fails. SSE
+	// snapshots may coalesce under load, and the last fix of the run may
+	// arrive after the 3 s grace, so a little loss is normal.
+	maxLoss = 0.02
+)
 
 type percentiles struct {
 	N             int
@@ -143,14 +157,22 @@ type clock struct {
 	mu       sync.Mutex
 	answered map[string]time.Time // key: delivery|t
 	seen     map[string]time.Time
+	watched  map[string]bool // deliveries with a viewer
+	ended    counter         // viewer streams that ended before the run did
 }
 
 func newClock() *clock {
-	return &clock{answered: map[string]time.Time{}, seen: map[string]time.Time{}}
+	return &clock{answered: map[string]time.Time{}, seen: map[string]time.Time{}, watched: map[string]bool{}}
 }
 
 func fixKey(delivery string, t time.Time) string {
 	return fmt.Sprintf("%s|%d", delivery, t.UnixMilli())
+}
+
+func (k *clock) watch(delivery string) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.watched[delivery] = true
 }
 
 func (k *clock) answer(delivery string, t, at time.Time) {
@@ -167,22 +189,55 @@ func (k *clock) see(delivery string, t, at time.Time) {
 	}
 }
 
-// latencies pairs every fix a viewer saw with the relay's answer for it.
-func (k *clock) latencies() []time.Duration {
+// outcome is what the run measured.
+type outcome struct {
+	Latencies []time.Duration // one per fix both answered and seen, negatives clamped to 0
+	Negative  int             // how many were below zero before clamping
+	Answered  int             // fixes the relay accepted for watched deliveries
+	Lost      int             // of those, never seen in a viewer snapshot
+}
+
+// LossRate is Lost as a fraction of Answered.
+func (o outcome) LossRate() float64 {
+	if o.Answered == 0 {
+		return 0
+	}
+	return float64(o.Lost) / float64(o.Answered)
+}
+
+// result pairs every fix a viewer saw with the relay's answer for it. A
+// snapshot can reach the viewer before the relay's response reaches this
+// client; such a negative latency is clamped to 0 and counted. A fix the
+// relay accepted for a watched delivery that no viewer snapshot carried is
+// lost.
+func (k *clock) result() outcome {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	var out []time.Duration
-	for key, seen := range k.seen {
-		if ans, ok := k.answered[key]; ok {
-			out = append(out, seen.Sub(ans))
+	var o outcome
+	for key, ans := range k.answered {
+		delivery, _, _ := strings.Cut(key, "|")
+		if !k.watched[delivery] {
+			continue
 		}
+		o.Answered++
+		seen, ok := k.seen[key]
+		if !ok {
+			o.Lost++
+			continue
+		}
+		d := seen.Sub(ans)
+		if d < 0 {
+			o.Negative++
+			d = 0
+		}
+		o.Latencies = append(o.Latencies, d)
 	}
-	return out
+	return o
 }
 
 // drive posts one fix per second for the courier until ctx ends.
 func (c *client) drive(ctx context.Context, t target, k *clock, fails *counter) {
-	const stepDeg = 0.000072 // about 8 m north per fix
+	const stepDeg = 0.000072 // about 8 m north per fix, matching speed_mps
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	var last time.Time
@@ -197,8 +252,8 @@ func (c *client) drive(ctx context.Context, t target, k *clock, fails *counter) 
 			continue
 		}
 		last = fixT
-		// A triangle wave along a street-sized line, so a long run stays plausible.
-		off := math.Abs(float64(n%2000) - 1000)
+		// A triangle wave along a line of about 800 m, so a long run stays plausible.
+		off := math.Abs(float64(n%200) - 100)
 		fix := map[string]any{
 			"t": fixT.Format(time.RFC3339), "lat": 52.3676 + off*stepDeg, "lng": 4.9000 + float64(t.idx)*0.0015,
 			"accuracy_m": 5, "speed_mps": 8, "heading_deg": 0,
@@ -282,6 +337,9 @@ func (c *client) watch(ctx context.Context, stream string, t target, k *clock, r
 			event = ""
 		}
 	}
+	if ctx.Err() == nil {
+		k.ended.add(fmt.Sprintf("stream of %s ended early: %v", t.delivery, sc.Err()))
+	}
 }
 
 // session exchanges a tracking link token for a viewer token.
@@ -355,6 +413,7 @@ func run(api, stream, key string, deliveries, viewers int, duration time.Duratio
 		if targets[i].linkToken == "" {
 			return fmt.Errorf("delivery %s has no tracking link", targets[i].delivery)
 		}
+		k.watch(targets[i].delivery)
 		watchers.Add(1)
 		go func() { defer watchers.Done(); c.watch(watchCtx, stream, targets[i], k, ready) }()
 	}
@@ -381,16 +440,29 @@ func run(api, stream, key string, deliveries, viewers int, duration time.Duratio
 	if fails.n > 0 {
 		fmt.Fprintf(os.Stderr, "%d relay failures, first: %s\n", fails.n, fails.first)
 	}
-	p, err := summarize(k.latencies())
+	o := k.result()
+	p, err := summarize(o.Latencies)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("samples %d\np50 %d ms\np95 %d ms\np99 %d ms\n", p.N, p.P50.Milliseconds(), p.P95.Milliseconds(), p.P99.Milliseconds())
+	fmt.Printf("negative (clamped to 0) %d\nanswered %d, lost %d (%.2f%%, tolerance %.0f%%)\n",
+		o.Negative, o.Answered, o.Lost, 100*o.LossRate(), 100*maxLoss)
+	var problems []string
 	if !p.ok() {
-		return fmt.Errorf("p95 %d ms is not under %d ms", p.P95.Milliseconds(), maxP95.Milliseconds())
+		problems = append(problems, fmt.Sprintf("p95 %d ms is not under %d ms", p.P95.Milliseconds(), maxP95.Milliseconds()))
+	}
+	if o.LossRate() > maxLoss {
+		problems = append(problems, fmt.Sprintf("%d of %d fixes never reached a viewer", o.Lost, o.Answered))
+	}
+	if k.ended.n > 0 {
+		problems = append(problems, fmt.Sprintf("%d viewer streams ended early, first: %s", k.ended.n, k.ended.first))
 	}
 	if fails.n > 0 {
-		return fmt.Errorf("%d relay failures", fails.n)
+		problems = append(problems, fmt.Sprintf("%d relay failures", fails.n))
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
 	}
 	return nil
 }

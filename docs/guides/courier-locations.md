@@ -5,8 +5,8 @@ description: Relay your couriers' GPS fixes to DT, the limits that apply, and wh
 
 # Courier locations
 
-DT draws the courier on the map from GPS fixes. In M3 you relay the fixes your own courier app collects. (DT's
-own courier SDK and link come later.)
+DT draws the courier on the map from GPS fixes. You relay the fixes your own courier app collects. (DT's own
+courier SDK and courier link are planned.)
 
 ## Before you send: register and assign
 
@@ -55,7 +55,7 @@ The answer is `{"accepted": 1, "dropped": 0}`. Requires scope `couriers:write`.
 
 ### What is dropped, and what is kept
 
-- A fix with `t` more than 5 seconds after DT received it is rejected, so keep your servers' clocks right.
+- A fix with `t` more than 5 seconds after DT received it is dropped and counted in `dropped`, so keep your servers' clocks right.
 - A fix older than 2 minutes at receipt is stored in the trail but does not move the live position.
 - An implausible fix is dropped and counted in `dropped`: faster than 200 km/h from the previous fix, or a jump
   of more than 1 km in under 10 seconds.

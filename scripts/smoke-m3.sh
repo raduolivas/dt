@@ -85,33 +85,40 @@ done
 [[ "$code" == 200 ]] || fail "key not known to the gateway after 10 s (last status ${code})"
 
 step "2. create an end_to_end delivery in Amsterdam; it carries a tracking link"
-expect 201 POST /deliveries "$(jq -nc --arg e "order-m3-${run_id}" '{
-  external_id: $e, delivery_model: "end_to_end",
-  pickup: {location: {lat: 52.3731, lng: 4.8922}, name: "Smoke Kitchen"},
-  dropoff: {location: {lat: 52.3600, lng: 4.8852}, label: "Smoke Door"},
-  customer: {first_name: "Ana"}}')"
-delivery="$(jq -r .id <"$body")"
-[[ "$delivery" == del_* ]] || fail "delivery id ${delivery}"
-field .status confirmed
-token="$(jq -r .tracking.token <"$body")"
-url="$(jq -r .tracking.url <"$body")"
-[[ "$token" =~ ^[A-Za-z0-9_-]{22}$ ]] || fail "tracking.token is not a 22-character token"
-[[ "$url" == */t/"$token" ]] || fail "tracking.url ${url} does not end in /t/<token>"
-field .tracking.expires_at null
-
 step "3. start a viewer session: no courier yet, ETA estimated from the preparation time"
-# The tracking service learns of a new delivery through NATS, so the very first
-# session can answer 503 tracking_unavailable for a moment.
-for _ in $(seq 1 40); do
-  code="$(session "$token")"
-  [[ "$code" == 503 ]] || break
-  sleep 0.25
+# Two things reach other services through NATS a moment after they are written: the
+# tenant's settings reach deliveries (a delivery created before that has no ready
+# time, so its ETA is "calculating"), and a new delivery reaches tracking (the first
+# session can answer 503 tracking_unavailable). So retry: a delivery that does not
+# show "estimated" is replaced by a new one, for up to 10 s.
+for attempt in $(seq 1 20); do
+  expect 201 POST /deliveries "$(jq -nc --arg e "order-m3-${run_id}-${attempt}" '{
+    external_id: $e, delivery_model: "end_to_end",
+    pickup: {location: {lat: 52.3731, lng: 4.8922}, name: "Smoke Kitchen"},
+    dropoff: {location: {lat: 52.3600, lng: 4.8852}, label: "Smoke Door"},
+    customer: {first_name: "Ana"}}')"
+  delivery="$(jq -r .id <"$body")"
+  [[ "$delivery" == del_* ]] || fail "delivery id ${delivery}"
+  field .status confirmed
+  token="$(jq -r .tracking.token <"$body")"
+  url="$(jq -r .tracking.url <"$body")"
+  [[ "$token" =~ ^[A-Za-z0-9_-]{22}$ ]] || fail "tracking.token is not a 22-character token"
+  [[ "$url" == */t/"$token" ]] || fail "tracking.url ${url} does not end in /t/<token>"
+  field .tracking.expires_at null
+  for _ in $(seq 1 40); do
+    code="$(session "$token")"
+    [[ "$code" == 503 ]] || break
+    sleep 0.25
+  done
+  [[ "$code" == 200 ]] || fail "POST /tracking/session: ${code}: $(cat "$body")"
+  [[ "$(jq -r .snapshot.eta_state <"$body")" == estimated ]] && break
+  sleep 0.5
 done
-[[ "$code" == 200 ]] || fail "POST /tracking/session: ${code}: $(cat "$body")"
 viewer="$(jq -r .viewer_token <"$body")"
 [[ -n "$viewer" && "$viewer" != null ]] || fail "no viewer_token"
-field .snapshot.courier null
-field .snapshot.eta_state estimated
+jq -e '.snapshot.courier == null' <"$body" >/dev/null || fail "snapshot shows a courier before assignment"
+eta="$(jq -r .snapshot.eta_state <"$body")"
+[[ "$eta" == estimated ]] || fail ".snapshot.eta_state: want estimated, got ${eta} after 20 deliveries"
 field .snapshot.delivery_id "$delivery"
 
 step "4. open the SSE stream in the background"

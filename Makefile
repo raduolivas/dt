@@ -130,9 +130,10 @@ latency: dtctl ## Measure fix-to-viewer latency against the running stack (after
 	@set -eu; tenant=$$($(DTCTL) tenant create --name "Latency"); \
 	$(DTCTL) tenant settings --tenant "$$tenant" --models direct,end_to_end --default end_to_end --pickup any >/dev/null; \
 	secret=$$($(DTCTL) key create --tenant "$$tenant" --env test --name latency); \
-	for _ in $$(seq 1 40); do \
-	  [ "$$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $$secret" http://127.0.0.1:8080/v1/me)" = 200 ] && break; sleep 0.25; \
+	ready=""; for _ in $$(seq 1 40); do \
+	  [ "$$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $$secret" http://127.0.0.1:8080/v1/me)" = 200 ] && ready=1 && break; sleep 0.25; \
 	done; \
+	[ -n "$$ready" ] || { echo "latency: the gateway did not accept the new key within 10 s (is the stack up? run make dev)" >&2; exit 1; }; \
 	cd backend/tools/latency && DT_API_KEY="$$secret" go run . -deliveries 20 -viewers 5 -duration 2m
 
 # ---- security and CI --------------------------------------------------------

@@ -20,3 +20,16 @@ condition = "AND"
 paths = ['''_test\.go$''']
 regexTarget = "secret"
 regexes = ['''^ak_[0-9a-z]{26}$''']
+
+# The documented example values in the OpenAPI contract (and its generated
+# gateway copy): a link token, and three placeholder viewer tokens whose JWT
+# payload is {"aud":"viewer"} with a dummy signature. Exact strings only; no
+# path is allowlisted, so a real leak in those files is still found.
+[[allowlists]]
+description = "example tokens in the OpenAPI contract"
+regexTarget = "secret"
+regexes = [
+  '''^Xk3m9QpL2vN7aB4cD8eF1g$''',
+  '''^Zr7wT2nKd9sH4yJ6uB3xQa$''',
+  '''^eyJhbGciOiJFZERTQSIsImtpZCI6InYxIn0\.eyJhdWQiOiJ2aWV3ZXIifQ\.(c2lnbmF0dXJl|bmV3c2ln)$''',
+]
