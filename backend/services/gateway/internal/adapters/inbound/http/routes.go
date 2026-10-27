@@ -54,7 +54,13 @@ type Route struct {
 	// (a GPS batch sent twice is harmless) and it runs at up to 1/s per
 	// courier, too often to store a record per call.
 	NoIdempotency bool
-	Handler       http.Handler
+	// NoAudit exempts a write route from the Audit hook. Only the
+	// courier-location relay sets it: its fixes are tracking data, kept in
+	// the trail under the trail's own retention, not account or
+	// configuration writes, and a row per call (up to 1/s per courier,
+	// kept a year) would swamp the audit log.
+	NoAudit bool
+	Handler http.Handler
 }
 
 // RateBucketRelay is Route.RateBucket of the courier-location relay.
@@ -133,11 +139,12 @@ func auditedRead(r Route) Route {
 }
 
 // relay puts a route on the relay's rate buckets and its 16 KB body limit,
-// without idempotency records.
+// without idempotency records or audit rows.
 func relay(r Route) Route {
 	r.RateBucket = RateBucketRelay
 	r.MaxBody = MaxRelayBodyBytes
 	r.NoIdempotency = true
+	r.NoAudit = true
 	return r
 }
 
@@ -175,7 +182,7 @@ type Middleware struct {
 	// Idempotency (Task 11) runs on POST routes only (not NoIdempotency
 	// ones), after Authorize.
 	Idempotency Hook
-	// Audit (Task 12) runs on non-GET routes, and on GET routes that set
+	// Audit (Task 12) runs on non-GET routes (not NoAudit ones), and on GET routes that set
 	// AuditReads, after RateLimit and before Authorize, so it sees every
 	// authenticated write's (and audited read's) final status except a 429.
 	Audit Hook
@@ -192,7 +199,7 @@ const MaxRelayBodyBytes = 16 << 10
 //
 //	MaxBytes(64 KiB, or the route's MaxBody) → ClientIP(trusted) →
 //	[FailedAuth] → Authenticate → [RateLimit] →
-//	[Audit, non-GET or AuditReads] → Authorize(route) →
+//	[Audit, (non-GET or AuditReads) and not NoAudit] → Authorize(route) →
 //	[Idempotency, POST but not NoIdempotency] → Validate (OpenAPI, security off) → handler
 //
 // FailedAuth wraps Authenticate so it can count the 401s Authenticate writes.
@@ -228,7 +235,7 @@ func Mount(mux *http.ServeMux, routes []Route, mw Middleware) {
 			h = mw.Idempotency(h, rt)
 		}
 		h = Authorize(rt)(h)
-		if mw.Audit != nil && (rt.Method != http.MethodGet || rt.AuditReads) {
+		if mw.Audit != nil && !rt.NoAudit && (rt.Method != http.MethodGet || rt.AuditReads) {
 			h = mw.Audit(h, rt)
 		}
 		if mw.RateLimit != nil {

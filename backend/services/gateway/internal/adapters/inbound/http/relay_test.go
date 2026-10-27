@@ -89,9 +89,27 @@ func TestRelayForwardsFixesToTracking(t *testing.T) {
 	if f1.SpeedMps != nil || f1.HeadingDeg != nil {
 		t.Fatalf("fix 1 carries speed or heading it did not send: %v", f1)
 	}
-	// One audit row for the write, naming the courier.
-	rows := g.audit.all()
-	if len(rows) != 1 || rows[0].Action != "couriers.report_locations" || rows[0].Target != couID || rows[0].Status != 200 {
+}
+
+// TestRelayIsNotAudited: location fixes are tracking data with the trail's
+// own retention, not account or configuration writes, so the relay writes no
+// audit row, whatever its outcome; other writes on the same edge still do.
+func TestRelayIsNotAudited(t *testing.T) {
+	t.Parallel()
+	g := newTrackGW(t, nil)
+	if rec := g.do(g.req(http.MethodPost, relayTarget(), relayBody)); rec.Code != http.StatusOK {
+		t.Fatalf("relay = %d: %s", rec.Code, rec.Body.String())
+	}
+	g.track.failing = rpcFail(connect.CodeNotFound, "not_found")
+	wantProblem(t, g.do(g.req(http.MethodPost, relayTarget(), relayBody)), http.StatusNotFound, "not_found")
+	k := newTrackGW(t, nil, domain.ScopeDeliveriesRead)
+	wantProblem(t, k.do(k.req(http.MethodPost, relayTarget(), relayBody)), http.StatusForbidden, "insufficient_scope")
+	if rows := append(g.audit.all(), k.audit.all()...); len(rows) != 0 {
+		t.Fatalf("relay audited: %+v", rows)
+	}
+	// The hook is mounted: another write is audited.
+	g.do(g.req(http.MethodPost, "/v1/deliveries/"+delID+"/cancel", `{"reason":"Customer cancelled the order"}`))
+	if rows := g.audit.all(); len(rows) != 1 || rows[0].Action != "deliveries.cancel" {
 		t.Fatalf("audit = %+v", rows)
 	}
 }
@@ -172,10 +190,6 @@ func TestRelayUsesOwnBucket(t *testing.T) {
 	}
 	if g.track.count() != 5 {
 		t.Fatalf("tracking calls = %d, want 5 (the 429 never reaches it)", g.track.count())
-	}
-	// The 429 is not audited; the five relays are.
-	if n := len(g.audit.all()); n != 5 {
-		t.Fatalf("audit rows = %d, want 5", n)
 	}
 
 	// The relay never touches the partner key bucket...

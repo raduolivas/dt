@@ -563,11 +563,12 @@ func TestAuthorizationMatrix(t *testing.T) {
 				rows := audit.all()
 				// M1 audits every authenticated write at its final status,
 				// refusals included (insufficient_scope, 404s), and M3 the
-				// reads of location history (AuditReads routes). Requests
+				// reads of location history (AuditReads routes), but not the
+				// courier-location relay (NoAudit: tracking data). Requests
 				// refused before a principal exists (401, the Origin and IP
 				// 403s of Authenticate) have no actor, and 429s are skipped
 				// on purpose, so neither leaves a row.
-				audited := (rt.Method != http.MethodGet || rt.AuditReads) && status != http.StatusUnauthorized && status != http.StatusTooManyRequests &&
+				audited := (rt.Method != http.MethodGet || rt.AuditReads) && !rt.NoAudit && status != http.StatusUnauthorized && status != http.StatusTooManyRequests &&
 					code != "secret_key_in_browser" && code != "ip_not_allowed"
 				if audited {
 					if len(rows) != 1 {

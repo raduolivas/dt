@@ -652,24 +652,25 @@ func TestRoutesTable(t *testing.T) {
 		auditReads      bool
 		maxBody         int64
 		noIdempotency   bool
+		noAudit         bool
 	}
 	want := map[string]props{
-		"deliveries.get_tracking":      {http.MethodGet, "/v1/deliveries/{id}/tracking", domain.ScopeDeliveriesRead, "", false, 0, false},
-		"deliveries.list_trail":        {http.MethodGet, "/v1/deliveries/{id}/trail", domain.ScopeDeliveriesRead, "", true, 0, false},
-		"deliveries.list_proof_points": {http.MethodGet, "/v1/deliveries/{id}/proof-points", domain.ScopeDeliveriesRead, "", true, 0, false},
+		"deliveries.get_tracking":      {http.MethodGet, "/v1/deliveries/{id}/tracking", domain.ScopeDeliveriesRead, "", false, 0, false, false},
+		"deliveries.list_trail":        {http.MethodGet, "/v1/deliveries/{id}/trail", domain.ScopeDeliveriesRead, "", true, 0, false, false},
+		"deliveries.list_proof_points": {http.MethodGet, "/v1/deliveries/{id}/proof-points", domain.ScopeDeliveriesRead, "", true, 0, false, false},
 		"couriers.report_locations": {http.MethodPost, "/v1/couriers/{id}/locations", domain.ScopeCouriersWrite,
-			httpapi.RateBucketRelay, false, 16 << 10, true},
+			httpapi.RateBucketRelay, false, 16 << 10, true, true},
 	}
 	for _, r := range rs {
 		w, ok := want[r.Name]
 		if !ok {
-			if r.RateBucket != "" || r.AuditReads || r.MaxBody != 0 || r.NoIdempotency {
+			if r.RateBucket != "" || r.AuditReads || r.MaxBody != 0 || r.NoIdempotency || r.NoAudit {
 				t.Errorf("route %s has tracking-only settings: %+v", r.Name, r)
 			}
 			continue
 		}
 		delete(want, r.Name)
-		got := props{r.Method, r.Pattern, r.Scope, r.RateBucket, r.AuditReads, r.MaxBody, r.NoIdempotency}
+		got := props{r.Method, r.Pattern, r.Scope, r.RateBucket, r.AuditReads, r.MaxBody, r.NoIdempotency, r.NoAudit}
 		if got != w || r.Env != httpapi.AnyEnv || r.SuccessStatus != http.StatusOK {
 			t.Errorf("route %s = %+v, want %+v", r.Name, got, w)
 		}
