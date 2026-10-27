@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,6 +14,8 @@ import (
 
 	eventsv1 "github.com/raduolivas/dt/backend/gen/dt/events/v1"
 	trackingv1 "github.com/raduolivas/dt/backend/gen/dt/tracking/v1"
+	"github.com/raduolivas/dt/backend/pkg/apikey"
+	httpapi "github.com/raduolivas/dt/backend/services/gateway/internal/adapters/inbound/http"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/domain"
 )
@@ -198,7 +201,7 @@ func TestRelayUsesOwnBucket(t *testing.T) {
 			t.Fatalf("relay charged %s", key)
 		}
 	}
-	if lim.count("rl:relay:cou:"+couID) != 6 || lim.count("rl:relay:ten:"+tenantID+":test") != 5 {
+	if lim.count("rl:relay:cou:"+tenantID+":test:"+couID) != 6 || lim.count("rl:relay:ten:"+tenantID+":test") != 5 {
 		t.Fatalf("buckets = %v", lim.n)
 	}
 	// ...so the key's own API calls are unaffected.
@@ -254,5 +257,50 @@ func TestRelayBodyLimit16KB(t *testing.T) {
 	big := `{"external_id":"o","notes":"` + strings.Repeat("x", 17<<10) + `"}`
 	if rec := g.do(g.req(http.MethodPost, "/v1/deliveries", big)); rec.Code == http.StatusRequestEntityTooLarge {
 		t.Fatalf("deliveries.create has the relay limit: %s", rec.Body.String())
+	}
+}
+
+// TestRelayCourierBucketIsPerTenant: the courier bucket is charged before
+// tracking checks the courier is the caller's, so it names the caller's
+// tenant and environment. Another tenant, or the owner's other environment,
+// posting to the same courier id spends its own bucket (and gets 404), never
+// the owner's.
+func TestRelayCourierBucketIsPerTenant(t *testing.T) {
+	t.Parallel()
+	lim := newKeyRecorder()
+	owner := mint(t, apikey.Test, "ak_01j9z3k8m2q4r6s8t0v2w4x6y1", domain.AllScopes...)
+	other := mint(t, apikey.Test, "ak_01j9z3k8m2q4r6s8t0v2w4x6y2", domain.AllScopes...)
+	other.rec.TenantID = otherTenant
+	live := mint(t, apikey.Live, "ak_01j9z3k8m2q4r6s8t0v2w4x6y3", domain.AllScopes...)
+	e := newEdge(t, []testKey{owner, other, live},
+		withRoutes(httpapi.Routes(httpapi.Deps{Tracking: scopedTracking{newFakeTracking()}})...),
+		withMiddleware(func(m *httpapi.Middleware) { m.RateLimit = httpapi.PartnerRateLimit(lim, m.Log) }))
+	relay := func(k testKey) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/v1/couriers/"+couMine+"/locations", strings.NewReader(relayBody))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Authorization", "Bearer "+k.raw)
+		return e.do(r)
+	}
+	// Each outsider exhausts its own bucket: five 404s, then 429.
+	for _, k := range []testKey{other, live} {
+		for range 5 {
+			wantProblem(t, relay(k), http.StatusNotFound, "not_found")
+		}
+		wantProblem(t, relay(k), http.StatusTooManyRequests, "rate_limited")
+	}
+	// The owner's courier bucket is untouched: its full burst passes.
+	for i := range 5 {
+		if rec := relay(owner); rec.Code != http.StatusOK {
+			t.Fatalf("owner relay %d = %d: %s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+	for key, want := range map[string]int{
+		"rl:relay:cou:" + tenantID + ":test:" + couMine:    5,
+		"rl:relay:cou:" + otherTenant + ":test:" + couMine: 6,
+		"rl:relay:cou:" + tenantID + ":live:" + couMine:    6,
+	} {
+		if n := lim.count(key); n != want {
+			t.Errorf("%s = %d, want %d (all: %v)", key, n, want, lim.keys())
+		}
 	}
 }

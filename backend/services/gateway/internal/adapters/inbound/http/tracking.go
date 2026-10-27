@@ -61,7 +61,8 @@ func optLatLng(l *eventsv1.LatLng) *api.LatLng {
 	return &api.LatLng{Lat: l.GetLat(), Lng: l.GetLng()}
 }
 
-// pairs are `[lat, lng]` route points; nil encodes as null, empty as [].
+// pairs are `[lat, lng]` route points; the result is never nil, so it
+// encodes as [] even for no points (callers leave a field nil for null).
 func pairs(pts []*eventsv1.LatLng) [][2]float64 {
 	out := make([][2]float64, len(pts))
 	for i, p := range pts {

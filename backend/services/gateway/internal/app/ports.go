@@ -60,7 +60,7 @@ var (
 	// rl:authfail:<client ip>.
 	FailedAuth = Limit{Rate: 20, Period: time.Minute, Burst: 20}
 	// RelayCourier is applied per courier to the location relay, keyed
-	// rl:relay:cou:<courier id>, instead of PartnerKey.
+	// rl:relay:cou:<tenant id>:<env>:<courier id>, instead of PartnerKey.
 	RelayCourier = Limit{Rate: 1, Period: time.Second, Burst: 5}
 	// RelayTenant is the relay's ceiling per tenant and environment, keyed
 	// rl:relay:ten:<tenant id>:<env>.

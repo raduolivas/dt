@@ -99,16 +99,20 @@ type charge struct {
 }
 
 // relayCharges are the buckets one relay call is charged to, in order: the
-// courier's (rl:relay:cou:<cou id>, 1/s burst 5), then the tenant's
-// environment ceiling (rl:relay:ten:<tenant>:<env>, 500/s burst 1000). A
-// hot courier is refused before it costs the tenant ceiling. The path id is
+// courier's (rl:relay:cou:<tenant>:<env>:<cou id>, 1/s burst 5), then the
+// tenant's environment ceiling (rl:relay:ten:<tenant>:<env>, 500/s burst
+// 1000). A hot courier is refused before it costs the tenant ceiling. The
+// courier bucket names the caller's tenant and environment because it is
+// charged before tracking checks that the courier is the caller's: another
+// tenant posting to this courier id gets its 404 from its own bucket and
+// never drains the owner's. The path id is
 // not validated yet, so only a well-formed courier id names a bucket; any
 // other (a 400 for the validator) is charged to the tenant ceiling alone,
 // and cannot mint bucket keys.
 func relayCharges(r *http.Request, p domain.Principal) []charge {
 	var cs []charge
 	if id := r.PathValue("id"); ids.Valid(ids.Courier, id) {
-		cs = append(cs, charge{"rl:relay:cou:" + id, app.RelayCourier})
+		cs = append(cs, charge{"rl:relay:cou:" + p.TenantID + ":" + string(p.Env) + ":" + id, app.RelayCourier})
 	}
 	return append(cs, charge{"rl:relay:ten:" + p.TenantID + ":" + string(p.Env), app.RelayTenant})
 }

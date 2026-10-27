@@ -2,6 +2,7 @@ package rpc_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -79,8 +80,14 @@ func TestGetPartnerViewRPCShowsHiddenCourier(t *testing.T) {
 	}
 	// The customer's snapshot of the same delivery still hides the courier.
 	snap, err := c.GetSnapshot(ctx, &trackingv1.GetSnapshotRequest{Scope: scopeOf("ten_a"), DeliveryId: delD})
-	if err != nil || len(snap.GetSnapshotJson()) == 0 {
+	if err != nil {
 		t.Fatal(err)
+	}
+	var customer struct {
+		Courier json.RawMessage `json:"courier"`
+	}
+	if err := json.Unmarshal(snap.GetSnapshotJson(), &customer); err != nil || string(customer.Courier) != "null" {
+		t.Fatalf("customer snapshot courier = %s (%v), want null: %s", customer.Courier, err, snap.GetSnapshotJson())
 	}
 
 	for name, r := range map[string]*trackingv1.GetPartnerViewRequest{
