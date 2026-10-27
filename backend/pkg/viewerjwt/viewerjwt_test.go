@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -150,7 +151,7 @@ func TestVerifyRejectsWrongAudAlgNoneAndExpired(t *testing.T) {
 	good := func() jwt.MapClaims {
 		return jwt.MapClaims{
 			"iss": viewerjwt.Issuer, "aud": viewerjwt.Audience, "sub": claims.DeliveryID,
-			"ten": claims.TenantID, "env": claims.Env, "lid": claims.LinkID,
+			"tid": claims.TenantID, "env": claims.Env, "lid": claims.LinkID,
 			"iat": now.Unix(), "exp": now.Add(15 * time.Minute).Unix(),
 		}
 	}
@@ -334,5 +335,74 @@ func TestJWKSPublishesEveryPublicKeyOnly(t *testing.T) {
 	parsed, _, _ := jwt.NewParser().ParseUnverified(tok, jwt.MapClaims{})
 	if parsed.Header["kid"] != "v2" {
 		t.Fatalf("signed with kid %v, want the current v2", parsed.Header["kid"])
+	}
+}
+
+func TestSignedTokenClaimNames(t *testing.T) {
+	t.Parallel()
+	s := signer(t, "v1:"+seed(t), "v1")
+	tok, _, err := s.Sign(claims, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(tok, ".")
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"iss", "aud", "sub", "tid", "env", "lid", "iat", "exp"} {
+		if _, ok := payload[k]; !ok {
+			t.Errorf("claim %q missing: %s", k, raw)
+		}
+	}
+	if _, ok := payload["ten"]; ok {
+		t.Errorf("legacy claim ten present: %s", raw)
+	}
+	if string(payload["aud"]) != `"viewer"` || string(payload["tid"]) != `"`+claims.TenantID+`"` {
+		t.Fatalf("aud/tid = %s/%s, want a single string", payload["aud"], payload["tid"])
+	}
+}
+
+func TestVerifyAcceptsAudienceAsArrayOrString(t *testing.T) {
+	t.Parallel()
+	sd := seed(t)
+	s := signer(t, "v1:"+sd, "v1")
+	rawSeed, _ := base64.StdEncoding.DecodeString(sd)
+	key := ed25519.NewKeyFromSeed(rawSeed)
+	v := s.Verifier()
+	for name, aud := range map[string]any{"string": "viewer", "array": []string{"viewer"}} {
+		tok := forge(t, key, "v1", jwt.MapClaims{"iss": viewerjwt.Issuer, "aud": aud, "sub": claims.DeliveryID,
+			"tid": claims.TenantID, "env": claims.Env, "lid": claims.LinkID, "iat": now.Unix(), "exp": now.Add(time.Minute).Unix()})
+		if got, err := v.Verify(context.Background(), tok, now); err != nil || got != claims {
+			t.Errorf("aud as %s: %+v, %v", name, got, err)
+		}
+	}
+}
+
+func TestNewVerifierDefaultClientHasTimeout(t *testing.T) {
+	t.Parallel()
+	if d := viewerjwt.NewVerifier("http://127.0.0.1:1", nil).ClientTimeout(); d != 3*time.Second {
+		t.Fatalf("default client timeout = %v, want 3s", d)
+	}
+}
+
+func TestCancelledFetchKeepsRefetchSlot(t *testing.T) {
+	t.Parallel()
+	s := signer(t, "v1:"+seed(t), "v1")
+	j := newJWKS(t, s)
+	v := viewerjwt.NewVerifier(j.srv.URL, j.srv.Client())
+	tok, _, _ := s.Sign(claims, now)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := v.Verify(ctx, tok, now); err == nil {
+		t.Fatal("verified with a cancelled context and no keys")
+	}
+	// The cancelled attempt did not use up the 10 s slot.
+	if _, err := v.Verify(context.Background(), tok, now); err != nil {
+		t.Fatalf("after a cancelled fetch: %v", err)
 	}
 }

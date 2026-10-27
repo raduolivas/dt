@@ -36,6 +36,13 @@ type LinkStore interface {
 	RevokedSince(ctx context.Context, deliveryID string, since time.Time) ([]string, error)
 }
 
+// LinkHasher computes the stored form of a link token: HMAC-SHA256 under
+// the gateway pepper, so a leaked table cannot be checked against guessed
+// tokens without the pepper.
+type LinkHasher interface {
+	Hash(token string) []byte
+}
+
 // Revoker cuts off viewers of a revoked link at once: it deny-lists the link
 // id for the lifetime of a viewer token and tells every tracking instance to
 // close the link's open streams.
@@ -49,12 +56,13 @@ const revokeAttempts = 3
 // TrackingLinks issues, rotates, resolves and expires tracking links.
 type TrackingLinks struct {
 	Store   LinkStore
+	Hasher  LinkHasher
 	Revoker Revoker
 	Clock   Clock
 }
 
 // Issue creates the delivery's tracking link and returns it with its token
-// (shown once; only its hash is stored). The caller has checked that the
+// (shown once; only its HMAC is stored). The caller has checked that the
 // delivery belongs to p. A link the delivery already had is revoked.
 func (t *TrackingLinks) Issue(ctx context.Context, p domain.Principal, deliveryID string) (domain.TrackingLink, string, error) {
 	return t.replace(ctx, p, deliveryID)
@@ -77,7 +85,7 @@ func (t *TrackingLinks) replace(ctx context.Context, p domain.Principal, deliver
 	now := t.Clock.Now()
 	l, err := t.Store.Replace(ctx, domain.TrackingLink{
 		ID: ids.New(ids.TrackingLink), TenantID: p.TenantID, Env: p.Env, DeliveryID: deliveryID, CreatedAt: now,
-	}, domain.HashLinkToken(tok))
+	}, t.Hasher.Hash(tok))
 	if err != nil {
 		return domain.TrackingLink{}, "", fmt.Errorf("store tracking link: %w", err)
 	}
@@ -110,7 +118,7 @@ func (t *TrackingLinks) Resolve(ctx context.Context, token string, now time.Time
 	if !domain.ValidLinkToken(token) {
 		return domain.TrackingLink{}, ErrLinkInvalid
 	}
-	l, err := t.Store.FindByHash(ctx, domain.HashLinkToken(token))
+	l, err := t.Store.FindByHash(ctx, t.Hasher.Hash(token))
 	if errors.Is(err, ErrNotFound) {
 		return domain.TrackingLink{}, ErrLinkInvalid
 	}

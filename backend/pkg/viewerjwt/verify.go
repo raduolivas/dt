@@ -20,6 +20,8 @@ const (
 	// RefetchInterval is the least time between two fetches, so a stream of
 	// tokens with made-up key ids cannot hammer the JWKS endpoint.
 	RefetchInterval = 10 * time.Second
+	// DefaultFetchTimeout bounds a JWKS fetch when NewVerifier gets no client.
+	DefaultFetchTimeout = 3 * time.Second
 	// maxJWKSBytes bounds the JWKS document.
 	maxJWKSBytes = 64 << 10
 )
@@ -50,12 +52,12 @@ type Verifier struct {
 }
 
 // NewVerifier returns a Verifier that loads keys from jwksURL with client
-// (nil means http.DefaultClient). Keys are cached for CacheTTL; a token with
+// (nil means an http.Client with DefaultFetchTimeout). Keys are cached for CacheTTL; a token with
 // an unknown kid triggers a refetch, at most once per RefetchInterval. When a
 // fetch fails the last good keys stay in use.
 func NewVerifier(jwksURL string, client *http.Client) *Verifier {
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: DefaultFetchTimeout}
 	}
 	return &Verifier{url: jwksURL, client: client, clock: time.Now}
 }
@@ -127,8 +129,12 @@ func (v *Verifier) key(ctx context.Context, kid string) (ed25519.PublicKey, erro
 	if canFetch {
 		keys, err := v.fetch(ctx)
 		v.mu.Lock()
-		if err == nil {
+		switch {
+		case err == nil:
 			v.keys, v.fetchedAt = keys, v.clock()
+		case ctx.Err() != nil && v.attemptedAt.Equal(now):
+			// The caller gave up, not the endpoint: free the refetch slot.
+			v.attemptedAt = time.Time{}
 		}
 		v.mu.Unlock()
 	}

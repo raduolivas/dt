@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/raduolivas/dt/backend/pkg/apikey"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/domain"
 )
@@ -170,4 +171,21 @@ func (r *MemRevoker) Fail(err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.fail = err
+}
+
+// TestPepper is the pepper Hasher uses (test-only).
+var TestPepper = []byte("test-only-link-pepper-0123456789")
+
+// Hasher is app.LinkHasher with HMAC-SHA256 under TestPepper (or Pepper).
+type Hasher struct{ Pepper []byte }
+
+var _ app.LinkHasher = Hasher{}
+
+// Hash implements app.LinkHasher.
+func (h Hasher) Hash(token string) []byte {
+	p := h.Pepper
+	if p == nil {
+		p = TestPepper
+	}
+	return apikey.Hash(p, token)
 }

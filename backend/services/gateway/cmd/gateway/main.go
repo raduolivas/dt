@@ -122,7 +122,7 @@ func run(ctx context.Context, ready func(addr string)) error {
 			idem := postgres.NewIdempotencyStore(d.DB, box)
 			audit := postgres.NewAuditStore(d.DB)
 
-			links := &app.TrackingLinks{Store: postgres.NewTrackingLinkStore(d.DB), Revoker: redislimit.NewRevoker(d.Redis), Clock: clock}
+			links := &app.TrackingLinks{Store: postgres.NewTrackingLinkStore(d.DB), Hasher: keyhash.New(pepper), Revoker: redislimit.NewRevoker(d.Redis), Clock: clock}
 			httpapi.MountViewer(mux, httpapi.ViewerDeps{
 				Viewer: &app.Viewer{Links: links, Tokens: app.SignerTokens{Signer: signer, Verifier: signer.Verifier()},
 					Snapshots: trackingadapter.NewSnapshots(trackingRPC), Limiter: limiter},

@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"crypto/sha256"
 	"strings"
 	"testing"
 	"time"
@@ -22,10 +21,6 @@ func TestLinkTokenIs128BitURLSafe(t *testing.T) {
 			t.Fatal("duplicate token")
 		}
 		seen[tok] = true
-		h := HashLinkToken(tok)
-		if want := sha256.Sum256([]byte(tok)); string(h) != string(want[:]) {
-			t.Fatal("hash is not SHA-256 of the token")
-		}
 	}
 	for _, bad := range []string{"", "short", strings.Repeat("a", 23), strings.Repeat("a", 21) + "+",
 		strings.Repeat("a", 21) + "B" /* non-canonical last char */, "dt_sk_test_" + strings.Repeat("a", 11)} {

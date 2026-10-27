@@ -90,7 +90,7 @@ func testSigner(t *testing.T) *viewerjwt.Signer {
 // behind the outer middleware main uses.
 func newViewerEdge(t *testing.T, lim app.Limiter) *viewerEdge {
 	t.Helper()
-	links := &app.TrackingLinks{Store: apptest.NewMemLinks(), Revoker: &apptest.MemRevoker{}, Clock: fixedClock{}}
+	links := &app.TrackingLinks{Store: apptest.NewMemLinks(), Hasher: apptest.Hasher{}, Revoker: &apptest.MemRevoker{}, Clock: fixedClock{}}
 	s := testSigner(t)
 	snaps := &fakeSnapshots{}
 	logs := &bytes.Buffer{}

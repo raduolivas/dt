@@ -1,5 +1,6 @@
--- Customer tracking links (M3 design §3.2). token_hash is SHA-256 of the
--- 128-bit link token; the token itself is never stored. A delivery has at
+-- Customer tracking links (M3 design §3.2). token_hash is
+-- HMAC-SHA256(gateway pepper, 128-bit link token); the token itself is never
+-- stored. A delivery has at
 -- most one unrevoked link; rotation revokes it and inserts the next.
 CREATE TABLE tracking_links (
   id text PRIMARY KEY, -- tl_

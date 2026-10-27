@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/raduolivas/dt/backend/pkg/apikey"
+	"github.com/raduolivas/dt/backend/services/gateway/internal/adapters/outbound/keyhash"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/adapters/outbound/postgres"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/app/apptest"
@@ -28,14 +30,14 @@ func linkService(t *testing.T) (*app.TrackingLinks, *postgres.TrackingLinkStore,
 	pool, _ := setup(t)
 	s := postgres.NewTrackingLinkStore(pool)
 	rev, c := &apptest.MemRevoker{}, &fixedNow{t: t0}
-	return &app.TrackingLinks{Store: s, Revoker: rev, Clock: c}, s, rev, c
+	return &app.TrackingLinks{Store: s, Hasher: apptest.Hasher{}, Revoker: rev, Clock: c}, s, rev, c
 }
 
 func TestLinkTokenStoredHashed(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	pool, _ := setup(t)
-	tl := &app.TrackingLinks{Store: postgres.NewTrackingLinkStore(pool), Revoker: &apptest.MemRevoker{}, Clock: &fixedNow{t: t0}}
+	tl := &app.TrackingLinks{Store: postgres.NewTrackingLinkStore(pool), Hasher: apptest.Hasher{}, Revoker: &apptest.MemRevoker{}, Clock: &fixedNow{t: t0}}
 	l, tok, err := tl.Issue(ctx, linkOwner, linkDel)
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +55,7 @@ func TestLinkTokenStoredHashed(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT token_hash, environment FROM tracking_links WHERE id = $1`, l.ID).Scan(&hash, &env); err != nil {
 		t.Fatal(err)
 	}
-	if want := sha256.Sum256([]byte(tok)); !bytes.Equal(hash, want[:]) || env != "live" {
+	if !bytes.Equal(hash, apikey.Hash(apptest.TestPepper, tok)) || env != "live" {
 		t.Fatalf("token_hash/environment = %x/%s", hash, env)
 	}
 	got, err := tl.Resolve(ctx, tok, t0)
@@ -134,5 +136,39 @@ func TestExpireOnFinalSets30Min(t *testing.T) {
 	l3, _, err := tl.Rotate(ctx, linkOwner, other)
 	if err != nil || l3.ExpiresAt == nil || !l3.ExpiresAt.Equal(final.Add(30*time.Minute)) {
 		t.Fatalf("issued after final: %+v, %v", l3, err)
+	}
+}
+
+func TestLinkTokenHashIsPeppered(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	pool, _ := setup(t)
+	store := postgres.NewTrackingLinkStore(pool)
+	pepperA := []byte("test-only-pepper-A-0123456789abcdef")
+	pepperB := []byte("test-only-pepper-B-0123456789abcdef")
+	a := &app.TrackingLinks{Store: store, Hasher: keyhash.New(pepperA), Revoker: &apptest.MemRevoker{}, Clock: &fixedNow{t: t0}}
+	b := &app.TrackingLinks{Store: store, Hasher: keyhash.New(pepperB), Revoker: &apptest.MemRevoker{}, Clock: &fixedNow{t: t0}}
+
+	l, tok, err := a.Issue(ctx, linkOwner, linkDel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored []byte
+	if err := pool.QueryRow(ctx, `SELECT token_hash FROM tracking_links WHERE id = $1`, l.ID).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	plain := sha256.Sum256([]byte(tok))
+	if bytes.Equal(stored, plain[:]) {
+		t.Fatal("stored hash is the unkeyed SHA-256 of the token")
+	}
+	if !bytes.Equal(stored, apikey.Hash(pepperA, tok)) || bytes.Equal(apikey.Hash(pepperA, tok), apikey.Hash(pepperB, tok)) {
+		t.Fatal("stored hash is not HMAC-SHA256 under the pepper")
+	}
+	// The same token under another pepper resolves to nothing.
+	if _, err := a.Resolve(ctx, tok, t0); err != nil {
+		t.Fatalf("own pepper: %v", err)
+	}
+	if _, err := b.Resolve(ctx, tok, t0); !errors.Is(err, app.ErrLinkInvalid) {
+		t.Fatalf("other pepper: %v", err)
 	}
 }

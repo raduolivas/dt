@@ -753,7 +753,8 @@ paths:
       description: 'Invalidates the delivery''s current tracking link at once and returns a new one. Viewers
         already connected through the old link are disconnected within a second. When the delivery has no
         link (for example because issuing it failed at creation) a link is issued. Requires scope `deliveries:write`.
-        Problem codes: `not_found` (404).'
+        Problem codes: `not_found` (404), `tracking_unavailable` (503: the link could not be rotated or the
+        revocation not published; retry with the same Idempotency-Key, which rotates again).'
       tags:
       - Tracking
       security:
@@ -775,6 +776,8 @@ paths:
                     token: Zr7wT2nKd9sH4yJ6uB3xQa
                     expires_at: null
         '404': *id006
+        '503':
+          $ref: '#/components/responses/TrackingUnavailable'
         '401': *id003
         '403': *id004
         '429': *id005

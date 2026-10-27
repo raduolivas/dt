@@ -2,7 +2,6 @@ package domain
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"time"
@@ -19,8 +18,9 @@ const linkTokenBytes = 16
 // token has exactly one spelling (22 characters).
 var linkEncoding = base64.RawURLEncoding.Strict()
 
-// TrackingLink is a customer-facing tracking link. Only the SHA-256 of its
-// token is ever stored; the token itself is shown once, to the partner.
+// TrackingLink is a customer-facing tracking link. Only a keyed hash of its
+// token (app.LinkHasher) is ever stored; the token itself is shown once, to
+// the partner.
 type TrackingLink struct {
 	ID, TenantID, DeliveryID string
 	Env                      Environment
@@ -62,13 +62,6 @@ func ValidLinkToken(s string) bool {
 	}
 	b, err := linkEncoding.DecodeString(s)
 	return err == nil && len(b) == linkTokenBytes
-}
-
-// HashLinkToken is the stored form of a token: SHA-256. The token carries
-// 128 random bits, so a fast unkeyed hash cannot be reversed by guessing.
-func HashLinkToken(token string) []byte {
-	h := sha256.Sum256([]byte(token))
-	return h[:]
 }
 
 // FinalStatus reports whether a delivery status is final (delivered,

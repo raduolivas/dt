@@ -219,7 +219,7 @@ export interface paths {
         put?: never;
         /**
          * Rotate the tracking link
-         * @description Invalidates the delivery's current tracking link at once and returns a new one. Viewers already connected through the old link are disconnected within a second. When the delivery has no link (for example because issuing it failed at creation) a link is issued. Requires scope `deliveries:write`. Problem codes: `not_found` (404).
+         * @description Invalidates the delivery's current tracking link at once and returns a new one. Viewers already connected through the old link are disconnected within a second. When the delivery has no link (for example because issuing it failed at creation) a link is issued. Requires scope `deliveries:write`. Problem codes: `not_found` (404), `tracking_unavailable` (503: the link could not be rotated or the revocation not published; retry with the same Idempotency-Key, which rotates again).
          */
         post: operations["rotateTrackingLink"];
         delete?: never;
@@ -1457,6 +1457,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["TrackingUnavailable"];
         };
     };
     getDeliveryTracking: {

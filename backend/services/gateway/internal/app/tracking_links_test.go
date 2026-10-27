@@ -1,13 +1,14 @@
 package app_test
 
 import (
+	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/raduolivas/dt/backend/pkg/apikey"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/app/apptest"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/domain"
@@ -27,7 +28,7 @@ func (c *clock) Now() time.Time { return c.t }
 
 func links() (*app.TrackingLinks, *apptest.MemLinks, *apptest.MemRevoker, *clock) {
 	store, rev, c := apptest.NewMemLinks(), &apptest.MemRevoker{}, &clock{t: t0}
-	return &app.TrackingLinks{Store: store, Revoker: rev, Clock: c}, store, rev, c
+	return &app.TrackingLinks{Store: store, Hasher: apptest.Hasher{}, Revoker: rev, Clock: c}, store, rev, c
 }
 
 func TestIssueStoresOnlyTheHash(t *testing.T) {
@@ -41,9 +42,8 @@ func TestIssueStoresOnlyTheHash(t *testing.T) {
 		l.ExpiresAt != nil || l.RevokedAt != nil || !l.CreatedAt.Equal(t0) || len(l.ID) < 4 || l.ID[:3] != "tl_" {
 		t.Fatalf("link = %+v, token %q", l, tok)
 	}
-	h := sha256.Sum256([]byte(tok))
-	if got := store.Hash(l.ID); string(got) != string(h[:]) {
-		t.Fatal("stored hash is not SHA-256 of the token")
+	if got := store.Hash(l.ID); !bytes.Equal(got, apikey.Hash(apptest.TestPepper, tok)) {
+		t.Fatal("stored hash is not HMAC-SHA256(pepper, token)")
 	}
 }
 
