@@ -162,8 +162,9 @@ services:
       args:
         SERVICE: tracking
     environment:
-      # PORT serves health (and, later, the public viewer endpoints): plain
-      # HTTP. The internal RPC API has its own mTLS port, INTERNAL_RPC_PORT.
+      # PORT serves health and the public viewer endpoints (snapshot,
+      # WebSocket and SSE streams): plain HTTP. The internal RPC API has its
+      # own mTLS port, INTERNAL_RPC_PORT; viewer routes are never on it.
       PORT: "8082"
       INTERNAL_RPC_PORT: "8085"
       LOG_LEVEL: info
@@ -179,6 +180,8 @@ services:
       INTERNAL_RPC_TLS_CA: /certs/ca.pem
       # Dev-only placeholder, never a real secret: the same value as the other services'.
       INTERNAL_RPC_TOKEN: "dev-only-not-a-secret-internal-token-0000"
+      # The gateway's viewer token keys (fetched lazily, cached 5 minutes).
+      JWKS_URL: "http://gateway:8080/.well-known/jwks.json"
     ports:
       - "127.0.0.1:8082:8082"
       - "127.0.0.1:8085:8085"

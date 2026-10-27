@@ -1,17 +1,22 @@
 // Command tracking runs the tracking service: the read model consumers of
 // the DELIVERIES and ACCOUNTS streams, the internal Connect RPC API (on its
-// own mTLS port), the trail writer and the outbox relay that publishes the
-// tracking.* events. Its main port (PORT) carries the health endpoints and,
-// later, the public viewer endpoints, so it is never mTLS.
+// own mTLS port), the trail writer, the outbox relay that publishes the
+// tracking.* events and the signal sweeper. Its main port (PORT) carries the
+// health endpoints and the public viewer endpoints (snapshot, WebSocket and
+// SSE streams), so it is never mTLS; viewer routes are never on the
+// internal RPC port.
 package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -26,7 +31,9 @@ import (
 	"github.com/raduolivas/dt/backend/pkg/otelx"
 	"github.com/raduolivas/dt/backend/pkg/outbox"
 	"github.com/raduolivas/dt/backend/pkg/rpcauth"
+	"github.com/raduolivas/dt/backend/pkg/viewerjwt"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/adapters/inbound/consumer"
+	httpapi "github.com/raduolivas/dt/backend/services/tracking/internal/adapters/inbound/http"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/adapters/inbound/rpc"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/adapters/outbound/osrm"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/adapters/outbound/postgres"
@@ -69,6 +76,14 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("tracking: config: %w", err)
 	}
+	jwksURL, err := jwksURLFromEnv()
+	if err != nil {
+		return err
+	}
+	holder, err := instanceID()
+	if err != nil {
+		return err
+	}
 
 	// js is set by Setup; the stream checks read it per probe.
 	var js atomic.Pointer[jetstream.JetStream]
@@ -83,14 +98,16 @@ func run(ctx context.Context) error {
 	}
 
 	return bootstrap.Run(ctx, bootstrap.Options{
-		Name:       "tracking",
-		Needs:      bootstrap.Needs{NATS: true, Redis: true},
-		Migrations: migrations.FS,
+		Name:  "tracking",
+		Needs: bootstrap.Needs{NATS: true, Redis: true},
+		// The main port serves the customer viewer endpoints to anyone.
+		PublicEndpoint: true,
+		Migrations:     migrations.FS,
 		Checks: map[string]httpx.Check{
 			"deliveries_stream": streamCheck(outbox.StreamDeliveries.Name),
 			"accounts_stream":   streamCheck(outbox.StreamAccounts.Name),
 		},
-		Setup: func(ctx context.Context, d bootstrap.Deps, _ *http.ServeMux) ([]bootstrap.Worker, error) {
+		Setup: func(ctx context.Context, d bootstrap.Deps, mux *http.ServeMux) ([]bootstrap.Worker, error) {
 			// tracking owns TRACKING; DELIVERIES and ACCOUNTS belong to
 			// deliveries and accounts.
 			js.Store(&d.JS)
@@ -134,7 +151,14 @@ func run(ctx context.Context) error {
 				return outbox.Consume(ctx, d.JS, d.DB, d.Log, consumer.AccountsStream,
 					consumer.AccountsConfig, consumer.Settings(repo, svc, d.Log))
 			}
-			return []bootstrap.Worker{rpcSrv.Serve, relay.Run, trail.Run, deliveries, accounts}, nil
+			// Viewer endpoints: tokens verified against the gateway's JWKS.
+			hub := httpapi.NewHub(httpapi.Deps{
+				Verifier: viewerjwt.NewVerifier(jwksURL, nil), Snapshots: svc,
+				Links: redis.NewViewerLinks(d.Redis), Feed: redis.NewFeed(d.Redis, d.Log), Log: d.Log,
+			})
+			hub.Mount(mux)
+			sweeper := &app.Sweeper{Svc: svc, Lease: redis.NewLease(d.Redis, redis.SweeperLeaseKey), ID: holder}
+			return []bootstrap.Worker{rpcSrv.Serve, relay.Run, trail.Run, deliveries, accounts, hub.Run, sweeper.Run}, nil
 		},
 	})
 }
@@ -156,6 +180,26 @@ func internalServer(svc *app.Service, token string, port int, tlsCfg *tls.Config
 	}
 	log.Info("internal rpc listening", "addr", srv.Addr(), "tls", tlsCfg != nil)
 	return srv, nil
+}
+
+// jwksURLFromEnv reads JWKS_URL, the gateway's viewer token keys.
+func jwksURLFromEnv() (string, error) {
+	v := os.Getenv("JWKS_URL")
+	u, err := url.Parse(v)
+	if v == "" || err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return "", errors.New("tracking: config: JWKS_URL must be the gateway's http(s) JWKS URL")
+	}
+	return v, nil
+}
+
+// instanceID names this process as a lease holder.
+func instanceID() (string, error) {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("tracking: instance id: %w", err)
+	}
+	host, _ := os.Hostname()
+	return host + "-" + hex.EncodeToString(b), nil
 }
 
 // osrmURLs returns the configured OSRM base URLs by profile.

@@ -46,7 +46,10 @@ type Feed struct {
 	refs    map[string]int
 	waiters map[string]chan error
 	seq     uint64
+	stopped bool // Run has returned: no new connection
 }
+
+var errFeedStopped = errors.New("viewer feed: stopped")
 
 var _ app.ViewerFeed = (*Feed)(nil)
 
@@ -59,8 +62,11 @@ func NewFeed(rdb *goredis.Client, log *slog.Logger) *Feed {
 }
 
 // pubsubLocked returns the connection, opening one subscribed to every
-// channel in use when there is none.
+// channel in use when there is none; nil once the feed stopped.
 func (f *Feed) pubsubLocked(ctx context.Context) *goredis.PubSub {
+	if f.stopped {
+		return nil
+	}
 	if f.ps == nil {
 		chans := []string{viewerjwt.RevocationsChannel, viewerjwt.ExpiriesChannel}
 		for id := range f.refs {
@@ -94,6 +100,10 @@ func (f *Feed) resetLocked(ps *goredis.PubSub) {
 func (f *Feed) Subscribe(ctx context.Context, deliveryID string) error {
 	f.mu.Lock()
 	ps := f.pubsubLocked(ctx)
+	if ps == nil {
+		f.mu.Unlock()
+		return errFeedStopped
+	}
 	f.refs[deliveryID]++
 	if f.refs[deliveryID] == 1 {
 		if err := ps.Subscribe(ctx, snapChannel(deliveryID)); err != nil {
@@ -160,10 +170,17 @@ func (f *Feed) derefLocked(ctx context.Context, deliveryID string) {
 
 // Run implements app.ViewerFeed.
 func (f *Feed) Run(ctx context.Context, h app.FeedHandler) error {
-	defer func() {
+	stop := func() {
 		f.mu.Lock()
+		f.stopped = true
 		f.resetLocked(f.ps)
 		f.mu.Unlock()
+	}
+	defer stop()
+	// A blocked receive does not see ctx: closing the connection ends it.
+	go func() {
+		<-ctx.Done()
+		stop()
 	}()
 	go f.heartbeat(ctx)
 	backoff := feedBackoffMin
@@ -172,6 +189,9 @@ func (f *Feed) Run(ctx context.Context, h app.FeedHandler) error {
 		f.mu.Lock()
 		ps := f.pubsubLocked(ctx)
 		f.mu.Unlock()
+		if ps == nil {
+			return nil
+		}
 		received, err := f.receive(ctx, ps, h, &resync)
 		if ctx.Err() != nil {
 			return nil

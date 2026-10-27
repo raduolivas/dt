@@ -12,14 +12,20 @@ info:
     Events at `GET /tracking/stream/sse` (send `Authorization: Bearer <viewer_token>`; use
     `fetch`, not `EventSource`). These are not OpenAPI operations.
 
-    - **WebSocket auth.** The first client message must be `{"type":"auth","token":"<viewer_token>"}`.
-      The token is never sent in the URL. A viewer token allows 5 concurrent streams.
+    - **WebSocket auth.** The first client message must be `{"type":"auth","token":"<viewer_token>"}`,
+      sent within 5 seconds; otherwise the stream closes with code 4401. The token is never sent in the URL.
+      Client messages are at most 4 KB. A tracking link allows 5 concurrent streams.
     - **Server messages**, each a JSON object with a `type`:
-      - `snapshot`: `{"type":"snapshot","snapshot":<TrackingSnapshot>}`. Ignore any whose `version` is not greater than the last applied.
-      - `status`: `{"type":"status","status":"<delivery status>","at":"<time>"}` when the delivery status changes.
-      - `ping`: a keep-alive, every 20 seconds.
-      - `revoked`: the tracking link was rotated or has expired. The server then closes the stream (WebSocket close code 4401); do not reconnect with the same token.
-    - **Renewing.** The viewer token lasts 15 minutes; call `POST /tracking/session/refresh` before it expires. An open stream stays open past the token's expiry unless the link is revoked.
+      - `snapshot`: `{"type":"snapshot","data":<TrackingSnapshot>}`. Ignore any whose `version` is not greater than the last applied.
+      - `status`: `{"type":"status","data":{"status":"<delivery status>","at":"<time>"}}` after the snapshot that changed the delivery status.
+      - `ping`: `{"type":"ping"}`, a keep-alive, every 25 seconds.
+      - `revoked`: `{"type":"revoked"}`: the tracking link was rotated or has expired. The server then closes the stream (WebSocket close code 4401); do not reconnect with the same token.
+    - **SSE** sends the same messages as events: `event: <type>` and `data: <the same JSON object>`.
+    - **Close codes.** 4401: authentication failed or the link was revoked or expired. 1013: too many streams, or try
+      again later. 1012: the server is restarting; reconnect with backoff and resync from `GET /tracking/snapshot`.
+    - **Renewing.** The viewer token lasts 15 minutes; call `POST /tracking/session/refresh` before it expires and, on
+      an open WebSocket, send `{"type":"auth","token":"<new viewer_token>"}` (same link and delivery; any other token
+      closes the stream with 4401). An open stream stays open past the token's expiry unless the link is revoked or expires.
 
     ## Error codes added for tracking
 

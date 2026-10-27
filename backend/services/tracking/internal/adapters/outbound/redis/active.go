@@ -44,8 +44,8 @@ func (s *States) ActiveSince(ctx context.Context, t time.Time) ([]app.ActiveDeli
 	maxScore := strconv.FormatInt(t.UnixMilli(), 10)
 	var out []app.ActiveDelivery
 	for offset := int64(0); ; offset += activePage {
-		members, err := s.rdb.ZRangeByScore(ctx, activeSetKey, &goredis.ZRangeBy{
-			Min: "-inf", Max: maxScore, Offset: offset, Count: activePage,
+		members, err := s.rdb.ZRangeArgs(ctx, goredis.ZRangeArgs{
+			Key: activeSetKey, Start: "-inf", Stop: maxScore, ByScore: true, Offset: offset, Count: activePage,
 		}).Result()
 		if err != nil {
 			return nil, err

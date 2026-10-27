@@ -407,7 +407,9 @@ func (f *fakeStates) ActiveSince(_ context.Context, before time.Time) ([]ActiveD
 			out = append(out, ActiveDelivery{Scope: e.sc, DeliveryID: id})
 		}
 	}
-	slices.SortFunc(out, func(a, b ActiveDelivery) int { return f.activeSet[a.DeliveryID].score.Compare(f.activeSet[b.DeliveryID].score) })
+	slices.SortFunc(out, func(a, b ActiveDelivery) int {
+		return f.activeSet[a.DeliveryID].score.Compare(f.activeSet[b.DeliveryID].score)
+	})
 	return out, nil
 }
 
