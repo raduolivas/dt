@@ -96,7 +96,7 @@ jobs:
             echo "awake=true" >>"$GITHUB_OUTPUT"
           else
             echo "awake=false" >>"$GITHUB_OUTPUT"
-            echo "::warning::Staging is asleep (outside 08:00-20:00 Mon-Fri). The services get the new images and migrate when the host starts; migrations, the stability wait and the smoke test are skipped."
+            echo "::warning::Staging is asleep (outside 08:00-20:00 Mon-Fri). The images are pushed and signed and the task definitions registered, but nothing is migrated or rolled out (the services never migrate themselves). Re-run this workflow during working hours, or about 10 minutes after make staging-wake, to deploy."
           fi
 
       # New revisions of the task definitions: the latest revision of each
@@ -123,7 +123,9 @@ jobs:
           rm -f td.json
 
       # Step 2. Roles and passwords first (idempotent), then each service's
-      # migrations as its mig_<svc> role (MIGRATE_ONLY), one at a time.
+      # migrations as its mig_<svc> role (MIGRATIONS=only), one at a time.
+      # Every task runs by its full task-definition ARN (the deploy role's
+      # RunTask allows task-definition/dt-staging-*:*).
       - name: Run the database bootstrap and the migrations
         if: steps.host.outputs.awake == 'true'
         run: |
@@ -138,19 +140,24 @@ jobs:
               --query "tasks[0].containers[?name=='$2'].exitCode | [0]" --output text)"
             reason="$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$arn" --query 'tasks[0].stoppedReason' --output text)"
             if [[ "$code" != 0 ]]; then
-              echo "::error::$1 failed (exit ${code}: ${reason}); logs: CloudWatch /dt/staging"
+              echo "::error::$1 failed (exit ${code}: ${reason}); logs: CloudWatch /dt/staging. Right after make staging-wake or the 08:00 start the database may still be starting (about 10 minutes): wait and re-run."
               return 1
             fi
             echo "$1: ok"
           }
-          run_once dt-staging-db-bootstrap db-bootstrap
+          bootstrap_td="$(aws ecs describe-task-definition --task-definition dt-staging-db-bootstrap \
+            --query taskDefinition.taskDefinitionArn --output text)"
+          run_once "$bootstrap_td" db-bootstrap
           for svc in $SERVICES; do
             var="TD_MIGRATE_${svc}"
             run_once "${!var}" "$svc"
           done
 
       # Step 3. The circuit breaker (rollback on) is set on the services by tofu.
+      # Asleep: no rollout, since the new revisions would start unmigrated
+      # (MIGRATIONS=skip) when the host wakes.
       - name: Update the services
+        if: steps.host.outputs.awake == 'true'
         run: |
           set -euo pipefail
           for svc in $SERVICES; do

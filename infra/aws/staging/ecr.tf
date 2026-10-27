@@ -29,11 +29,15 @@ resource "aws_ecr_lifecycle_policy" "svc" {
   policy = jsonencode({
     rules = [{
       rulePriority = 1
-      description  = "Keep the last 15 images (rollbacks need only a few)"
+      # Each deploy stores two artifacts per repository: the image and its
+      # cosign signature (an OCI referrer or a sha256-*.sig tag), pushed
+      # together. 30 artifacts keep the last 15 deploys, signatures included,
+      # as the rollback window.
+      description = "Keep the last 30 artifacts (15 deploys: image + signature)"
       selection = {
         tagStatus   = "any"
         countType   = "imageCountMoreThan"
-        countNumber = 15
+        countNumber = 30
       }
       action = { type = "expire" }
     }]

@@ -61,7 +61,7 @@ It builds the Noord-Holland car and bike data (MLD) with `scripts/osrm-prepare.s
 
 ### 9. First deploy
 
-Merge to `main` (or run the `deploy-staging` workflow from `main` under Actions). It needs the host awake (08:00-20:00 Monday-Friday, or `make staging-wake`). The smoke step fails until step 10 is done; that first failure is expected.
+Merge to `main` (or run the `deploy-staging` workflow from `main` under Actions). It needs the host and the database up (08:00-20:00 Monday-Friday, or `make staging-wake` and then about 10 minutes for the database: the deploy role cannot see the database state, so a migration started too early fails and the run says to wait and re-run). The smoke step fails until step 10 is done; that first failure is expected.
 
 ### 10. Staging test key (dtctl over SSM)
 
@@ -110,7 +110,7 @@ The tenant settings are what `scripts/smoke-m3.sh` expects when it runs with `DT
 
 EventBridge Scheduler (`Europe/Amsterdam`) starts the database at 07:50 and scales the host's Auto Scaling group to 1 at 08:00, and stops both at 20:00, Monday to Friday. At weekends it stays off (RDS restarts a stopped instance by itself only after 7 days, which a weekend never reaches).
 
-- `make staging-wake`: start now (database about 5-10 minutes, then the services). It stays up until the next 20:00 stop or `make staging-sleep`.
+- `make staging-wake`: start now (database about 5-10 minutes, then the services). Wait about 10 minutes before running a deploy. It stays up until the next 20:00 stop or `make staging-sleep`.
 - `make staging-sleep`: stop now.
 - Out of hours cost about EUR 0.07 per hour awake (host, database, IP, disk).
 - To keep it up all the time set `schedule_enabled = false` and `make staging-up`; that costs about EUR 30-35/month more and goes over the budget (see the cost table).
@@ -119,7 +119,7 @@ What the schedule implies:
 
 - **The host is a new instance every working day** (the ASG terminates it at night). NATS JetStream (host volume `/data/nats`) and Redis start empty each morning; the services recreate their streams and consumers. Postgres keeps everything. The OSRM files are synced again from S3 at each start (free through the S3 gateway endpoint, about a minute).
 - **The nightly retention jobs never run on staging.** They run in-process at 02:00 UTC under leases (Task 11), when staging is asleep. Staging holds only simulated data, so this is acceptable. To exercise them, run `make staging-wake` before 02:00 UTC (03:00/04:00 Amsterdam) and `make staging-sleep` after, or set `schedule_enabled = false` for a night.
-- A deploy while staging is asleep pushes and signs the images and points the services at the new revisions, but skips the migrations, the stability wait and the smoke test (with a warning in the run). In the morning the services migrate at startup (they keep `MIGRATIONS_DATABASE_URL`). Re-run the workflow during working hours to get the smoke test.
+- A deploy while staging is asleep pushes and signs the images and registers the task definitions, then stops with a warning: no migrations, no rollout, no smoke test. The services run with `MIGRATIONS=skip` and never migrate themselves, so rolling out unmigrated code would be wrong; the morning start brings back the previous revisions. Re-run the workflow during working hours (or about 10 minutes after `make staging-wake`) to deploy.
 - The alarms treat missing data as OK, so a sleeping staging does not alarm.
 
 ### Deploys
@@ -127,7 +127,7 @@ What the schedule implies:
 `.github/workflows/deploy-staging.yml` runs after the `ci` workflow succeeds on a push to `main`, in the `staging` environment, with the OIDC role `dt-deploy-staging` (no AWS keys anywhere):
 
 1. Builds `linux/amd64` images, pushes them to ECR as `dt-<svc>:<commit sha>` (immutable tags, scan on push) and signs them with cosign keyless (GitHub OIDC, Rekor); the signature is verified before going on. A re-run skips images that exist and only signs what is unsigned.
-2. Runs `dt-staging-db-bootstrap` (creates roles and schemas on a fresh database, sets the role passwords; idempotent), then `dt-staging-migrate-<svc>` for each service (`MIGRATE_ONLY=true`, as `mig_<svc>`), each waited for and required to exit 0.
+2. Runs `dt-staging-db-bootstrap` (creates roles and schemas on a fresh database, sets the role passwords; idempotent), then `dt-staging-migrate-<svc>` for each service (`MIGRATIONS=only`, as `mig_<svc>`), each run by its full task-definition ARN, waited for and required to exit 0. The bootstrap is one transaction: a failure leaves nothing behind and the next run starts clean. Only these one-off tasks get the `mig_<svc>` (schema owner) URL; the services run with `MIGRATIONS=skip` and only their `svc_<svc>` URL.
 3. Registers new task definition revisions (the latest revision of each family with only the image changed) and updates the services. Deployment circuit breaker with rollback is on.
 4. Waits until the services are stable and checks that each one runs the new revision (a rollback fails the job), then `GET /livez`.
 5. Runs `scripts/smoke-m3.sh` against `https://api.staging.deliveryontrack.io` with `DT_SMOKE_KEY` = `STAGING_TEST_KEY` (public API only, no dtctl).
@@ -144,7 +144,7 @@ cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.
 
 ### Rollback
 
-Re-run the `deploy-staging` workflow of the last good commit (Actions, the run, Re-run all jobs): its images are still in ECR (the last 15 per repository are kept), so it only re-registers and updates. Or in the console: ECS, cluster `dt-staging`, service, Update, previous revision.
+Re-run the `deploy-staging` workflow of the last good commit (Actions, the run, Re-run all jobs): its images are still in ECR (each repository keeps its last 30 artifacts: the images and signatures of the last 15 deploys), so it only re-registers and updates. Or in the console: ECS, cluster `dt-staging`, service, Update, previous revision.
 
 ### Changing infrastructure
 
@@ -156,7 +156,7 @@ All values are generated by tofu (`random_bytes`, `tls`) and stored in Secrets M
 
 ### Logs and alarms
 
-CloudWatch log group `/dt/staging` (14 days), one stream prefix per container. Alarms by email (SNS `dt-staging-alerts`): host CPU > 80 % for 10 minutes, host memory > 90 % (CloudWatch agent), ALB 5xx > 5 in 5 minutes, RDS free storage < 2 GB. The budget alerts come from the bootstrap. Shell on the host: `aws ssm start-session --target <instance id>` (no SSH, no key pair).
+CloudWatch log group `/dt/staging` (14 days), one stream prefix per container. Alarms by email (SNS `dt-staging-alerts`): host CPU > 80 % for 10 minutes, host memory > 90 % (CloudWatch agent), more than 5 target (service) 5xx answers in 5 minutes (ALB-generated 5xx, such as the 503s of a sleeping stack, do not alarm), RDS free storage < 2 GB. The budget alerts come from the bootstrap. Shell on the host: `aws ssm start-session --target <instance id>` (no SSH, no key pair).
 
 ## Teardown
 
@@ -188,11 +188,11 @@ Assumptions: 21.75 weekdays per month; host up 12 h per weekday (261 h), databas
 | KMS `alias/dt-staging-data` | 1.00/key-mo (rotation adds up to 2.00 after the first years) | 1.00 |
 | Secrets Manager (3 + RDS master secret) | 0.40/secret-mo, API calls negligible | 1.60 |
 | Route 53 zone + queries | 0.50 + about 0.10 | 0.60 |
-| CloudWatch: logs 2 GB, 4 alarms (5 alarm metrics), 1 agent metric | 0.63/GB ingest; 0.10/alarm metric; 0.30/metric | 2.06 |
-| ECR storage (about 1.5 GB) | 0.10/GB-mo | 0.15 |
+| CloudWatch: logs 2 GB, 4 alarms, 1 agent metric | 0.63/GB ingest; 0.10/alarm metric; 0.30/metric | 1.96 |
+| ECR storage (about 2 GB: 30 artifacts per repository) | 0.10/GB-mo | 0.20 |
 | S3 OSRM data (about 2 GB) and requests; S3 gateway endpoint | 0.0245/GB-mo; endpoint free | 0.10 |
 | ACM certificate, EventBridge Scheduler, SNS email, NAT (none) | free | 0.00 |
-| **Staging total** | | **56.13 (EUR 48-53)** |
+| **Staging total** | | **56.08 (EUR 48-53)** |
 | Bootstrap (KMS keys, S3, CloudTrail; aws-account-setup runbook) | | EUR 3-4 |
 | **Everything, before VAT** | | **about EUR 51-57** |
 | Everything including 21 % VAT | | about EUR 62-69 |
@@ -209,6 +209,5 @@ The plan allows replacing the ALB with Caddy on the host plus an Elastic IP (Let
 
 - One host: a deploy or a host replacement is a short outage. Upgrade path: `instance_type = "t3.large"` (about EUR 30-35/month more running all hours, about EUR 11 with the schedule); tell the owner before.
 - All application containers share the roles `dt-staging-task-execution` and `dt-staging-task` (the names the deploy role may pass). The task role can only read the OSRM bucket; the execution role can read all staging secrets, so any task definition the deploy role registers could reference any staging secret.
-- The services keep their `mig_<svc>` URL at runtime (startup migrations, needed for deploys while asleep).
 - The ports of NATS (4222) and Redis (6379, no password) listen on the host's interfaces; only the security group (ALB on 8080/8082 only) keeps them private. Never open the host security group further.
 - No WAF: the region-lock SCP does not exempt `wafv2` for CloudFront, and a regional WAF costs more than the budget allows.

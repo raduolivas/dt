@@ -2,9 +2,13 @@
 # every container resolves the names below to the host's docker0 address
 # (extraHosts), so URLs read like the local Compose stack's.
 #
-# Memory (task-level hard limits, what ECS reserves on the 4 GB host):
+# Memory reservations (container memoryReservation, what ECS reserves on the
+# host when placing a task) follow the plan's table:
 #   gateway 256 + deliveries 192 + tracking 320 + webhooks 96 + accounts 160
-#   + nats 256 + redis 128 + osrm-car 900 + osrm-bike 900 = 3208 MB <= 3.4 GB.
+#   + nats 256 + redis 128 + osrm-car 900 + osrm-bike 900 = 3208 MB,
+# plus the short-lived init containers (4 x certs 16, 2 x OSRM fetch 32)
+# = 3336 MB <= 3.4 GB. Hard limits (container memory) are higher, so a spike
+# or the OSRM graph load is not OOM-killed at the reservation.
 # The one-off migrate and db-bootstrap tasks run before a rollout (the
 # deployment stops the old task first: minimum healthy 0 %).
 
@@ -19,6 +23,7 @@ locals {
     osrm = "osrm/osrm-backend@sha256:af5d4a83fb90086a43b1ae2ca22872e6768766ad5fcbb07a29ff90ec644ee409"
   }
 
+  # memoryReservation (MB) of each main container: the plan's table.
   memory = {
     gateway    = 256
     deliveries = 192
@@ -29,6 +34,25 @@ locals {
     redis      = 128
     osrm-car   = 900
     osrm-bike  = 900
+  }
+
+  # Hard limit (container memory, MB): the container is killed above it.
+  memory_limit = {
+    gateway    = 512
+    deliveries = 384
+    tracking   = 640
+    webhooks   = 256
+    accounts   = 320
+    nats       = 512
+    redis      = 256
+    osrm-car   = 1536
+    osrm-bike  = 1536
+  }
+
+  # Init containers: reservation and hard limit.
+  init_memory = {
+    certs = { reservation = 16, limit = 32 }
+    fetch = { reservation = 32, limit = 256 }
   }
 
   extra_hosts = [
@@ -66,12 +90,11 @@ locals {
         VIEWER_SIGNING_KEY_CURRENT = "vw1"
       }
       secrets = {
-        DATABASE_URL            = local.db_key["svc_gateway_url"]
-        MIGRATIONS_DATABASE_URL = local.db_key["mig_gateway_url"]
-        APIKEY_PEPPER           = local.app_key["apikey_pepper"]
-        INTERNAL_RPC_TOKEN      = local.app_key["internal_rpc_token"]
-        DATA_KEYS               = local.app_key["gateway_data_keys"]
-        VIEWER_SIGNING_KEYS     = local.app_key["viewer_signing_keys"]
+        DATABASE_URL        = local.db_key["svc_gateway_url"]
+        APIKEY_PEPPER       = local.app_key["apikey_pepper"]
+        INTERNAL_RPC_TOKEN  = local.app_key["internal_rpc_token"]
+        DATA_KEYS           = local.app_key["gateway_data_keys"]
+        VIEWER_SIGNING_KEYS = local.app_key["viewer_signing_keys"]
       }
     }
     deliveries = {
@@ -83,10 +106,9 @@ locals {
         DATA_KEY_CURRENT = "dk1"
       }
       secrets = {
-        DATABASE_URL            = local.db_key["svc_deliveries_url"]
-        MIGRATIONS_DATABASE_URL = local.db_key["mig_deliveries_url"]
-        INTERNAL_RPC_TOKEN      = local.app_key["internal_rpc_token"]
-        DATA_KEYS               = local.app_key["deliveries_data_keys"]
+        DATABASE_URL       = local.db_key["svc_deliveries_url"]
+        INTERNAL_RPC_TOKEN = local.app_key["internal_rpc_token"]
+        DATA_KEYS          = local.app_key["deliveries_data_keys"]
       }
     }
     tracking = {
@@ -103,9 +125,8 @@ locals {
         JWKS_URL           = "http://gateway:${local.ports.gateway}/.well-known/jwks.json"
       }
       secrets = {
-        DATABASE_URL            = local.db_key["svc_tracking_url"]
-        MIGRATIONS_DATABASE_URL = local.db_key["mig_tracking_url"]
-        INTERNAL_RPC_TOKEN      = local.app_key["internal_rpc_token"]
+        DATABASE_URL       = local.db_key["svc_tracking_url"]
+        INTERNAL_RPC_TOKEN = local.app_key["internal_rpc_token"]
       }
     }
     webhooks = {
@@ -115,8 +136,7 @@ locals {
         PORT = tostring(local.ports.webhooks)
       }
       secrets = {
-        DATABASE_URL            = local.db_key["svc_webhooks_url"]
-        MIGRATIONS_DATABASE_URL = local.db_key["mig_webhooks_url"]
+        DATABASE_URL = local.db_key["svc_webhooks_url"]
       }
     }
     accounts = {
@@ -127,10 +147,9 @@ locals {
         NATS_URL = local.internal.nats_url
       }
       secrets = {
-        DATABASE_URL            = local.db_key["svc_accounts_url"]
-        MIGRATIONS_DATABASE_URL = local.db_key["mig_accounts_url"]
-        APIKEY_PEPPER           = local.app_key["apikey_pepper"]
-        INTERNAL_RPC_TOKEN      = local.app_key["internal_rpc_token"]
+        DATABASE_URL       = local.db_key["svc_accounts_url"]
+        APIKEY_PEPPER      = local.app_key["apikey_pepper"]
+        INTERNAL_RPC_TOKEN = local.app_key["internal_rpc_token"]
       }
     }
   }
@@ -152,6 +171,8 @@ locals {
     name                   = "certs"
     image                  = local.images.busybox
     essential              = false
+    memoryReservation      = local.init_memory.certs.reservation
+    memory                 = local.init_memory.certs.limit
     user                   = "65532:65532" # the distroless nonroot user, owner of the tmpfs
     readonlyRootFilesystem = true
     command = ["sh", "-c", join(" && ", [
@@ -170,12 +191,16 @@ locals {
     logConfiguration = { logDriver = "awslogs", options = merge(local.log_options, { awslogs-stream-prefix = "${s}-certs" }) }
   } if a.mtls }
 
-  # The service container; migrate = true makes the one-off migration variant
-  # (MIGRATE_ONLY, no host ports).
+  # The service container. "run" serves with MIGRATIONS=skip and only its
+  # svc_<svc> URL; "migrate" is the one-off variant: MIGRATIONS=only, the
+  # mig_<svc> URL (schema owner), no host ports. Only the migrate tasks ever
+  # hold the schema owner's credentials.
   app_container = { for pair in setproduct(keys(local.app), [false, true]) : "${pair[0]}/${pair[1] ? "migrate" : "run"}" => {
     name                   = pair[0]
     image                  = "${aws_ecr_repository.svc[pair[0]].repository_url}:${var.image_tag}"
     essential              = true
+    memoryReservation      = local.memory[pair[0]]
+    memory                 = local.memory_limit[pair[0]]
     readonlyRootFilesystem = true
     stopTimeout            = 30
     dockerSecurityOptions  = ["no-new-privileges"]
@@ -186,9 +211,12 @@ locals {
       { LOG_LEVEL = "info" },
       local.app[pair[0]].env,
       local.app[pair[0]].mtls ? local.mtls_env : {},
-      pair[1] ? { MIGRATE_ONLY = "true" } : {},
+      { MIGRATIONS = pair[1] ? "only" : "skip" },
     ) : { name = k, value = v }]
-    secrets          = [for k, v in local.app[pair[0]].secrets : { name = k, valueFrom = v }]
+    secrets = [for k, v in merge(
+      local.app[pair[0]].secrets,
+      pair[1] ? { MIGRATIONS_DATABASE_URL = local.db_key["mig_${pair[0]}_url"] } : {},
+    ) : { name = k, valueFrom = v }]
     mountPoints      = local.app[pair[0]].mtls ? [{ sourceVolume = "certs", containerPath = "/certs", readOnly = true }] : []
     dependsOn        = local.app[pair[0]].mtls ? [{ containerName = "certs", condition = "SUCCESS" }] : []
     logConfiguration = { logDriver = "awslogs", options = merge(local.log_options, { awslogs-stream-prefix = pair[1] ? "migrate-${pair[0]}" : pair[0] }) }
@@ -203,7 +231,6 @@ resource "aws_ecs_task_definition" "app" {
   family                   = "dt-staging-${each.key}"
   requires_compatibilities = ["EC2"]
   network_mode             = "bridge"
-  memory                   = local.memory[each.key]
   execution_role_arn       = aws_iam_role.task_execution.arn
   task_role_arn            = aws_iam_role.task.arn
 
@@ -231,7 +258,7 @@ resource "aws_ecs_task_definition" "app" {
   }
 }
 
-# migrate-<svc>: the same container with MIGRATE_ONLY=true; the deploy runs
+# migrate-<svc>: the same container with MIGRATIONS=only; the deploy runs
 # it and waits for exit code 0 before updating the service.
 resource "aws_ecs_task_definition" "migrate" {
   for_each = local.app
@@ -239,7 +266,6 @@ resource "aws_ecs_task_definition" "migrate" {
   family                   = "dt-staging-migrate-${each.key}"
   requires_compatibilities = ["EC2"]
   network_mode             = "bridge"
-  memory                   = local.memory[each.key]
   execution_role_arn       = aws_iam_role.task_execution.arn
   task_role_arn            = aws_iam_role.task.arn
 
@@ -326,13 +352,14 @@ resource "aws_ecs_task_definition" "db_bootstrap" {
   family                   = "dt-staging-db-bootstrap"
   requires_compatibilities = ["EC2"]
   network_mode             = "bridge"
-  memory                   = 64
   execution_role_arn       = aws_iam_role.task_execution.arn
 
   container_definitions = jsonencode([{
     name                   = "db-bootstrap"
     image                  = local.images.postgres
     essential              = true
+    memoryReservation      = 64
+    memory                 = 128
     user                   = "postgres"
     readonlyRootFilesystem = true
     linuxParameters        = { capabilities = { drop = ["ALL"] } }
@@ -360,12 +387,13 @@ resource "aws_ecs_task_definition" "nats" {
   family                   = "dt-staging-nats"
   requires_compatibilities = ["EC2"]
   network_mode             = "bridge"
-  memory                   = local.memory.nats
 
   container_definitions = jsonencode([{
     name                   = "nats"
     image                  = local.images.nats
     essential              = true
+    memoryReservation      = local.memory.nats
+    memory                 = local.memory_limit.nats
     readonlyRootFilesystem = true
     command                = ["-js", "-sd", "/data", "-m", "8222"]
     portMappings           = [{ containerPort = 4222, hostPort = local.ports.nats, protocol = "tcp" }]
@@ -392,12 +420,13 @@ resource "aws_ecs_task_definition" "redis" {
   family                   = "dt-staging-redis"
   requires_compatibilities = ["EC2"]
   network_mode             = "bridge"
-  memory                   = local.memory.redis
 
   container_definitions = jsonencode([{
     name                   = "redis"
     image                  = local.images.redis
     essential              = true
+    memoryReservation      = local.memory.redis
+    memory                 = local.memory_limit.redis
     readonlyRootFilesystem = true
     # Ephemeral: no snapshots, no AOF; noeviction keeps revocations from
     # being evicted silently.
@@ -428,7 +457,6 @@ resource "aws_ecs_task_definition" "osrm" {
   family                   = "dt-staging-${each.key}"
   requires_compatibilities = ["EC2"]
   network_mode             = "bridge"
-  memory                   = local.memory[each.key]
   execution_role_arn       = aws_iam_role.task_execution.arn
   task_role_arn            = aws_iam_role.task.arn # s3 read on the OSRM bucket
 
@@ -436,9 +464,11 @@ resource "aws_ecs_task_definition" "osrm" {
     {
       # Syncs s3://<bucket>/<version>/<profile>/ to the host once per
       # instance (a no-op when the files are there), then exits.
-      name      = "fetch"
-      image     = local.images.awscli
-      essential = false
+      name              = "fetch"
+      image             = local.images.awscli
+      essential         = false
+      memoryReservation = local.init_memory.fetch.reservation
+      memory            = local.init_memory.fetch.limit
       command = ["s3", "sync", "s3://${aws_s3_bucket.osrm.bucket}/${var.osrm_data_version}/${each.value.profile}/", "/data/",
       "--no-progress", "--only-show-errors"]
       environment      = [{ name = "AWS_REGION", value = var.region }]
@@ -450,6 +480,8 @@ resource "aws_ecs_task_definition" "osrm" {
       name                   = "osrm"
       image                  = local.images.osrm
       essential              = true
+      memoryReservation      = local.memory[each.key]
+      memory                 = local.memory_limit[each.key]
       readonlyRootFilesystem = true
       command                = ["osrm-routed", "--algorithm", "mld", "--port", "5000", "/data/region.osrm"]
       portMappings           = [{ containerPort = 5000, hostPort = each.value.port, protocol = "tcp" }]

@@ -53,9 +53,13 @@ type Config struct {
 	MigrationsDatabaseURL string `env:"MIGRATIONS_DATABASE_URL"`
 	RedisURL              string `env:"REDIS_URL"`
 	NATSURL               string `env:"NATS_URL"`
-	// MigrateOnly applies the migrations and returns without serving: the
-	// one-off migrate-<svc> tasks of a deploy (staging) set it.
-	MigrateOnly bool `env:"MIGRATE_ONLY"`
+	// Migrations selects what Run does with Options.Migrations: "run" (the
+	// default, also when empty) applies them and then serves; "only"
+	// applies them and returns without serving (the one-off migrate-<svc>
+	// tasks of a deploy); "skip" serves without touching the schema, so the
+	// runtime needs no MIGRATIONS_DATABASE_URL (staging services, whose
+	// deploy runs the migrations first).
+	Migrations string `env:"MIGRATIONS" envDefault:"run"`
 }
 
 // Needs names the optional dependencies a service uses. Each one needs its
@@ -161,7 +165,12 @@ func Run(ctx context.Context, opts Options) (err error) {
 		}
 	}()
 
-	if opts.Migrations != nil {
+	switch cfg.Migrations {
+	case "", "run", "only", "skip":
+	default:
+		return fmt.Errorf("%s: config: MIGRATIONS must be run, only or skip", opts.Name)
+	}
+	if opts.Migrations != nil && cfg.Migrations != "skip" {
 		migURL := cfg.MigrationsDatabaseURL
 		if migURL == "" {
 			log.Warn("migrations_with_runtime_role")
@@ -171,8 +180,8 @@ func Run(ctx context.Context, opts Options) (err error) {
 			return fmt.Errorf("%s: %w", opts.Name, err)
 		}
 	}
-	if cfg.MigrateOnly {
-		log.Info("migrations applied, exiting (MIGRATE_ONLY)")
+	if cfg.Migrations == "only" {
+		log.Info("migrations applied, exiting (MIGRATIONS=only)")
 		return nil
 	}
 

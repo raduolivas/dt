@@ -13,9 +13,22 @@ resource "aws_db_parameter_group" "this" {
     apply_method = "pending-reboot"
   }
 
+  # Statements slower than 1 s are logged, but never their bind values
+  # (which can hold personal data or secrets): both parameter-length limits
+  # are 0, so no parameters are logged, on success or on error.
   parameter {
     name  = "log_min_duration_statement"
-    value = "1000" # log statements slower than 1 s (no parameters: log_parameter_max_length stays default)
+    value = "1000"
+  }
+
+  parameter {
+    name  = "log_parameter_max_length"
+    value = "0"
+  }
+
+  parameter {
+    name  = "log_parameter_max_length_on_error"
+    value = "0"
   }
 }
 

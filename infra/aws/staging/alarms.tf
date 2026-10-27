@@ -44,46 +44,22 @@ resource "aws_cloudwatch_metric_alarm" "host_memory" {
   ok_actions          = [aws_sns_topic.alerts.arn]
 }
 
+# Target 5xx only: while staging sleeps the ALB itself answers 503 to every
+# request (scanners included), which must not page anyone.
 resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
-  alarm_name          = "dt-staging-alb-5xx"
-  alarm_description   = "More than 5 HTTP 5xx answers (ALB or targets) in 5 minutes"
+  alarm_name          = "dt-staging-alb-target-5xx"
+  alarm_description   = "More than 5 HTTP 5xx answers from the services (ALB targets) in 5 minutes"
+  namespace           = "AWS/ApplicationELB"
+  metric_name         = "HTTPCode_Target_5XX_Count"
+  dimensions          = { LoadBalancer = aws_lb.api.arn_suffix }
+  statistic           = "Sum"
+  period              = 300
   evaluation_periods  = 1
   threshold           = 5
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
-
-  metric_query {
-    id          = "total"
-    expression  = "FILL(elb, 0) + FILL(target, 0)"
-    label       = "5xx"
-    return_data = true
-  }
-
-  metric_query {
-    id = "elb"
-
-    metric {
-      namespace   = "AWS/ApplicationELB"
-      metric_name = "HTTPCode_ELB_5XX_Count"
-      dimensions  = { LoadBalancer = aws_lb.api.arn_suffix }
-      stat        = "Sum"
-      period      = 300
-    }
-  }
-
-  metric_query {
-    id = "target"
-
-    metric {
-      namespace   = "AWS/ApplicationELB"
-      metric_name = "HTTPCode_Target_5XX_Count"
-      dimensions  = { LoadBalancer = aws_lb.api.arn_suffix }
-      stat        = "Sum"
-      period      = 300
-    }
-  }
 }
 
 resource "aws_cloudwatch_metric_alarm" "rds_storage" {

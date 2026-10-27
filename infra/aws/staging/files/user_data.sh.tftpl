@@ -12,6 +12,12 @@ ECS_IMAGE_PULL_BEHAVIOR=prefer-cached
 ECS_LOGLEVEL=warn
 CONFIG
 
+# Session Manager is the only way onto the host (no SSH, no key pair) and
+# the dtctl port forward depends on it: install the agent if the AMI lacks
+# it, and make sure it runs. Idempotent.
+rpm -q amazon-ssm-agent >/dev/null 2>&1 || dnf install -y amazon-ssm-agent
+systemctl enable --now amazon-ssm-agent
+
 # Host volumes: NATS JetStream and the OSRM data synced from S3.
 mkdir -p /data/nats /data/osrm
 
