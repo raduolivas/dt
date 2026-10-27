@@ -53,13 +53,25 @@ variable "budget_limit" {
 }
 
 variable "budget_unit" {
-  description = "Budget currency. If AWS Budgets rejects EUR for this payer, set USD in terraform.tfvars (see the runbook)."
+  description = "Budget currency. If AWS Budgets rejects EUR for this payer, set budget_unit to USD and budget_limit to 82 in terraform.tfvars (82 USD is about EUR 76: slightly stricter, which is the safe side; see the runbook)."
   type        = string
   default     = "EUR"
 }
 
+variable "enable_staging_oidc" {
+  description = "Create the GitHub OIDC provider and deploy role in dt-staging. Needs sts:AssumeRole, which root credentials cannot do, so phase A of scripts/aws-bootstrap.sh sets this to false and phase B (an Identity Center Admin session) leaves it true."
+  type        = bool
+  default     = true
+}
+
+variable "anomaly_monitor_arn" {
+  description = "ARN of an existing DIMENSIONAL/SERVICE cost anomaly monitor to reuse (AWS allows one per account and may have created a default one). Null creates dt-services. Set by scripts/aws-bootstrap.sh."
+  type        = string
+  default     = null
+}
+
 variable "anomaly_threshold" {
-  description = "Absolute cost anomaly impact (in the account's billing unit) that triggers an alert."
+  description = "Absolute cost anomaly impact in USD (Cost Explorer reports anomalies in USD whatever the budget unit) that triggers an alert."
   type        = number
   default     = 10
 }

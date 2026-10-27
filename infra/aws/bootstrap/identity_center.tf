@@ -1,7 +1,8 @@
 # IAM Identity Center itself is enabled by hand (runbook step 2): there is no
-# API to enable it. This file only configures it. MFA for sign-in is switched
-# on in the Identity Center console (Settings > Authentication > MFA:
-# "Every time they sign in"), which the provider cannot set.
+# API to enable it. This file only configures it. MFA is NOT enforced by any
+# policy here: the binding control is the Identity Center console setting
+# (Settings > Authentication > MFA: "Every time they sign in"), which the
+# provider cannot set. Runbook steps 2 and 4 set and verify it.
 
 data "aws_ssoadmin_instances" "this" {}
 
@@ -18,7 +19,7 @@ locals {
 
 resource "aws_ssoadmin_permission_set" "admin" {
   name             = "Admin"
-  description      = "Administrator access; sessions refuse to act when MFA is known to be absent"
+  description      = "Administrator access (MFA is required by the Identity Center sign-in setting)"
   instance_arn     = local.sso_instance_arn
   session_duration = "PT4H"
 }
@@ -27,30 +28,6 @@ resource "aws_ssoadmin_managed_policy_attachment" "admin" {
   instance_arn       = local.sso_instance_arn
   permission_set_arn = aws_ssoadmin_permission_set.admin.arn
   managed_policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
-}
-
-# Defence in depth next to the Identity Center MFA setting. BoolIfExists means
-# a session where the key is absent is not locked out; one where it is present
-# and false is denied everything.
-data "aws_iam_policy_document" "admin_mfa" {
-  statement {
-    sid       = "DenyWithoutMfa"
-    effect    = "Deny"
-    actions   = ["*"]
-    resources = ["*"]
-
-    condition {
-      test     = "BoolIfExists"
-      variable = "aws:MultiFactorAuthPresent"
-      values   = ["false"]
-    }
-  }
-}
-
-resource "aws_ssoadmin_permission_set_inline_policy" "admin" {
-  instance_arn       = local.sso_instance_arn
-  permission_set_arn = aws_ssoadmin_permission_set.admin.arn
-  inline_policy      = data.aws_iam_policy_document.admin_mfa.json
 }
 
 resource "aws_ssoadmin_permission_set" "read_only" {

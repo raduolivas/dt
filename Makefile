@@ -144,7 +144,7 @@ secrets: ## Scan the repository and its history for leaked secrets
 	  -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/repo \
 	  zricethezav/gitleaks:v8.30.1 detect --source /repo --redact --no-banner
 
-aws-bootstrap: ## Owner only, from CloudShell in the AWS management account: apply infra/aws/bootstrap (see docs/runbooks/aws-account-setup.md)
+aws-bootstrap: ## Owner only, in CloudShell: make aws-bootstrap PHASE=a (as root), then PHASE=b (as Admin); see docs/runbooks/aws-account-setup.md
 	scripts/aws-bootstrap.sh
 
 ci: lint test build-web audit-web vuln secrets ## Run the CI checks locally

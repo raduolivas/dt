@@ -26,7 +26,11 @@ resource "aws_budgets_budget" "monthly" {
   }
 }
 
+# AWS may already have created a default SERVICE monitor, and only one is
+# allowed per account: scripts/aws-bootstrap.sh then passes its ARN.
 resource "aws_ce_anomaly_monitor" "services" {
+  count = var.anomaly_monitor_arn == null ? 1 : 0
+
   name              = "dt-services"
   monitor_type      = "DIMENSIONAL"
   monitor_dimension = "SERVICE"
@@ -35,7 +39,7 @@ resource "aws_ce_anomaly_monitor" "services" {
 resource "aws_ce_anomaly_subscription" "alerts" {
   name             = "dt-anomaly-alerts"
   frequency        = "DAILY"
-  monitor_arn_list = [aws_ce_anomaly_monitor.services.arn]
+  monitor_arn_list = [var.anomaly_monitor_arn == null ? aws_ce_anomaly_monitor.services[0].arn : var.anomaly_monitor_arn]
 
   subscriber {
     type    = "EMAIL"

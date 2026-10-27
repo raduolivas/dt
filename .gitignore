@@ -19,6 +19,7 @@ infra/aws/**/.terraform/
 infra/aws/**/terraform.tfvars
 infra/aws/**/*.auto.tfvars
 infra/aws/**/backend_override.tf
+infra/aws/**/imports_generated.tf
 infra/aws/**/*.tfstate
 infra/aws/**/*.tfstate.*
 infra/aws/**/*.tfplan

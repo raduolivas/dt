@@ -14,19 +14,22 @@ locals {
 
 resource "aws_iam_openid_connect_provider" "github_staging" {
   provider = aws.staging
+  count    = var.enable_staging_oidc ? 1 : 0
 
   url            = "https://token.actions.githubusercontent.com"
   client_id_list = ["sts.amazonaws.com"]
 }
 
 data "aws_iam_policy_document" "deploy_staging_trust" {
+  count = var.enable_staging_oidc ? 1 : 0
+
   statement {
     effect  = "Allow"
     actions = ["sts:AssumeRoleWithWebIdentity"]
 
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github_staging.arn]
+      identifiers = [aws_iam_openid_connect_provider.github_staging[0].arn]
     }
 
     condition {
@@ -139,16 +142,18 @@ data "aws_iam_policy_document" "deploy_staging" {
 
 resource "aws_iam_role" "deploy_staging" {
   provider = aws.staging
+  count    = var.enable_staging_oidc ? 1 : 0
 
   name                 = "dt-deploy-staging"
-  assume_role_policy   = data.aws_iam_policy_document.deploy_staging_trust.json
+  assume_role_policy   = data.aws_iam_policy_document.deploy_staging_trust[0].json
   max_session_duration = 3600
 }
 
 resource "aws_iam_role_policy" "deploy_staging" {
   provider = aws.staging
+  count    = var.enable_staging_oidc ? 1 : 0
 
   name   = "deploy"
-  role   = aws_iam_role.deploy_staging.id
+  role   = aws_iam_role.deploy_staging[0].id
   policy = data.aws_iam_policy_document.deploy_staging.json
 }

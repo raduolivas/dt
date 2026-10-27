@@ -10,7 +10,7 @@ output "production_account_id" {
 
 output "deploy_role_arn_staging" {
   description = "Role GitHub Actions assumes (environment staging) to deploy."
-  value       = aws_iam_role.deploy_staging.arn
+  value       = one(aws_iam_role.deploy_staging[*].arn) # null until phase B
 }
 
 output "state_bucket" {
