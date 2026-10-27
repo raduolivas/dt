@@ -53,6 +53,9 @@ type Config struct {
 	MigrationsDatabaseURL string `env:"MIGRATIONS_DATABASE_URL"`
 	RedisURL              string `env:"REDIS_URL"`
 	NATSURL               string `env:"NATS_URL"`
+	// MigrateOnly applies the migrations and returns without serving: the
+	// one-off migrate-<svc> tasks of a deploy (staging) set it.
+	MigrateOnly bool `env:"MIGRATE_ONLY"`
 }
 
 // Needs names the optional dependencies a service uses. Each one needs its
@@ -167,6 +170,10 @@ func Run(ctx context.Context, opts Options) (err error) {
 		if err := migratex.Up(ctx, migURL, opts.Migrations); err != nil {
 			return fmt.Errorf("%s: %w", opts.Name, err)
 		}
+	}
+	if cfg.MigrateOnly {
+		log.Info("migrations applied, exiting (MIGRATE_ONLY)")
+		return nil
 	}
 
 	// pgxpool.New does not connect; the first query or /readyz does.

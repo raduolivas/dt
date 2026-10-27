@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars (git-ignored, never committed) and fill in. These values are fake.
+# make staging-up reads it; see docs/runbooks/staging.md.
+
+# Bootstrap output staging_account_id.
+staging_account_id = "000000000000"
+
+# Receives the staging alarms; confirm the SNS subscription mail once.
+alert_email = "alerts@example.invalid"
+
+# Printed by scripts/osrm-publish.sh. Empty: the OSRM services stay at 0
+# tasks and tracking has no road routing until it is set.
+osrm_data_version = ""
+
+# Optional overrides (defaults shown):
+# osrm_bucket_name = "dt-staging-osrm"   # S3 names are global; change if taken
+# schedule_enabled = true                # false keeps staging up 24/7 (over budget, see the runbook)
+# instance_type    = "t3.medium"

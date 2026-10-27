@@ -142,6 +142,45 @@ func TestRunAppliesMigrationsBeforeSetup(t *testing.T) {
 	}
 }
 
+// With MIGRATE_ONLY, Run applies the migrations and returns nil without
+// calling Setup or serving (the one-off migrate tasks of a deploy).
+func TestRunMigrateOnlyAppliesMigrationsAndReturns(t *testing.T) {
+	pg := testkit.StartPostgres(t)
+	t.Setenv("DATABASE_URL", pg.URL("gateway"))
+	t.Setenv("MIGRATIONS_DATABASE_URL", pg.MigratorURL("gateway"))
+	t.Setenv("MIGRATE_ONLY", "true")
+	t.Setenv("PORT", "0")
+	t.Setenv("LOG_LEVEL", "error")
+	migrations := fstest.MapFS{"0001_t.up.sql": {Data: []byte("CREATE TABLE t (id int)")}}
+	setupCalled := false
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err := bootstrap.Run(ctx, bootstrap.Options{
+		Name:       "gateway",
+		Migrations: migrations,
+		Setup: func(context.Context, bootstrap.Deps, *http.ServeMux) ([]bootstrap.Worker, error) {
+			setupCalled = true
+			return nil, nil
+		},
+		Ready: func(string) { t.Error("MIGRATE_ONLY must not serve") },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if setupCalled {
+		t.Fatal("MIGRATE_ONLY must not call Setup")
+	}
+	conn, err := pgx.Connect(ctx, pg.URL("gateway"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	var n int
+	if err := conn.QueryRow(ctx, "SELECT count(*) FROM t").Scan(&n); err != nil {
+		t.Fatalf("table t missing after MIGRATE_ONLY: %v", err)
+	}
+}
+
 // Without MIGRATIONS_DATABASE_URL, migrations run as DATABASE_URL (a
 // single-role setup, where that role owns the schema).
 func TestRunMigratesWithRuntimeURLWhenMigrationsURLUnset(t *testing.T) {

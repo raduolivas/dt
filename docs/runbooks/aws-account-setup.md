@@ -82,7 +82,7 @@ Repository Settings, Environments, New environment `staging`, with **Required re
 
 ## 6. Delegate DNS for staging  [cost: Route 53 hosted zone about EUR 0.50/month, created in Task 14]
 
-After Task 14 creates the Route 53 zone for `staging.deliveryontrack.io`, create four **NS records** for `staging` at the registrar pointing to the zone's name servers (from the Task 14 output `name_servers`). Wait for propagation before the first deploy; the certificate validation depends on it.
+After Task 14 creates the Route 53 zone for `staging.deliveryontrack.io`, create four **NS records** for `staging` at the registrar pointing to the zone's name servers (the first `make staging-up` prints them; they are also the staging output `zone_name_servers`). Wait for propagation, then run `make staging-up` again: it checks the delegation before the certificate validation, which depends on it. Full sequence: `docs/runbooks/staging.md`.
 
 ## Costs summary
 

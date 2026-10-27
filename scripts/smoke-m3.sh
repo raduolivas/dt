@@ -8,6 +8,10 @@
 # Env: DTCTL (default backend/bin/dtctl), DT_GATEWAY_URL (default
 # http://127.0.0.1:8080), DT_TRACKING_URL (default http://127.0.0.1:8082, where the
 # viewer streams are served), and dtctl's DT_ACCOUNTS_URL / DT_INTERNAL_RPC_TOKEN.
+# DT_SMOKE_KEY: an existing test secret key. When set, step 1 is skipped and
+# dtctl is never called, so the test runs through the public API only (the
+# staging deploy). Its tenant must allow direct and end_to_end deliveries,
+# default end_to_end, with 15 preparation minutes (docs/runbooks/staging.md).
 # Secrets stay in shell variables and are never echoed.
 set -euo pipefail
 
@@ -68,13 +72,19 @@ dtctl() {
   printf '%s' "$out"
 }
 
-step "1. create a tenant (15 minutes of preparation time) and a test key"
-tenant="$(dtctl tenant create --name "Smoke M3 ${run_id}")"
-[[ "$tenant" == ten_* ]] || fail "tenant id ${tenant}"
-key="$(dtctl key create --tenant "$tenant" --env test --name smoke-m3)"
-[[ "$key" =~ ^dt_sk_test_[0-9A-Za-z]{55}$ ]] || fail "key create did not print a test secret key"
-dtctl tenant settings --tenant "$tenant" --models direct,end_to_end --default end_to_end --pickup any --prep-minutes 15 >/dev/null
-echo "tenant ${tenant}" >&2
+if [[ -n "${DT_SMOKE_KEY:-}" ]]; then
+  step "1. use the test key from DT_SMOKE_KEY (its tenant is set up already)"
+  key="$DT_SMOKE_KEY"
+  [[ "$key" == dt_sk_test_* ]] || fail "DT_SMOKE_KEY is not a test secret key"
+else
+  step "1. create a tenant (15 minutes of preparation time) and a test key"
+  tenant="$(dtctl tenant create --name "Smoke M3 ${run_id}")"
+  [[ "$tenant" == ten_* ]] || fail "tenant id ${tenant}"
+  key="$(dtctl key create --tenant "$tenant" --env test --name smoke-m3)"
+  [[ "$key" =~ ^dt_sk_test_[0-9A-Za-z]{55}$ ]] || fail "key create did not print a test secret key"
+  dtctl tenant settings --tenant "$tenant" --models direct,end_to_end --default end_to_end --pickup any --prep-minutes 15 >/dev/null
+  echo "tenant ${tenant}" >&2
+fi
 
 # The gateway's key cache is eventually consistent (accounts outbox -> NATS).
 for _ in $(seq 1 40); do

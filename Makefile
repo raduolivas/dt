@@ -137,7 +137,7 @@ latency: dtctl ## Measure fix-to-viewer latency against the running stack (after
 	cd backend/tools/latency && DT_API_KEY="$$secret" go run . -deliveries 20 -viewers 5 -duration 2m
 
 # ---- security and CI --------------------------------------------------------
-.PHONY: secrets ci aws-bootstrap
+.PHONY: secrets ci aws-bootstrap staging-up staging-down staging-wake staging-sleep
 
 secrets: ## Scan the repository and its history for leaked secrets
 	docker run --rm -v "$$PWD:/repo" \
@@ -146,5 +146,19 @@ secrets: ## Scan the repository and its history for leaked secrets
 
 aws-bootstrap: ## Owner only, in CloudShell: make aws-bootstrap PHASE=a (as root), then PHASE=b (as Admin); see docs/runbooks/aws-account-setup.md
 	scripts/aws-bootstrap.sh
+
+# The staging targets run from a management-account Identity Center Admin
+# session; see docs/runbooks/staging.md.
+staging-up: ## Owner only: create or update the AWS staging stack (tofu apply)
+	scripts/staging.sh up
+
+staging-down: ## Owner only: destroy staging except the hosted zone, the KMS key and the state
+	scripts/staging.sh down
+
+staging-wake: ## Start the staging database and host now (outside 08:00-20:00 Mon-Fri)
+	scripts/staging.sh wake
+
+staging-sleep: ## Stop the staging host and database now
+	scripts/staging.sh sleep
 
 ci: lint test build-web audit-web vuln secrets ## Run the CI checks locally
