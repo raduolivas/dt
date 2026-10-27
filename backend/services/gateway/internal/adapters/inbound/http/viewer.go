@@ -51,10 +51,7 @@ func (wallClock) Now() time.Time { return time.Now() }
 //	GET  /.well-known/jwks.json        the viewer token keys
 //
 // Each POST runs: ViewerCORS → MaxBytes(1 KiB) → ClientIP(trusted) →
-// secret key check → rl:viewer:ip:<ip> (10/min) → Validate (OpenAPI) →
-// handler. A secret key authenticates nothing here: sent from a browser
-// (with Origin) it is 403 secret_key_in_browser, as on the partner API,
-// otherwise the route's 401. The handlers
+// rl:viewer:ip:<ip> (10/min) → Validate (OpenAPI) → handler; the handlers
 // charge rl:viewer:tl:<link id> (30/min) through the Viewer. Responses carry
 // Cache-Control: no-store. Call it once per mux, after or before Mount.
 func MountViewer(mux *http.ServeMux, d ViewerDeps) {
@@ -78,7 +75,6 @@ func MountViewer(mux *http.ServeMux, d ViewerDeps) {
 	chain := func(h http.HandlerFunc) http.Handler {
 		out := validate(h)
 		out = viewerIPLimit(d.Limiter, log)(out)
-		out = rejectSecretKeyInBrowser(out)
 		out = ClientIP(d.TrustedProxies)(out)
 		out = MaxBytes(MaxViewerBodyBytes)(out)
 		return ViewerCORS(out)
@@ -91,17 +87,6 @@ func MountViewer(mux *http.ServeMux, d ViewerDeps) {
 		mux.Handle("OPTIONS "+path, http.HandlerFunc(viewerPreflight))
 	}
 	mux.Handle("GET "+JWKSPath, jwksHandler(d.JWKS))
-}
-
-// rejectSecretKeyInBrowser refuses a secret key sent from a browser (see
-// secretKeyInBrowser).
-func rejectSecretKeyInBrowser(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if secretKeyInBrowser(w, r) {
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 // viewerIPLimit charges rl:viewer:ip:<client ip> (rl:viewer:ip:unknown when

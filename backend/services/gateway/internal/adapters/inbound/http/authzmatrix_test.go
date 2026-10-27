@@ -659,8 +659,10 @@ func viewerClaims(l domain.TrackingLink, aud any) map[string]any {
 
 // TestViewerAuthorizationMatrix runs the customer viewer routes against
 // every credential case: the link token on /v1/tracking/session, the viewer
-// token on /refresh, and a secret key on both. (A viewer token on the partner
-// routes is in TestAuthorizationMatrix.)
+// token on /refresh, and a secret key on both, which authenticates nothing
+// there: 401, from a browser (Origin) or not, as the contract declares. (A
+// viewer token on the partner routes, and secret_key_in_browser there, are in
+// TestAuthorizationMatrix.)
 func TestViewerAuthorizationMatrix(t *testing.T) {
 	t.Parallel()
 	secret := func(t *testing.T, r *http.Request, origin bool) {
@@ -704,12 +706,11 @@ func TestViewerAuthorizationMatrix(t *testing.T) {
 			secret(t, r, false)
 			return r
 		}, http.StatusUnauthorized, "link_invalid"},
-		{"secret key with Origin", func(t *testing.T, v *viewerEdge) *http.Request {
-			_, tok := v.issue(t)
-			r := sessionReq(tok)
+		{"secret key with Origin instead of a link token", func(t *testing.T, _ *viewerEdge) *http.Request {
+			r := sessionReq("garbage_garbage_garbag")
 			secret(t, r, true)
 			return r
-		}, http.StatusForbidden, "secret_key_in_browser"},
+		}, http.StatusUnauthorized, "link_invalid"},
 	}
 	signed := func(t *testing.T, v *viewerEdge, s *viewerjwt.Signer, at time.Time) string {
 		l, _ := v.issue(t)
@@ -755,7 +756,7 @@ func TestViewerAuthorizationMatrix(t *testing.T) {
 			r := refreshReq("")
 			secret(t, r, true)
 			return r
-		}, http.StatusForbidden, "secret_key_in_browser"},
+		}, http.StatusUnauthorized, "viewer_token_invalid"},
 	}
 	for route, cases := range map[string][]viewerCase{"tracking.session": session, "tracking.session_refresh": refresh} {
 		for _, c := range cases {
