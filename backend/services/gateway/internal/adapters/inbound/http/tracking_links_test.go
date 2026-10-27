@@ -37,7 +37,7 @@ func newLinkGW(t *testing.T, extra func(*httpapi.Middleware)) *linkGW {
 	k := mint(t, apikey.Test, actor, domain.AllScopes...)
 	f := newFake()
 	st, rev := apptest.NewMemLinks(), &apptest.MemRevoker{}
-	links := &app.TrackingLinks{Store: st, Hasher: apptest.Hasher{}, Revoker: rev, Clock: fixedClock{}}
+	links := &app.TrackingLinks{Store: st, Hasher: apptest.Hasher{}, Revoker: rev, Expiries: &apptest.MemExpiries{}, Clock: fixedClock{}}
 	au := &memAudit{}
 	rpcLogs := &bytes.Buffer{}
 	e := newEdge(t, []testKey{k},

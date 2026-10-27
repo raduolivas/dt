@@ -450,7 +450,7 @@ func TestAuthorizationMatrix(t *testing.T) {
 				// test-only routes carry their own handlers.
 				fake := scopedFake{newFake()}
 				counted := rt
-				links := &app.TrackingLinks{Store: apptest.NewMemLinks(), Hasher: apptest.Hasher{}, Revoker: &apptest.MemRevoker{}, Clock: fixedClock{}}
+				links := &app.TrackingLinks{Store: apptest.NewMemLinks(), Hasher: apptest.Hasher{}, Revoker: &apptest.MemRevoker{}, Expiries: &apptest.MemExpiries{}, Clock: fixedClock{}}
 				for _, pr := range httpapi.Routes(httpapi.Deps{Deliveries: fake, Links: links}) {
 					if pr.Name == rt.Name {
 						counted = pr

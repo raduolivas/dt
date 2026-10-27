@@ -87,8 +87,9 @@ func (s *TrackingLinkStore) Get(ctx context.Context, id string) (domain.Tracking
 }
 
 // Expire implements app.LinkStore.
-func (s *TrackingLinkStore) Expire(ctx context.Context, deliveryID string, expiresAt time.Time) ([]string, error) {
+func (s *TrackingLinkStore) Expire(ctx context.Context, deliveryID string, expiresAt time.Time) (time.Time, []string, error) {
 	var ids []string
+	var exp time.Time
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
 		if err := q.LockDeliveryLinks(ctx, deliveryID); err != nil {
@@ -97,7 +98,8 @@ func (s *TrackingLinkStore) Expire(ctx context.Context, deliveryID string, expir
 		if err := q.InsertLinkExpiry(ctx, db.InsertLinkExpiryParams{DeliveryID: deliveryID, ExpiresAt: expiresAt}); err != nil {
 			return fmt.Errorf("insert link expiry: %w", err)
 		}
-		exp, err := q.GetLinkExpiry(ctx, deliveryID) // the first recorded wins
+		var err error
+		exp, err = q.GetLinkExpiry(ctx, deliveryID) // the first recorded wins
 		if err != nil {
 			return fmt.Errorf("get link expiry: %w", err)
 		}
@@ -107,7 +109,10 @@ func (s *TrackingLinkStore) Expire(ctx context.Context, deliveryID string, expir
 		}
 		return nil
 	})
-	return ids, err
+	if err != nil {
+		return time.Time{}, nil, err
+	}
+	return exp.UTC(), ids, nil
 }
 
 // RevokedSince implements app.LinkStore.

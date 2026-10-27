@@ -30,14 +30,14 @@ func linkService(t *testing.T) (*app.TrackingLinks, *postgres.TrackingLinkStore,
 	pool, _ := setup(t)
 	s := postgres.NewTrackingLinkStore(pool)
 	rev, c := &apptest.MemRevoker{}, &fixedNow{t: t0}
-	return &app.TrackingLinks{Store: s, Hasher: apptest.Hasher{}, Revoker: rev, Clock: c}, s, rev, c
+	return &app.TrackingLinks{Store: s, Hasher: apptest.Hasher{}, Revoker: rev, Expiries: &apptest.MemExpiries{}, Clock: c}, s, rev, c
 }
 
 func TestLinkTokenStoredHashed(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	pool, _ := setup(t)
-	tl := &app.TrackingLinks{Store: postgres.NewTrackingLinkStore(pool), Hasher: apptest.Hasher{}, Revoker: &apptest.MemRevoker{}, Clock: &fixedNow{t: t0}}
+	tl := &app.TrackingLinks{Store: postgres.NewTrackingLinkStore(pool), Hasher: apptest.Hasher{}, Revoker: &apptest.MemRevoker{}, Expiries: &apptest.MemExpiries{}, Clock: &fixedNow{t: t0}}
 	l, tok, err := tl.Issue(ctx, linkOwner, linkDel)
 	if err != nil {
 		t.Fatal(err)
@@ -122,6 +122,12 @@ func TestExpireOnFinalSets30Min(t *testing.T) {
 	if _, err := tl.Resolve(ctx, tok, final.Add(30*time.Minute)); !errors.Is(err, app.ErrLinkInvalid) {
 		t.Fatalf("at expiry: %v", err)
 	}
+	// The store answers a redelivery with the recorded expiry and every
+	// unrevoked link carrying it, so a failed announcement can be retried.
+	exp, ids, err := s.Expire(ctx, linkDel, final.Add(2*time.Hour))
+	if err != nil || !exp.Equal(final.Add(30*time.Minute)) || len(ids) != 1 || ids[0] != l.ID {
+		t.Fatalf("redelivered Expire = %v %v %v", exp, ids, err)
+	}
 	// A link rotated after the delivery is final keeps the expiry.
 	c.t = final.Add(time.Minute)
 	l2, _, err := tl.Rotate(ctx, linkOwner, linkDel)
@@ -146,8 +152,8 @@ func TestLinkTokenHashIsPeppered(t *testing.T) {
 	store := postgres.NewTrackingLinkStore(pool)
 	pepperA := []byte("test-only-pepper-A-0123456789abcdef")
 	pepperB := []byte("test-only-pepper-B-0123456789abcdef")
-	a := &app.TrackingLinks{Store: store, Hasher: keyhash.New(pepperA), Revoker: &apptest.MemRevoker{}, Clock: &fixedNow{t: t0}}
-	b := &app.TrackingLinks{Store: store, Hasher: keyhash.New(pepperB), Revoker: &apptest.MemRevoker{}, Clock: &fixedNow{t: t0}}
+	a := &app.TrackingLinks{Store: store, Hasher: keyhash.New(pepperA), Revoker: &apptest.MemRevoker{}, Expiries: &apptest.MemExpiries{}, Clock: &fixedNow{t: t0}}
+	b := &app.TrackingLinks{Store: store, Hasher: keyhash.New(pepperB), Revoker: &apptest.MemRevoker{}, Expiries: &apptest.MemExpiries{}, Clock: &fixedNow{t: t0}}
 
 	l, tok, err := a.Issue(ctx, linkOwner, linkDel)
 	if err != nil {

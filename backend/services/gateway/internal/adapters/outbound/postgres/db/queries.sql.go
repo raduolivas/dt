@@ -147,7 +147,8 @@ func (q *Queries) DeleteIdempotencyRecordsForResource(ctx context.Context, arg D
 
 const expireUnrevokedLinks = `-- name: ExpireUnrevokedLinks :many
 UPDATE tracking_links SET expires_at = $1
-WHERE delivery_id = $2 AND revoked_at IS NULL AND expires_at IS NULL
+WHERE delivery_id = $2 AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at = $1)
 RETURNING id
 `
 
@@ -156,6 +157,8 @@ type ExpireUnrevokedLinksParams struct {
 	DeliveryID string
 }
 
+// Also returns the links that already carry the expiry, so a repeated call
+// lists every unrevoked link of the delivery.
 func (q *Queries) ExpireUnrevokedLinks(ctx context.Context, arg ExpireUnrevokedLinksParams) ([]string, error) {
 	rows, err := q.db.Query(ctx, expireUnrevokedLinks, arg.ExpiresAt, arg.DeliveryID)
 	if err != nil {

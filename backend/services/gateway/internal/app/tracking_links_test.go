@@ -27,8 +27,13 @@ type clock struct{ t time.Time }
 func (c *clock) Now() time.Time { return c.t }
 
 func links() (*app.TrackingLinks, *apptest.MemLinks, *apptest.MemRevoker, *clock) {
-	store, rev, c := apptest.NewMemLinks(), &apptest.MemRevoker{}, &clock{t: t0}
-	return &app.TrackingLinks{Store: store, Hasher: apptest.Hasher{}, Revoker: rev, Clock: c}, store, rev, c
+	tl, store, rev, _, c := linksWithExpiries()
+	return tl, store, rev, c
+}
+
+func linksWithExpiries() (*app.TrackingLinks, *apptest.MemLinks, *apptest.MemRevoker, *apptest.MemExpiries, *clock) {
+	store, rev, exp, c := apptest.NewMemLinks(), &apptest.MemRevoker{}, &apptest.MemExpiries{}, &clock{t: t0}
+	return &app.TrackingLinks{Store: store, Hasher: apptest.Hasher{}, Revoker: rev, Expiries: exp, Clock: c}, store, rev, exp, c
 }
 
 func TestIssueStoresOnlyTheHash(t *testing.T) {
@@ -173,5 +178,40 @@ func TestExpireOnFinalFirstFinalWins(t *testing.T) {
 	got, err := store.Get(ctx, l.ID)
 	if err != nil || got.ExpiresAt == nil || !got.ExpiresAt.Equal(t0.Add(30*time.Minute)) {
 		t.Fatalf("expires_at = %v, %v", got.ExpiresAt, err)
+	}
+}
+
+func TestExpireOnFinalAnnouncesExpiryToTracking(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tl, _, _, exp, _ := linksWithExpiries()
+	l, _, err := tl.Issue(ctx, principal, delA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := t0.Add(30 * time.Minute)
+
+	// The announcement fails: ExpireOnFinal fails, so the event is retried.
+	exp.Fail(errors.New("redis down"))
+	if err := tl.ExpireOnFinal(ctx, delA, t0); err == nil {
+		t.Fatal("ExpireOnFinal succeeded without announcing the expiry")
+	}
+	// The retry (the expiry is already recorded) still announces it, with
+	// the first final time.
+	exp.Fail(nil)
+	if err := tl.ExpireOnFinal(ctx, delA, t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got := exp.Announced(); len(got) != 1 || !got[l.ID].Equal(want) {
+		t.Fatalf("announced = %v, want %s at %v", got, l.ID, want)
+	}
+
+	// A link rotated after the delivery is final is announced too.
+	l2, _, err := tl.Rotate(ctx, principal, delA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := exp.Announced(); !got[l2.ID].Equal(want) {
+		t.Fatalf("rotated link not announced: %v", got)
 	}
 }

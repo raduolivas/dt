@@ -29,8 +29,10 @@ type LinkStore interface {
 	Get(ctx context.Context, id string) (domain.TrackingLink, error)
 	// Expire records expiresAt as the delivery's link expiry (the first one
 	// recorded wins) and sets it on the delivery's unrevoked links that have
-	// none. It returns the ids of the links it set it on.
-	Expire(ctx context.Context, deliveryID string, expiresAt time.Time) ([]string, error)
+	// none. It returns the recorded expiry and the ids of every unrevoked
+	// link that carries it (also on a repeated call, so a caller that failed
+	// after the first one can finish the job).
+	Expire(ctx context.Context, deliveryID string, expiresAt time.Time) (time.Time, []string, error)
 	// RevokedSince returns the ids of the delivery's links revoked at or
 	// after since.
 	RevokedSince(ctx context.Context, deliveryID string, since time.Time) ([]string, error)
@@ -50,6 +52,12 @@ type Revoker interface {
 	Revoke(ctx context.Context, linkID string) error
 }
 
+// ExpiryAnnouncer tells the tracking service when a link expires, so it
+// closes the link's open streams then (and refuses new ones after it).
+type ExpiryAnnouncer interface {
+	AnnounceExpiry(ctx context.Context, linkID string, expiresAt time.Time) error
+}
+
 // revokeAttempts is the first try plus two retries of each revocation.
 const revokeAttempts = 3
 
@@ -58,7 +66,9 @@ type TrackingLinks struct {
 	Store   LinkStore
 	Hasher  LinkHasher
 	Revoker Revoker
-	Clock   Clock
+	// Expiries announces link expiries to the tracking service. Required.
+	Expiries ExpiryAnnouncer
+	Clock    Clock
 }
 
 // Issue creates the delivery's tracking link and returns it with its token
@@ -98,7 +108,24 @@ func (t *TrackingLinks) replace(ctx context.Context, p domain.Principal, deliver
 			return domain.TrackingLink{}, "", err
 		}
 	}
+	// A link issued after the delivery became final expires with it; open
+	// streams must know when.
+	if l.ExpiresAt != nil {
+		if err := t.announce(ctx, l.ID, *l.ExpiresAt); err != nil {
+			return domain.TrackingLink{}, "", err
+		}
+	}
 	return l, tok, nil
+}
+
+func (t *TrackingLinks) announce(ctx context.Context, id string, at time.Time) error {
+	var err error
+	for range revokeAttempts {
+		if err = t.Expiries.AnnounceExpiry(ctx, id, at); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("announce tracking link expiry %s: %w", id, err)
 }
 
 func (t *TrackingLinks) revoke(ctx context.Context, id string) error {
@@ -147,11 +174,20 @@ func (t *TrackingLinks) Active(ctx context.Context, id string, now time.Time) (d
 }
 
 // ExpireOnFinal makes the delivery's links expire 30 minutes after finalAt,
-// the time it reached a final status. It is idempotent: the first final
-// time recorded wins, so a redelivered event never extends a link.
+// the time it reached a final status, and announces each link's expiry to
+// the tracking service (dt:viewer:expiry:<tl_id> and dt:viewer:expiries) so
+// open streams close then. It is idempotent: the first final time recorded
+// wins, so a redelivered event never extends a link, and a retry after a
+// failed announcement announces again.
 func (t *TrackingLinks) ExpireOnFinal(ctx context.Context, deliveryID string, finalAt time.Time) error {
-	if _, err := t.Store.Expire(ctx, deliveryID, domain.LinkExpiry(finalAt)); err != nil {
+	at, ids, err := t.Store.Expire(ctx, deliveryID, domain.LinkExpiry(finalAt))
+	if err != nil {
 		return fmt.Errorf("expire tracking links: %w", err)
+	}
+	for _, id := range ids {
+		if err := t.announce(ctx, id, at); err != nil {
+			return err
+		}
 	}
 	return nil
 }

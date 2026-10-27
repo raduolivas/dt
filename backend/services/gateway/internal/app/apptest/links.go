@@ -95,11 +95,11 @@ func (m *MemLinks) Get(_ context.Context, id string) (domain.TrackingLink, error
 }
 
 // Expire implements app.LinkStore.
-func (m *MemLinks) Expire(_ context.Context, deliveryID string, at time.Time) ([]string, error) {
+func (m *MemLinks) Expire(_ context.Context, deliveryID string, at time.Time) (time.Time, []string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.fail != nil {
-		return nil, m.fail
+		return time.Time{}, nil, m.fail
 	}
 	if _, ok := m.expires[deliveryID]; !ok {
 		m.expires[deliveryID] = at
@@ -107,13 +107,13 @@ func (m *MemLinks) Expire(_ context.Context, deliveryID string, at time.Time) ([
 	exp := m.expires[deliveryID]
 	var ids []string
 	for id, l := range m.links {
-		if l.DeliveryID == deliveryID && l.RevokedAt == nil && l.ExpiresAt == nil {
+		if l.DeliveryID == deliveryID && l.RevokedAt == nil && (l.ExpiresAt == nil || l.ExpiresAt.Equal(exp)) {
 			l.ExpiresAt = &exp
 			m.links[id] = l
 			ids = append(ids, id)
 		}
 	}
-	return ids, nil
+	return exp, ids, nil
 }
 
 // RevokedSince implements app.LinkStore.
@@ -188,4 +188,45 @@ func (h Hasher) Hash(token string) []byte {
 		p = TestPepper
 	}
 	return apikey.Hash(p, token)
+}
+
+// MemExpiries records announced link expiries.
+type MemExpiries struct {
+	mu   sync.Mutex
+	got  map[string]time.Time
+	fail error
+}
+
+var _ app.ExpiryAnnouncer = (*MemExpiries)(nil)
+
+// AnnounceExpiry implements app.ExpiryAnnouncer.
+func (e *MemExpiries) AnnounceExpiry(_ context.Context, linkID string, at time.Time) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.fail != nil {
+		return e.fail
+	}
+	if e.got == nil {
+		e.got = map[string]time.Time{}
+	}
+	e.got[linkID] = at
+	return nil
+}
+
+// Announced returns the announced expiries by link id.
+func (e *MemExpiries) Announced() map[string]time.Time {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make(map[string]time.Time, len(e.got))
+	for k, v := range e.got {
+		out[k] = v
+	}
+	return out
+}
+
+// Fail makes AnnounceExpiry return err (nil: work again).
+func (e *MemExpiries) Fail(err error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.fail = err
 }

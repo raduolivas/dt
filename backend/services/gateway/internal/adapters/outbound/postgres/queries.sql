@@ -108,8 +108,11 @@ SELECT id, tenant_id, environment, delivery_id, created_at, revoked_at, expires_
 FROM tracking_links WHERE id = $1;
 
 -- name: ExpireUnrevokedLinks :many
+-- Also returns the links that already carry the expiry, so a repeated call
+-- lists every unrevoked link of the delivery.
 UPDATE tracking_links SET expires_at = @expires_at
-WHERE delivery_id = @delivery_id AND revoked_at IS NULL AND expires_at IS NULL
+WHERE delivery_id = @delivery_id AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at = @expires_at)
 RETURNING id;
 
 -- name: LinksRevokedSince :many

@@ -38,3 +38,23 @@ func (r *Revoker) Revoke(ctx context.Context, linkID string) error {
 	}
 	return nil
 }
+
+var _ app.ExpiryAnnouncer = (*Revoker)(nil)
+
+// AnnounceExpiry stores the link's expiry at dt:viewer:expiry:<tl_id> (unix
+// seconds, kept until a token exchanged before it can no longer verify), for
+// streams that open later, then publishes "<tl_id> <unix>" on
+// dt:viewer:expiries for streams already open; one round trip.
+func (r *Revoker) AnnounceExpiry(ctx context.Context, linkID string, expiresAt time.Time) error {
+	ctx, cancel := context.WithTimeout(ctx, revokeTimeout)
+	defer cancel()
+	_, err := r.c.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.Set(ctx, viewerjwt.ExpiryKey(linkID), expiresAt.Unix(), viewerjwt.ExpiryKeyTTL(expiresAt, time.Now()))
+		p.Publish(ctx, viewerjwt.ExpiriesChannel, viewerjwt.EncodeExpiry(linkID, expiresAt))
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("announce expiry %s: %w", linkID, err)
+	}
+	return nil
+}
