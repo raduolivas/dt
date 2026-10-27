@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
 
@@ -48,8 +49,21 @@ type Deps struct {
 	// Idempotency deletes a delivery's stored idempotency responses once its
 	// personal data is erased. Nil skips the purge.
 	Idempotency app.IdempotencyPurger
+	// Links issues and rotates tracking links. Nil: create answers
+	// tracking null and rotate answers 503.
+	Links TrackingLinkIssuer
+	// TrackingURLBase is the hosted tracking page's base URL; a link's url
+	// is <base>/t/<token>.
+	TrackingURLBase string
 	// Log receives failures of the deliveries calls. Nil means slog.Default().
 	Log *slog.Logger
+}
+
+// TrackingLinkIssuer issues and rotates tracking links; it is satisfied by
+// *app.TrackingLinks. The caller has checked the delivery belongs to p.
+type TrackingLinkIssuer interface {
+	Issue(ctx context.Context, p domain.Principal, deliveryID string) (domain.TrackingLink, string, error)
+	Rotate(ctx context.Context, p domain.Principal, deliveryID string) (domain.TrackingLink, string, error)
 }
 
 // Routes is the public route table.
@@ -58,7 +72,8 @@ func Routes(deps Deps) []Route {
 	if log == nil {
 		log = slog.Default()
 	}
-	d := &deliveriesAPI{c: deps.Deliveries, purger: deps.Idempotency, log: log}
+	d := &deliveriesAPI{c: deps.Deliveries, purger: deps.Idempotency, log: log,
+		links: deps.Links, trackingBase: strings.TrimRight(deps.TrackingURLBase, "/")}
 	secret := []domain.CredentialType{domain.CredentialSecretKey}
 	route := func(name, method, pattern string, scope domain.Scope, status int, h http.HandlerFunc) Route {
 		return Route{Name: name, Method: method, Pattern: pattern, Credentials: secret, Scope: scope,
@@ -78,6 +93,7 @@ func Routes(deps Deps) []Route {
 		route("deliveries.assign", http.MethodPost, "/v1/deliveries/{id}/assignment", write, http.StatusOK, d.assign),
 		route("deliveries.report_event", http.MethodPost, "/v1/deliveries/{id}/events", write, http.StatusOK, d.reportEvent),
 		route("deliveries.cancel", http.MethodPost, "/v1/deliveries/{id}/cancel", write, http.StatusOK, d.cancel),
+		route("deliveries.rotate_tracking_link", http.MethodPost, "/v1/deliveries/{id}/tracking-link/rotate", write, http.StatusOK, d.rotateTrackingLink),
 		route("deliveries.erase_personal_data", http.MethodDelete, "/v1/deliveries/{id}/personal-data", write, http.StatusOK, d.erasePersonalData),
 		route("couriers.upsert", http.MethodPut, "/v1/couriers/{external_id}", couriers, http.StatusOK, d.upsertCourier),
 	}

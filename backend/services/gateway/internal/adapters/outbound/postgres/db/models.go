@@ -68,3 +68,19 @@ type Outbox struct {
 	CreatedAt   time.Time
 	PublishedAt *time.Time
 }
+
+type TrackingLink struct {
+	ID          string
+	TenantID    string
+	Environment string
+	DeliveryID  string
+	TokenHash   []byte
+	CreatedAt   time.Time
+	RevokedAt   *time.Time
+	ExpiresAt   *time.Time
+}
+
+type TrackingLinkExpiry struct {
+	DeliveryID string
+	ExpiresAt  time.Time
+}

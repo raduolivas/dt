@@ -642,8 +642,8 @@ func TestMiddlewareHookOrder(t *testing.T) {
 func TestRoutesTable(t *testing.T) {
 	t.Parallel()
 	rs := httpapi.Routes(httpapi.Deps{})
-	if len(rs) != 10 { // me.get plus the nine delivery and courier routes
-		t.Fatalf("routes = %d, want 10", len(rs))
+	if len(rs) != 11 { // me.get plus the ten delivery and courier routes
+		t.Fatalf("routes = %d, want 11", len(rs))
 	}
 	r := rs[0]
 	if r.Name != "me.get" || r.Method != http.MethodGet || r.Pattern != "/v1/me" || r.Scope != "" ||

@@ -145,6 +145,37 @@ func (q *Queries) DeleteIdempotencyRecordsForResource(ctx context.Context, arg D
 	return result.RowsAffected(), nil
 }
 
+const expireUnrevokedLinks = `-- name: ExpireUnrevokedLinks :many
+UPDATE tracking_links SET expires_at = $1
+WHERE delivery_id = $2 AND revoked_at IS NULL AND expires_at IS NULL
+RETURNING id
+`
+
+type ExpireUnrevokedLinksParams struct {
+	ExpiresAt  *time.Time
+	DeliveryID string
+}
+
+func (q *Queries) ExpireUnrevokedLinks(ctx context.Context, arg ExpireUnrevokedLinksParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, expireUnrevokedLinks, arg.ExpiresAt, arg.DeliveryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getKeyByLookup = `-- name: GetKeyByLookup :one
 SELECT id, tenant_id, environment, lookup, hash, scopes, allowed_ips, expires_at, revoked_at
 FROM api_keys WHERE lookup = $1
@@ -175,6 +206,77 @@ func (q *Queries) GetKeyByLookup(ctx context.Context, lookup string) (GetKeyByLo
 		&i.AllowedIps,
 		&i.ExpiresAt,
 		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const getLinkExpiry = `-- name: GetLinkExpiry :one
+SELECT expires_at FROM tracking_link_expiry WHERE delivery_id = $1
+`
+
+func (q *Queries) GetLinkExpiry(ctx context.Context, deliveryID string) (time.Time, error) {
+	row := q.db.QueryRow(ctx, getLinkExpiry, deliveryID)
+	var expires_at time.Time
+	err := row.Scan(&expires_at)
+	return expires_at, err
+}
+
+const getTrackingLink = `-- name: GetTrackingLink :one
+SELECT id, tenant_id, environment, delivery_id, created_at, revoked_at, expires_at
+FROM tracking_links WHERE id = $1
+`
+
+type GetTrackingLinkRow struct {
+	ID          string
+	TenantID    string
+	Environment string
+	DeliveryID  string
+	CreatedAt   time.Time
+	RevokedAt   *time.Time
+	ExpiresAt   *time.Time
+}
+
+func (q *Queries) GetTrackingLink(ctx context.Context, id string) (GetTrackingLinkRow, error) {
+	row := q.db.QueryRow(ctx, getTrackingLink, id)
+	var i GetTrackingLinkRow
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Environment,
+		&i.DeliveryID,
+		&i.CreatedAt,
+		&i.RevokedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const getTrackingLinkByHash = `-- name: GetTrackingLinkByHash :one
+SELECT id, tenant_id, environment, delivery_id, created_at, revoked_at, expires_at
+FROM tracking_links WHERE token_hash = $1
+`
+
+type GetTrackingLinkByHashRow struct {
+	ID          string
+	TenantID    string
+	Environment string
+	DeliveryID  string
+	CreatedAt   time.Time
+	RevokedAt   *time.Time
+	ExpiresAt   *time.Time
+}
+
+func (q *Queries) GetTrackingLinkByHash(ctx context.Context, tokenHash []byte) (GetTrackingLinkByHashRow, error) {
+	row := q.db.QueryRow(ctx, getTrackingLinkByHash, tokenHash)
+	var i GetTrackingLinkByHashRow
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Environment,
+		&i.DeliveryID,
+		&i.CreatedAt,
+		&i.RevokedAt,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -286,6 +388,91 @@ func (q *Queries) InsertKey(ctx context.Context, arg InsertKeyParams) error {
 	return err
 }
 
+const insertLinkExpiry = `-- name: InsertLinkExpiry :exec
+INSERT INTO tracking_link_expiry (delivery_id, expires_at) VALUES ($1, $2)
+ON CONFLICT (delivery_id) DO NOTHING
+`
+
+type InsertLinkExpiryParams struct {
+	DeliveryID string
+	ExpiresAt  time.Time
+}
+
+// The first final time wins.
+func (q *Queries) InsertLinkExpiry(ctx context.Context, arg InsertLinkExpiryParams) error {
+	_, err := q.db.Exec(ctx, insertLinkExpiry, arg.DeliveryID, arg.ExpiresAt)
+	return err
+}
+
+const insertTrackingLink = `-- name: InsertTrackingLink :exec
+INSERT INTO tracking_links (id, tenant_id, environment, delivery_id, token_hash, created_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+`
+
+type InsertTrackingLinkParams struct {
+	ID          string
+	TenantID    string
+	Environment string
+	DeliveryID  string
+	TokenHash   []byte
+	CreatedAt   time.Time
+	ExpiresAt   *time.Time
+}
+
+func (q *Queries) InsertTrackingLink(ctx context.Context, arg InsertTrackingLinkParams) error {
+	_, err := q.db.Exec(ctx, insertTrackingLink,
+		arg.ID,
+		arg.TenantID,
+		arg.Environment,
+		arg.DeliveryID,
+		arg.TokenHash,
+		arg.CreatedAt,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
+const linksRevokedSince = `-- name: LinksRevokedSince :many
+SELECT id FROM tracking_links
+WHERE delivery_id = $1 AND revoked_at >= $2
+ORDER BY revoked_at
+`
+
+type LinksRevokedSinceParams struct {
+	DeliveryID string
+	Since      *time.Time
+}
+
+func (q *Queries) LinksRevokedSince(ctx context.Context, arg LinksRevokedSinceParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, linksRevokedSince, arg.DeliveryID, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockDeliveryLinks = `-- name: LockDeliveryLinks :exec
+SELECT pg_advisory_xact_lock(hashtextextended('tracking_links:' || $1::text, 0))
+`
+
+// Serializes Replace and Expire of one delivery's links for the transaction.
+func (q *Queries) LockDeliveryLinks(ctx context.Context, deliveryID string) error {
+	_, err := q.db.Exec(ctx, lockDeliveryLinks, deliveryID)
+	return err
+}
+
 const lockIdempotencyRecord = `-- name: LockIdempotencyRecord :one
 SELECT request_hash, state, locked_until, response_status, response_headers, response_body, resource_id, expires_at
 FROM idempotency_records
@@ -376,6 +563,21 @@ func (q *Queries) RevokeKey(ctx context.Context, arg RevokeKeyParams) (int64, er
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const revokeUnrevokedLinks = `-- name: RevokeUnrevokedLinks :exec
+UPDATE tracking_links SET revoked_at = $1
+WHERE delivery_id = $2 AND revoked_at IS NULL
+`
+
+type RevokeUnrevokedLinksParams struct {
+	RevokedAt  *time.Time
+	DeliveryID string
+}
+
+func (q *Queries) RevokeUnrevokedLinks(ctx context.Context, arg RevokeUnrevokedLinksParams) error {
+	_, err := q.db.Exec(ctx, revokeUnrevokedLinks, arg.RevokedAt, arg.DeliveryID)
+	return err
 }
 
 const setKeyExpiry = `-- name: SetKeyExpiry :execrows

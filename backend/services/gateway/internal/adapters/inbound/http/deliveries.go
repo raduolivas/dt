@@ -29,6 +29,9 @@ type deliveriesAPI struct {
 	c      deliveriesv1connect.DeliveriesServiceClient
 	purger app.IdempotencyPurger // nil: no purge on erasure
 	log    *slog.Logger
+	// links issues tracking links (nil: none); trackingBase prefixes their url.
+	links        TrackingLinkIssuer
+	trackingBase string
 }
 
 // Coordinates use the generated api.LatLng (float64, format: double in the
@@ -197,7 +200,13 @@ func (a *deliveriesAPI) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	SetAuditTarget(r, res.GetDelivery().GetId())
-	writeJSON(w, http.StatusCreated, toDeliveryJSON(res.GetDelivery()))
+	out := struct {
+		deliveryJSON
+		Tracking *trackingLinkJSON `json:"tracking"`
+	}{deliveryJSON: toDeliveryJSON(res.GetDelivery())}
+	out.Tracking = a.issueLink(r, res.GetDelivery().GetId())
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusCreated, out)
 }
 
 func (a *deliveriesAPI) list(w http.ResponseWriter, r *http.Request) {
@@ -447,4 +456,8 @@ func (a *deliveriesAPI) reply(w http.ResponseWriter, r *http.Request, d *deliver
 		return
 	}
 	writeJSON(w, http.StatusOK, toDeliveryJSON(d))
+}
+
+func deliveriesGetRequest(sc *deliveriesv1.Scope, id string) *deliveriesv1.GetDeliveryRequest {
+	return &deliveriesv1.GetDeliveryRequest{Scope: sc, Id: id}
 }

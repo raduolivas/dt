@@ -72,6 +72,8 @@ services:
         condition: service_healthy
       deliveries:
         condition: service_started
+      tracking:
+        condition: service_started
     build:
       context: ../../backend
       args:
@@ -99,6 +101,17 @@ services:
       # "dev-only-not-a-secret-gateway-k0"; not shared with deliveries.
       DATA_KEYS: "gw1:ZGV2LW9ubHktbm90LWEtc2VjcmV0LWdhdGV3YXktazA=" # gitleaks:allow (dev-only placeholder)
       DATA_KEY_CURRENT: "gw1"
+      # Dev-only placeholder, never a real secret: the Ed25519 seed (id "vw1")
+      # that signs viewer tokens, base64 of "dev-only-not-a-secret-viewer-k00".
+      # The public half is served at /.well-known/jwks.json.
+      VIEWER_SIGNING_KEYS: "vw1:ZGV2LW9ubHktbm90LWEtc2VjcmV0LXZpZXdlci1rMDA=" # gitleaks:allow (dev-only placeholder)
+      VIEWER_SIGNING_KEY_CURRENT: "vw1"
+      # Tracking links are <base>/t/<token>; the hosted page arrives in M4.
+      TRACKING_URL_BASE: "http://localhost:8080"
+      # Tracking's internal RPC (mTLS port); the gateway reads viewer
+      # snapshots from it. delivery.status_changed arrives over NATS
+      # (consumer gateway-deliveries, waits for the DELIVERIES stream).
+      TRACKING_RPC_URL: "https://tracking:8085"
     ports:
       - "127.0.0.1:8080:8080"
 

@@ -23,6 +23,7 @@ import (
 	"github.com/raduolivas/dt/backend/services/gateway/api"
 	httpapi "github.com/raduolivas/dt/backend/services/gateway/internal/adapters/inbound/http"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
+	"github.com/raduolivas/dt/backend/services/gateway/internal/app/apptest"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/domain"
 )
 
@@ -449,7 +450,8 @@ func TestAuthorizationMatrix(t *testing.T) {
 				// test-only routes carry their own handlers.
 				fake := scopedFake{newFake()}
 				counted := rt
-				for _, pr := range httpapi.Routes(httpapi.Deps{Deliveries: fake}) {
+				links := &app.TrackingLinks{Store: apptest.NewMemLinks(), Revoker: &apptest.MemRevoker{}, Clock: fixedClock{}}
+				for _, pr := range httpapi.Routes(httpapi.Deps{Deliveries: fake, Links: links}) {
 					if pr.Name == rt.Name {
 						counted = pr
 					}
