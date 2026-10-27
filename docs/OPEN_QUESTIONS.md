@@ -1,7 +1,7 @@
 # DT: Open Questions
 
 > Standalone file for sharing with another AI or a person. It's self-contained, so it can be read without the other files.
-> **Last updated:** 2026-10-24 (dispatch-lite scheduled, see R26; pricing decided, see R25; product name decided, see R24; OQ16–OQ24 answered 2026-10-23, see R22; cloud provider chosen, see R23; OQ14 tech part and OQ15 answered 2026-10-20) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+> **Last updated:** 2026-10-27 (M3 close-out added OQ25-OQ27; dispatch-lite scheduled, see R26; pricing decided, see R25; product name decided, see R24; OQ16–OQ24 answered 2026-10-23, see R22; cloud provider chosen, see R23; OQ14 tech part and OQ15 answered 2026-10-20) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
 ## Context in 30 seconds
 
@@ -11,7 +11,11 @@
 
 ## Open
 
-*No open questions right now.*
+| # | Question | Why it matters |
+|---|---|---|
+| OQ25 | **Pilot partners on staging.** Who gets staging test keys, and what is promised? Staging runs on a night and weekend schedule (08:00-20:00 Mon-Fri), is redeployed daily, wipes NATS and Redis each morning, never runs retention, and holds simulated or test data only. | Decide before the first pilot. Recommendation: pilots use the sandbox on staging only for integration work, with no live data and no uptime promise. |
+| OQ26 | **Accept that staging deploys outside working hours only register task definitions?** The database and host are asleep, so migrations and the smoke test do not run; the next wake-up applies them. | The alternative is waking the stack on every off-hours merge (more cost). Recommendation: accept. |
+| OQ27 | **AWS Budgets currency: EUR or USD?** AWS Budgets may only accept USD for the account; the staging cost estimate is about USD 56 per month (about EUR 51-57 before VAT). | Decide at apply time; the bootstrap has a `budget_unit` variable. |
 
 ---
 

@@ -20,7 +20,7 @@ make doctor
 | `make dev` | Build the service images, start the local stack (Postgres + PostGIS, Redis, NATS JetStream and the five services) and wait until every `/readyz` answers 200 |
 | `make seed` | After `make dev`: create the tenant `Dev Tenant` and one test key, and print a `curl` line for `GET /v1/me` |
 | `make smoke` | After `make dev`: the M1, M2 and M3 end-to-end smoke tests (`scripts/smoke-m1.sh`, `scripts/smoke-m2.sh`, `scripts/smoke-m3.sh`, need `jq`); prints `SMOKE OK`, then `SMOKE M2 OK`, `SMOKE M3 OK` and `OK` |
-| `make latency` | After `make dev`: drive 20 couriers at 1 Hz with 5 viewers for 2 minutes and print the fix-to-viewer p50, p95 and p99; exits non-zero when p95 is 1000 ms or more |
+| `make latency` | After `make dev`: drive 20 couriers at 1 Hz with 5 viewers for 2 minutes and print the fix-to-viewer p50, p95 and p99; exits non-zero when p95 is 1000 ms or more. Samples where the snapshot beats the relay response count as 0, so the figure is a floor |
 | `make dtctl` | Build the dev CLI for the accounts API into `backend/bin/dtctl` |
 | `make down` | Stop the local stack and delete its volumes |
 | `make logs` | Follow the local stack logs |
@@ -30,11 +30,24 @@ make doctor
 | `make gen` | Regenerate code from the contracts (Protobuf → Go + Connect, SQL → Go via sqlc, OpenAPI → Go models + TypeScript) |
 | `make vuln` / `make audit-web` | Scan Go modules / web dependencies for known vulnerabilities |
 | `make web-dev` | Run the renderer prototype at http://localhost:5173 |
+| `make osrm-data` | Download and preprocess the Amsterdam routing data (`make dev` runs it) |
+| `make ci` | Every CI check locally: lint, tests, web build, audits, vulnerability scans, secret scan |
+| `make aws-bootstrap PHASE=a\|b` | Owner only, in CloudShell: create the AWS organization, guard rails and CI role ([`docs/runbooks/aws-account-setup.md`](docs/runbooks/aws-account-setup.md)) |
+| `make staging-up` / `staging-down` | Owner only: create or update, or destroy, the AWS staging stack ([`docs/runbooks/staging.md`](docs/runbooks/staging.md)) |
+| `make staging-wake` / `staging-sleep` | Owner only: start or stop the staging host and database outside the schedule |
 
 Local services listen on `127.0.0.1` only: gateway 8080, deliveries 8081, tracking 8082, webhooks 8083,
 accounts 8084, Postgres 5432, Redis 6379, NATS 4222 (monitoring 8222). Every service exposes `GET /livez`
 and `GET /readyz`. The public API is the gateway's `/v1`; accounts' internal RPC on 8084 is never routed
 publicly.
+
+## Status
+
+M0 to M2 are merged. **M3 (live tracking: tracking links, courier location relay, viewer streams, sandbox simulator,
+retention) is code complete on branch `m3-tracking`** and not merged yet. Its AWS staging stack
+(`infra/aws`, target `https://api.staging.deliveryontrack.io`) is written and validated but waits for the owner to
+apply it. Partner guides: [`docs/guides/`](docs/guides/). Runbooks: [`docs/runbooks/`](docs/runbooks/) (AWS account
+setup, staging, key rotation).
 
 ## Tenants and API keys in development
 
@@ -110,6 +123,7 @@ warning `migrations_with_runtime_role`. M1 adds:
 | `REDIS_URL` | gateway | rate limits (the limiter fails open if Redis is down) |
 | `NATS_URL` | accounts, gateway | JetStream for the `accounts.*` events |
 | `DATA_KEYS`, `DATA_KEY_CURRENT` | deliveries, gateway (M2) | `id:base64,...` of 32-byte AES keys and the id that seals new values; each service has its own keys. It refuses to start without them |
+| `VIEWER_SIGNING_KEYS`, `VIEWER_SIGNING_KEY_CURRENT` | gateway (M3) | `kid:base64(32-byte Ed25519 seed),...` and the `kid` that signs viewer tokens; every listed key is published at `/.well-known/jwks.json`. Rotation: [`data-key-rotation.md`](docs/runbooks/data-key-rotation.md) |
 
 The values in `infra/compose/compose.yaml` are dev-only placeholders; never reuse them anywhere else.
 
@@ -157,6 +171,7 @@ to watch the snapshot update live.
 - [`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md): decisions and current state
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): architecture draft
 - [`docs/guides/`](docs/guides/): partner guides: [tracking links](docs/guides/tracking-links.md), [courier locations](docs/guides/courier-locations.md), [partner tracking data](docs/guides/partner-tracking-data.md), [sandbox simulator](docs/guides/sandbox-simulator.md)
+- [`docs/runbooks/`](docs/runbooks/): [AWS account setup](docs/runbooks/aws-account-setup.md), [staging](docs/runbooks/staging.md), [key rotation](docs/runbooks/data-key-rotation.md) (data keys and viewer signing keys)
 - [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md): questions waiting for an answer
 - [`docs/superpowers/specs/`](docs/superpowers/specs/): the MVP spec; [`docs/superpowers/plans/`](docs/superpowers/plans/): milestone plans
 
