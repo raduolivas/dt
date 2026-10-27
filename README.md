@@ -31,15 +31,16 @@ make doctor
 | `make vuln` / `make audit-web` | Scan Go modules / web dependencies for known vulnerabilities |
 | `make web-dev` | Run the renderer prototype at http://localhost:5173 |
 | `make osrm-data` | Download and preprocess the Amsterdam routing data (`make dev` runs it) |
-| `make ci` | Every CI check locally: lint, tests, web build, audits, vulnerability scans, secret scan |
+| `make ci` | Every CI check locally: lint, tests, web build, audits, vulnerability scans, secret scan. It does **not** run the `iac` CI job (`tofu fmt`, `init`/`validate`, `tofu test` and the trivy scan of `infra/aws`); run those by hand when you touch `infra/` (the job must be among the required checks of `main`) |
 | `make aws-bootstrap PHASE=a\|b` | Owner only, in CloudShell: create the AWS organization, guard rails and CI role ([`docs/runbooks/aws-account-setup.md`](docs/runbooks/aws-account-setup.md)) |
 | `make staging-up` / `staging-down` | Owner only: create or update, or destroy, the AWS staging stack ([`docs/runbooks/staging.md`](docs/runbooks/staging.md)) |
 | `make staging-wake` / `staging-sleep` | Owner only: start or stop the staging host and database outside the schedule |
 
 Local services listen on `127.0.0.1` only: gateway 8080, deliveries 8081, tracking 8082, webhooks 8083,
-accounts 8084, Postgres 5432, Redis 6379, NATS 4222 (monitoring 8222). Every service exposes `GET /livez`
-and `GET /readyz`. The public API is the gateway's `/v1`; accounts' internal RPC on 8084 is never routed
-publicly.
+accounts 8084, tracking's internal RPC 8085, Postgres 5432, Redis 6379, NATS 4222 (monitoring 8222), OSRM car
+5000 and bike 5001. Every service exposes `GET /livez` and `GET /readyz`. The public API is the gateway's `/v1`
+(tracking's 8082 serves the viewer endpoints behind the same load balancer); the internal RPC listeners (accounts
+8084, deliveries 8081, tracking 8085) speak mTLS and are never routed publicly.
 
 ## Status
 
@@ -118,12 +119,20 @@ warning `migrations_with_runtime_role`. M1 adds:
 | Variable | Service | Rule |
 |---|---|---|
 | `APIKEY_PEPPER` | accounts, gateway | base64, at least 32 decoded bytes, the **same** value in both. HMAC key for API key hashes; the service refuses to start without it |
-| `INTERNAL_RPC_TOKEN` | accounts | at least 32 bytes; callers send `Authorization: Bearer <token>` (mTLS replaces it in M3) |
+| `INTERNAL_RPC_TOKEN` | accounts, deliveries, tracking (servers); gateway, tracking, `dtctl` (callers, same value) | at least 32 bytes; callers send `Authorization: Bearer <token>` (on top of mTLS since M3) |
 | `TRUSTED_PROXIES` | gateway | comma-separated CIDRs of proxies whose `X-Forwarded-For` hops count; empty means the TCP peer is the client |
 | `REDIS_URL` | gateway | rate limits (the limiter fails open if Redis is down) |
 | `NATS_URL` | accounts, gateway | JetStream for the `accounts.*` events |
 | `DATA_KEYS`, `DATA_KEY_CURRENT` | deliveries, gateway (M2) | `id:base64,...` of 32-byte AES keys and the id that seals new values; each service has its own keys. It refuses to start without them |
 | `VIEWER_SIGNING_KEYS`, `VIEWER_SIGNING_KEY_CURRENT` | gateway (M3) | `kid:base64(32-byte Ed25519 seed),...` and the `kid` that signs viewer tokens; every listed key is published at `/.well-known/jwks.json`. Rotation: [`data-key-rotation.md`](docs/runbooks/data-key-rotation.md) |
+| `TRACKING_RPC_URL` | gateway (M3) | `https://` URL of tracking's internal mTLS RPC port (`https://tracking:8085` locally); without it tracking routes answer `tracking_unavailable` |
+| `TRACKING_URL_BASE` | gateway (M3) | absolute http(s) base of the viewer links the gateway returns (no query, fragment or credentials) |
+| `DELIVERIES_RPC_URL` | gateway, tracking (M3 for tracking) | `https://` URL of deliveries' internal RPC (`https://deliveries:8081`) |
+| `JWKS_URL` | tracking (M3) | the gateway's `/.well-known/jwks.json`, used to verify viewer tokens |
+| `OSRM_CAR_URL`, `OSRM_BIKE_URL` | tracking (M3) | OSRM routing services (`http://osrm-car:5000`, `http://osrm-bike:5000` in Compose); if unset, routes and ETAs are off |
+| `INTERNAL_RPC_PORT` | tracking (M3) | port of tracking's internal mTLS RPC listener (8085); `PORT` serves health and the public viewer endpoints |
+| `INTERNAL_RPC_TLS_CERT`, `INTERNAL_RPC_TLS_KEY`, `INTERNAL_RPC_TLS_CA` | gateway, deliveries, tracking, accounts (M3) | mTLS for every internal RPC: the service's certificate and key and the CA (all three or none; the RPC URLs must then be `https`). `make dev` creates dev certificates with `scripts/dev-certs.sh` |
+| `MIGRATIONS` | every service (M3) | `run` (default: migrate, then serve), `only` (migrate and exit: the one-off deploy tasks) or `skip` (serve without touching the schema; needs no `MIGRATIONS_DATABASE_URL`) |
 
 The values in `infra/compose/compose.yaml` are dev-only placeholders; never reuse them anywhere else.
 

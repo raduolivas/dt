@@ -71,24 +71,31 @@ The gateway signs viewer JWTs (Ed25519, EdDSA) for tracking links and publishes 
 
 Only the gateway holds these variables. A viewer token lives **15 minutes** (`viewerjwt.TTL`) plus **30 s** of
 clock leeway, and verifiers cache the JWKS, so a retired key must stay published long enough for every token it
-signed to expire. Rotating never signs anyone out: a viewer refreshes through `/tracking/session/refresh`,
-which signs with the current key.
+signed to expire. Tracking fetches the JWKS lazily: keys stay cached for **5 minutes** (`viewerjwt.CacheTTL`), and
+a token with an **unknown `kid`** triggers a refetch at most every **10 s** (`viewerjwt.RefetchInterval`). If a fetch
+fails, tracking keeps using the last good keys. Rotating does not break a viewer session while its tokens are valid;
+once a token's key is retired, a refresh with it fails at the gateway (its verifier is static), and the client must
+**re-exchange the tracking-link token** for a new session.
 
 Rotate `vw1` to `vw2`:
 
 1. **Publish the new key without signing with it.** Set `VIEWER_SIGNING_KEYS=vw1:<old>,vw2:<new>` and keep
    `VIEWER_SIGNING_KEY_CURRENT=vw1`. Roll out to **every gateway replica** and wait for `/readyz` 200.
-   Tracking fetches the JWKS lazily (at least 1 s apart), so wait a few minutes before step 2 so it knows `vw2`.
-   If you skip this, tracking rejects tokens signed with a `kid` it has not seen yet.
+   Every replica must now serve `vw2` at `/.well-known/jwks.json`. Then wait **more than 10 s** (an unknown-`kid`
+   refetch then finds `vw2`), or **5 minutes** (the cache expires) if you do not want to depend on that refetch,
+   before step 2. If you skip this, tracking rejects tokens signed with a `kid` it has not seen yet.
 2. **Switch signing.** Set `VIEWER_SIGNING_KEY_CURRENT=vw2` (ring unchanged) and roll out.
-3. **Retire the old key** after **at least 15 minutes + 30 s leeway (use 20 minutes, or 1 h for a margin)** from the last replica finishing step 2, plus the JWKS cache time of tracking. Then set
-   `VIEWER_SIGNING_KEYS=vw2:<new>` and roll out. Tokens still signed by `vw1` are rejected after that, and the
-   viewer silently refreshes with the session token.
+3. **Retire the old key** after **at least 15 minutes + 30 s leeway (use 20 minutes, or 1 h for a margin)** from the last replica finishing step 2, plus the JWKS cache time of tracking (5 minutes). Then set
+   `VIEWER_SIGNING_KEYS=vw2:<new>` and roll out. Tokens still signed by `vw1` are rejected after that; a viewer
+   whose token was signed with `vw1` must re-exchange the tracking-link token (a refresh with the old token fails).
 4. **Roll back** by putting the previous values back; keep `vw2` in the ring if any replica already signed with it.
 
-Compromised signing key: skip the wait. Switch `CURRENT`, drop the old key at once and roll out; every viewer
-re-establishes a session within one refresh. To cut off one leaked link instead, rotate or revoke the link
-(revocation is immediate and does not depend on keys).
+Compromised signing key: skip the wait. Switch `CURRENT`, drop the old key at once and roll out to every gateway
+replica, then **restart tracking**. Without the restart tracking keeps accepting tokens signed with the old key for up
+to 5 minutes (its JWKS cache, and last good keys on a failed fetch), and a stream opened with a forged token stays
+open until its link expires (open streams outlive the JWT, `M3-R17`). The restart clears the cache and drops every
+stream; viewers reconnect and must re-exchange their link token. To cut off one leaked link instead, rotate or
+revoke the link (revocation is immediate and does not depend on keys).
 
 ## Staging (AWS Secrets Manager)
 

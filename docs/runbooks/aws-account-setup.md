@@ -62,6 +62,7 @@ Root is used here once, because no Identity Center user exists yet. Root cannot 
    vi infra/aws/bootstrap/terraform.tfvars   # the same values as in phase A
    make aws-bootstrap PHASE=b
    ```
+   **Never run `PHASE=a` again after phase B:** phase A leaves out the `dt-staging` OIDC provider and deploy role, so its plan would destroy them. Later bootstrap changes are applied with phase B.
    The script refuses to run phase B as root. It reads the state from the state bucket and adds the GitHub OIDC provider and `dt-deploy-staging` role in `dt-staging` (through `OrganizationAccountAccessRole`).
 5. Record the outputs (account ids are not secret): `tofu -chdir=infra/aws/bootstrap output`.
 

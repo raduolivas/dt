@@ -101,7 +101,7 @@ func (d *Delivery) reportPickup(r Report) (Outcome, []Event, error) {
 	return OutcomeApplied, append([]Event{confirmed}, evs...), err
 }
 
-// conflicts implements the conflict rule (decision C4, rulings R1/R5): the
+// conflicts implements the conflict rule (decision C4, rulings M2-R1/M2-R5): the
 // latest applied state change L was made by the other side within
 // ConflictWindow, r does not report an earlier state than L reached, and
 // r's target is not reachable from the current state but was reachable

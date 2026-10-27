@@ -14,7 +14,7 @@
 | # | Question | Why it matters |
 |---|---|---|
 | OQ25 | **Pilot partners on staging.** Who gets staging test keys, and what is promised? Staging runs on a night and weekend schedule (08:00-20:00 Mon-Fri), is redeployed daily, wipes NATS and Redis each morning, never runs retention, and holds simulated or test data only. | Decide before the first pilot. Recommendation: pilots use the sandbox on staging only for integration work, with no live data and no uptime promise. |
-| OQ26 | **Accept that staging deploys outside working hours only register task definitions?** The database and host are asleep, so migrations and the smoke test do not run; the next wake-up applies them. | The alternative is waking the stack on every off-hours merge (more cost). Recommendation: accept. |
+| OQ26 | **Accept that staging deploys outside working hours only register task definitions?** The database and host are asleep, so migrations, rollout and the smoke test do not run; the services keep their old task revisions until the deploy workflow is re-run in working hours (the workflow warns about it). | The alternative is waking the stack on every off-hours merge (more cost). Recommendation: accept. |
 | OQ27 | **AWS Budgets currency: EUR or USD?** AWS Budgets may only accept USD for the account; the staging cost estimate is about USD 56 per month (about EUR 51-57 before VAT). | Decide at apply time; the bootstrap has a `budget_unit` variable. |
 
 ---

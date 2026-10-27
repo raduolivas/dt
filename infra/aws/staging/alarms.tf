@@ -77,3 +77,35 @@ resource "aws_cloudwatch_metric_alarm" "rds_storage" {
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
 }
+
+# Consumer lag: the gateway logs one JSON line per high stretch (slog message
+# key "msg", value "consumer_lagging"; backend/.../consumer/lag.go). The OTel
+# gauge exports nothing until a metrics exporter exists, so the log line is the
+# signal (M3-R8).
+resource "aws_cloudwatch_log_metric_filter" "consumer_lagging" {
+  name           = "dt-staging-consumer-lagging"
+  log_group_name = aws_cloudwatch_log_group.staging.name
+  pattern        = "{ $.msg = \"consumer_lagging\" }"
+
+  metric_transformation {
+    namespace     = "DT/Staging"
+    name          = "ConsumerLagging"
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "consumer_lagging" {
+  alarm_name          = "dt-staging-consumer-lagging"
+  alarm_description   = "A gateway JetStream consumer has had a high backlog for a while (log line consumer_lagging)"
+  namespace           = "DT/Staging"
+  metric_name         = aws_cloudwatch_log_metric_filter.consumer_lagging.metric_transformation[0].name
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+}

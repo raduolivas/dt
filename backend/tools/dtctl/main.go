@@ -44,6 +44,9 @@ const usage = `usage:
   dtctl key revoke    --tenant ID --key ID
   dtctl key list      --tenant ID --env test|live
 
+note: "tenant settings" replaces the settings whole: a flag you omit returns to its default (omitting --prep-minutes
+clears the preparation time), so pass every setting you want to keep.
+
 env: DT_ACCOUNTS_URL (default http://127.0.0.1:8084), DT_INTERNAL_RPC_TOKEN (required),
      DT_INTERNAL_RPC_TLS_CERT, DT_INTERNAL_RPC_TLS_KEY, DT_INTERNAL_RPC_TLS_CA (mTLS; use an https URL)
 `

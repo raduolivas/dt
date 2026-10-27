@@ -12,7 +12,7 @@ import (
 )
 
 // activeKey is dt:active, the sorted set of non-final deliveries with a
-// visible courier (ruling R3). A member is "<tenant>|<env>|<del_id>", so the
+// visible courier (ruling M3-R3). A member is "<tenant>|<env>|<del_id>", so the
 // sweeper applies each in its own scope; the score is the unix milliseconds
 // the signal age counts from.
 const activeSetKey = "dt:active"

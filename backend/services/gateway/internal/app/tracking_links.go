@@ -200,7 +200,7 @@ func (t *TrackingLinks) ExpireOnFinal(ctx context.Context, deliveryID string, fi
 }
 
 // LinkRetentionMonths is how long a tracking link is kept after its
-// delivery became final or it was revoked (M3 design §4.2, ruling R25).
+// delivery became final or it was revoked (M3 design §4.2, ruling M3-R25).
 const LinkRetentionMonths = 13
 
 // RunRetention is the nightly retention job for the night of now: it

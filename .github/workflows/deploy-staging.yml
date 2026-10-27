@@ -25,10 +25,13 @@ env:
 
 jobs:
   deploy:
+    # Skipped until the owner has applied staging and set the variable
+    # AWS_DEPLOY_ROLE_ARN (docs/runbooks/staging.md, step 3).
     if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push')
+      vars.AWS_DEPLOY_ROLE_ARN != '' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push'))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     # The OIDC trust of dt-deploy-staging accepts only this environment.
