@@ -20,6 +20,10 @@ const (
 	// RefetchInterval is the least time between two fetches, so a stream of
 	// tokens with made-up key ids cannot hammer the JWKS endpoint.
 	RefetchInterval = 10 * time.Second
+	// CancelledRefetchSpacing is the least time between fetches when the
+	// last one was abandoned by its caller: the endpoint may have done the
+	// work, so a caller that cancels cannot make fetches back to back.
+	CancelledRefetchSpacing = time.Second
 	// DefaultFetchTimeout bounds a JWKS fetch when NewVerifier gets no client.
 	DefaultFetchTimeout = 3 * time.Second
 	// maxJWKSBytes bounds the JWKS document.
@@ -70,7 +74,7 @@ func (v *Verifier) SetClock(now func() time.Time) {
 }
 
 // Verify checks token at now and returns its claims. It accepts only EdDSA
-// tokens signed by a known key, with aud "viewer", iss "dt-gateway", an exp
+// tokens signed by a known key, with aud exactly "viewer", iss "dt-gateway", an exp
 // no more than 30 s in the past and every claim present. Any refusal is
 // ErrInvalid; ErrUnavailable means the keys could not be loaded.
 func (v *Verifier) Verify(ctx context.Context, token string, now time.Time) (Claims, error) {
@@ -94,6 +98,11 @@ func (v *Verifier) Verify(ctx context.Context, token string, now time.Time) (Cla
 			return Claims{}, ErrUnavailable
 		}
 		return Claims{}, fmt.Errorf("%w: %w", ErrInvalid, err)
+	}
+	// The audience must be exactly "viewer" (a string or a one-element
+	// array): a token also meant for another audience is refused.
+	if len(tc.Audience) != 1 || tc.Audience[0] != Audience {
+		return Claims{}, fmt.Errorf("%w: audience is not exactly %q", ErrInvalid, Audience)
 	}
 	c := Claims{DeliveryID: tc.Subject, TenantID: tc.Tenant, Env: tc.Env, LinkID: tc.Link}
 	if err := c.check(); err != nil {
@@ -133,8 +142,9 @@ func (v *Verifier) key(ctx context.Context, kid string) (ed25519.PublicKey, erro
 		case err == nil:
 			v.keys, v.fetchedAt = keys, v.clock()
 		case ctx.Err() != nil && v.attemptedAt.Equal(now):
-			// The caller gave up, not the endpoint: free the refetch slot.
-			v.attemptedAt = time.Time{}
+			// The caller gave up, not the endpoint: free the refetch slot
+			// after CancelledRefetchSpacing rather than the full interval.
+			v.attemptedAt = now.Add(CancelledRefetchSpacing - RefetchInterval)
 		}
 		v.mu.Unlock()
 	}

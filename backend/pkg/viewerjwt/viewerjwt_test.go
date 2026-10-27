@@ -395,14 +395,131 @@ func TestCancelledFetchKeepsRefetchSlot(t *testing.T) {
 	s := signer(t, "v1:"+seed(t), "v1")
 	j := newJWKS(t, s)
 	v := viewerjwt.NewVerifier(j.srv.URL, j.srv.Client())
+	clk := now
+	v.SetClock(func() time.Time { return clk })
 	tok, _, _ := s.Sign(claims, now)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := v.Verify(ctx, tok, now); err == nil {
 		t.Fatal("verified with a cancelled context and no keys")
 	}
-	// The cancelled attempt did not use up the 10 s slot.
+	// The cancelled attempt did not use up the 10 s slot: 1 s later a fetch
+	// is allowed again.
+	clk = clk.Add(viewerjwt.CancelledRefetchSpacing)
 	if _, err := v.Verify(context.Background(), tok, now); err != nil {
 		t.Fatalf("after a cancelled fetch: %v", err)
+	}
+}
+
+func TestAudienceMustBeExactlyViewer(t *testing.T) {
+	t.Parallel()
+	sd := seed(t)
+	s := signer(t, "v1:"+sd, "v1")
+	rawSeed, _ := base64.StdEncoding.DecodeString(sd)
+	key := ed25519.NewKeyFromSeed(rawSeed)
+	v := s.Verifier()
+	tok := func(aud any) string {
+		c := jwt.MapClaims{"iss": viewerjwt.Issuer, "sub": claims.DeliveryID, "tid": claims.TenantID,
+			"env": claims.Env, "lid": claims.LinkID, "iat": now.Unix(), "exp": now.Add(time.Minute).Unix()}
+		if aud != nil {
+			c["aud"] = aud
+		}
+		return forge(t, key, "v1", c)
+	}
+	for name, aud := range map[string]any{
+		"string": "viewer", "one-element array": []string{"viewer"},
+	} {
+		if _, err := v.Verify(context.Background(), tok(aud), now); err != nil {
+			t.Errorf("aud %s refused: %v", name, err)
+		}
+	}
+	for name, aud := range map[string]any{
+		"missing":            nil,
+		"empty string":       "",
+		"other string":       "partner",
+		"case":               "Viewer",
+		"empty array":        []string{},
+		"extra audience":     []string{"viewer", "partner"},
+		"extra audience 2":   []string{"partner", "viewer"},
+		"duplicated":         []string{"viewer", "viewer"},
+		"other array":        []string{"partner"},
+		"array with padding": []string{" viewer"},
+	} {
+		if _, err := v.Verify(context.Background(), tok(aud), now); !errors.Is(err, viewerjwt.ErrInvalid) {
+			t.Errorf("aud %s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+}
+
+func TestRefetchSpacingSurvivesCancel(t *testing.T) {
+	t.Parallel()
+	s := signer(t, "v1:"+seed(t), "v1")
+	var hits atomic.Int32
+	var block atomic.Bool
+	block.Store(true)
+	arrived := make(chan struct{}, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		arrived <- struct{}{}
+		if block.Load() {
+			<-r.Context().Done()
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(s.JWKS())
+	}))
+	t.Cleanup(srv.Close)
+	v := viewerjwt.NewVerifier(srv.URL, srv.Client())
+	var mu sync.Mutex
+	clk := now
+	v.SetClock(func() time.Time { mu.Lock(); defer mu.Unlock(); return clk })
+	tok, _, _ := s.Sign(claims, now)
+
+	// The caller gives up while the fetch is at the endpoint.
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { <-arrived; cancel() }()
+	if _, err := v.Verify(ctx, tok, now); err == nil {
+		t.Fatal("verified with a cancelled fetch and no keys")
+	}
+	block.Store(false)
+
+	// Right away: no new fetch, so cancelling cannot turn into a stream of fetches.
+	for range 5 {
+		if _, err := v.Verify(context.Background(), tok, now); !errors.Is(err, viewerjwt.ErrUnavailable) {
+			t.Fatalf("within 1 s of a cancelled fetch: err = %v, want ErrUnavailable", err)
+		}
+	}
+	if n := hits.Load(); n != 1 {
+		t.Fatalf("fetches within 1 s = %d, want 1", n)
+	}
+	// One second later the slot is free again (not the full 10 s).
+	mu.Lock()
+	clk = clk.Add(time.Second)
+	mu.Unlock()
+	if _, err := v.Verify(context.Background(), tok, now); err != nil {
+		t.Fatalf("1 s after a cancelled fetch: %v", err)
+	}
+	if n := hits.Load(); n != 2 {
+		t.Fatalf("fetches = %d, want 2", n)
+	}
+}
+
+func TestExpiryPayloadRoundTrip(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 10, 26, 12, 30, 0, 0, time.UTC)
+	id, got, err := viewerjwt.DecodeExpiry(viewerjwt.EncodeExpiry(claims.LinkID, at))
+	if err != nil || id != claims.LinkID || !got.Equal(at) {
+		t.Fatalf("round trip = %q %v %v", id, got, err)
+	}
+	for _, bad := range []string{"", "tl_1", "tl_1 x", " 123", "tl_1 12 3"} {
+		if _, _, err := viewerjwt.DecodeExpiry(bad); err == nil {
+			t.Errorf("DecodeExpiry(%q) accepted", bad)
+		}
+	}
+	if d := viewerjwt.ExpiryKeyTTL(at, at.Add(-time.Minute)); d != time.Minute+viewerjwt.RevokedTTL {
+		t.Fatalf("ttl = %v", d)
+	}
+	if d := viewerjwt.ExpiryKeyTTL(at, at.Add(time.Hour)); d != viewerjwt.RevokedTTL {
+		t.Fatalf("ttl past expiry = %v", d)
 	}
 }
