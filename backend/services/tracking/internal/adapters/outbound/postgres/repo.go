@@ -120,10 +120,16 @@ func (r *Repo) CourierActiveDeliveries(ctx context.Context, s app.Scope, courier
 	return ids, err
 }
 
-// ProofPoints returns the delivery's proof points in time order.
+// ProofPoints returns the delivery's proof points in time order, or
+// app.ErrNotFound when the delivery is not s's.
 func (r *Repo) ProofPoints(ctx context.Context, s app.Scope, id string) ([]app.ProofPoint, error) {
 	var out []app.ProofPoint
 	err := r.inTenant(ctx, s, func(q *db.Queries) error {
+		if _, err := q.DeliveryErasure(ctx, id); errors.Is(err, pgx.ErrNoRows) {
+			return app.ErrNotFound
+		} else if err != nil {
+			return fmt.Errorf("delivery: %w", err)
+		}
 		rows, err := q.ListProofPoints(ctx, id)
 		if err != nil {
 			return fmt.Errorf("list proof points: %w", err)
@@ -137,6 +143,59 @@ func (r *Repo) ProofPoints(ctx context.Context, s app.Scope, id string) ([]app.P
 				}
 			}
 			out = append(out, p)
+		}
+		return nil
+	})
+	return out, err
+}
+
+var _ app.PartnerReads = (*Repo)(nil)
+
+// Trail returns up to limit+1 of the delivery's fixes after the cursor, or
+// app.ErrNotFound when the delivery is not s's. The raw fixes are not
+// available once the delivery's personal data was erased or a simplified
+// route replaced them (the retention job writes simplified_routes.points as
+// [[lat, lng], ...]); the simplified route is then returned instead.
+func (r *Repo) Trail(ctx context.Context, s app.Scope, id string, after app.TrailEntry, limit int) (app.TrailRead, error) {
+	var out app.TrailRead
+	err := r.inTenant(ctx, s, func(q *db.Queries) error {
+		erased, err := q.DeliveryErasure(ctx, id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return app.ErrNotFound
+		} else if err != nil {
+			return fmt.Errorf("delivery: %w", err)
+		}
+		raw, err := q.SimplifiedRoute(ctx, id)
+		hasRoute := err == nil
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("simplified route: %w", err)
+		}
+		if hasRoute {
+			var pairs [][2]float64
+			if err := json.Unmarshal(raw, &pairs); err != nil {
+				return fmt.Errorf("simplified route: %w", err)
+			}
+			for _, p := range pairs {
+				out.Simplified = append(out.Simplified, domain.LatLng{Lat: p[0], Lng: p[1]})
+			}
+		}
+		if hasRoute || erased != nil {
+			return nil
+		}
+		out.RawAvailable = true
+		from := after.Fix.T
+		if from.IsZero() {
+			from = time.Unix(0, 0).UTC()
+		}
+		rows, err := q.TrailPage(ctx, db.TrailPageParams{DeliveryID: id, AfterT: from, AfterID: after.ID,
+			PageSize: int32(limit + 1)}) //nolint:gosec // limit is at most 1000
+		if err != nil {
+			return fmt.Errorf("trail page: %w", err)
+		}
+		for _, f := range rows {
+			out.Entries = append(out.Entries, app.TrailEntry{ID: f.ID, Fix: domain.Fix{T: f.T,
+				Pos: domain.LatLng{Lat: f.Lat, Lng: f.Lng}, AccuracyM: f.AccuracyM,
+				SpeedMps: f.SpeedMps, HeadingDeg: f.HeadingDeg, Source: f.Source}})
 		}
 		return nil
 	})

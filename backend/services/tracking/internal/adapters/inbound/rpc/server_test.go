@@ -41,6 +41,9 @@ const (
 	// stream) but is assigned to delB.
 	courierB = "cou_01jrpc0000000000000000000b"
 	delB     = "del_01jrpc0000000000000000000b"
+	// delD is a Direct delivery, still confirmed, with courierA assigned: the
+	// customer's snapshot hides the courier, the partner's view does not.
+	delD = "del_01jrpc0000000000000000000d"
 )
 
 type clock struct{}
@@ -79,7 +82,7 @@ func serve(t *testing.T) (trackingv1connect.TrackingServiceClient, *pgxpool.Pool
 	states := redis.NewStates(rdb, repo.CourierActiveDeliveries)
 	log := slog.New(slog.DiscardHandler)
 	svc := &app.Service{States: states, Reads: repo, Trail: postgres.NewTrailWriter(pool, log),
-		Pub: redis.NewPublisher(rdb), Events: repo, Sampler: states, Clock: clock{}, Log: log}
+		Partner: repo, Pub: redis.NewPublisher(rdb), Events: repo, Sampler: states, Clock: clock{}, Log: log}
 	mux := http.NewServeMux()
 	if err := rpc.Mount(mux, svc, testToken, log); err != nil {
 		t.Fatal(err)
@@ -111,7 +114,15 @@ func serve(t *testing.T) (trackingv1connect.TrackingServiceClient, *pgxpool.Pool
 			Dropoff: domain.LatLng{Lat: 52.37, Lng: 4.89}, CreatedAt: now}); err != nil {
 			return err
 		}
-		return svc.OnCourierAssigned(ctx, p, sc, 2, delB, courierB, now)
+		if err := svc.OnCourierAssigned(ctx, p, sc, 2, delB, courierB, now); err != nil {
+			return err
+		}
+		if err := svc.OnDeliveryCreated(ctx, p, sc, 1, app.DeliveryCreated{ID: delD, Model: domain.ModelDirect,
+			Status: domain.StatusConfirmed, Pickup: domain.LatLng{Lat: 52.36, Lng: 4.9}, PickupName: "Hub",
+			Dropoff: domain.LatLng{Lat: 52.37, Lng: 4.89}, CreatedAt: now}); err != nil {
+			return err
+		}
+		return svc.OnCourierAssigned(ctx, p, sc, 2, delD, courierA, now)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -178,9 +189,9 @@ func TestIngestRPCValidates(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
-	// Other RPCs are not implemented yet.
-	if _, err := c.GetPartnerView(ctx, &trackingv1.GetPartnerViewRequest{}); connect.CodeOf(err) != connect.CodeUnimplemented {
-		t.Fatalf("GetPartnerView: %v", err)
+	// Simulate is not implemented yet.
+	if _, err := c.Simulate(ctx, &trackingv1.SimulateRequest{}); connect.CodeOf(err) != connect.CodeUnimplemented {
+		t.Fatalf("Simulate: %v", err)
 	}
 }
 

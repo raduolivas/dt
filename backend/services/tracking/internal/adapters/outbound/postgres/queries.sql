@@ -84,5 +84,21 @@ ON CONFLICT DO NOTHING;
 SELECT status, at, actor, lat, lng, position_at, accuracy_m
 FROM proof_points WHERE delivery_id = $1 ORDER BY at, status;
 
+-- name: DeliveryErasure :one
+-- The delivery's erased_at; no row when the delivery is not the scope's.
+SELECT erased_at FROM deliveries WHERE id = $1;
+
+-- name: SimplifiedRoute :one
+-- points is [[lat, lng], ...].
+SELECT points FROM simplified_routes WHERE delivery_id = $1;
+
+-- name: TrailPage :many
+-- Fixes strictly after (after_t, after_id) in (t, id) order. t >= after_t is
+-- redundant with the row comparison and lets Postgres prune day partitions.
+SELECT id, t, lat, lng, accuracy_m, speed_mps, heading_deg, source
+FROM trail_fixes
+WHERE delivery_id = @delivery_id AND t >= @after_t AND (t, id) > (@after_t::timestamptz, @after_id::bigint)
+ORDER BY t, id LIMIT @page_size;
+
 -- name: EnsureTrailPartition :exec
 SELECT ensure_trail_partition(@day::date);

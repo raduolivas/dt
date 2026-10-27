@@ -121,7 +121,7 @@ func run(ctx context.Context) error {
 			states := redis.NewStates(d.Redis, repo.CourierActiveDeliveries)
 			trail := postgres.NewTrailWriter(d.DB, d.Log)
 			svc := &app.Service{
-				States: states, Reads: repo, Trail: trail, Pub: redis.NewPublisher(d.Redis),
+				States: states, Reads: repo, Partner: repo, Trail: trail, Pub: redis.NewPublisher(d.Redis),
 				Events: repo, Sampler: states, Clock: systemClock{}, Log: d.Log,
 			}
 			// Without OSRM URLs no routes are built (and the ETA stays

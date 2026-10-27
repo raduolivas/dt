@@ -1,7 +1,7 @@
 // Package rpc serves the internal tracking Connect API
 // (dt.tracking.v1.TrackingService). Every RPC needs the internal bearer
-// token; the API is never routed publicly. IngestLocations and GetSnapshot
-// are implemented so far; the others answer Unimplemented.
+// token; the API is never routed publicly. Simulate still answers
+// Unimplemented.
 package rpc
 
 import (
@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/connecthttp"
@@ -148,10 +150,131 @@ func (s *Server) GetSnapshot(ctx context.Context, req *trackingv1.GetSnapshotReq
 	return nil, s.fail(ctx, "GetSnapshot", err)
 }
 
-// fail maps a use-case error: not found, a cancelled or expired call, or
-// (logged) tracking_unavailable.
+// GetPartnerView returns the partner's live view: the delivery state without
+// the visibility filter. A delivery unknown in the scope is NotFound.
+func (s *Server) GetPartnerView(ctx context.Context, req *trackingv1.GetPartnerViewRequest) (*trackingv1.PartnerView, error) {
+	sc, err := toScope(ctx, req.GetScope())
+	if err != nil {
+		return nil, err
+	}
+	if !ids.Valid(ids.Delivery, req.GetDeliveryId()) {
+		return nil, invalid(ctx, "delivery_id must be a del_ id")
+	}
+	v, err := s.svc.PartnerView(ctx, sc, req.GetDeliveryId())
+	if err != nil {
+		return nil, s.fail(ctx, "GetPartnerView", err)
+	}
+	return partnerViewProto(v), nil
+}
+
+// ListTrail returns a page of the delivery's fixes, oldest first.
+func (s *Server) ListTrail(ctx context.Context, req *trackingv1.ListTrailRequest) (*trackingv1.TrailPage, error) {
+	sc, err := toScope(ctx, req.GetScope())
+	if err != nil {
+		return nil, err
+	}
+	if !ids.Valid(ids.Delivery, req.GetDeliveryId()) {
+		return nil, invalid(ctx, "delivery_id must be a del_ id")
+	}
+	pg, err := s.svc.ListTrail(ctx, sc, req.GetDeliveryId(), req.GetStartingAfter(), int(req.GetLimit()))
+	if err != nil {
+		return nil, s.fail(ctx, "ListTrail", err)
+	}
+	out := &trackingv1.TrailPage{HasMore: pg.HasMore, RawAvailable: pg.RawAvailable, NextCursor: pg.NextCursor,
+		Fixes: make([]*trackingv1.Fix, len(pg.Fixes)), Simplified: latLngs(pg.Simplified)}
+	for i, f := range pg.Fixes {
+		out.Fixes[i] = &trackingv1.Fix{T: timestamppb.New(f.T), Lat: f.Pos.Lat, Lng: f.Pos.Lng,
+			AccuracyM: f.AccuracyM, SpeedMps: f.SpeedMps, HeadingDeg: f.HeadingDeg, Source: f.Source}
+	}
+	return out, nil
+}
+
+// ListProofPoints returns the delivery's proof points, oldest first.
+func (s *Server) ListProofPoints(ctx context.Context, req *trackingv1.ListProofPointsRequest) (*trackingv1.ProofPoints, error) {
+	sc, err := toScope(ctx, req.GetScope())
+	if err != nil {
+		return nil, err
+	}
+	if !ids.Valid(ids.Delivery, req.GetDeliveryId()) {
+		return nil, invalid(ctx, "delivery_id must be a del_ id")
+	}
+	pts, err := s.svc.ListProofPoints(ctx, sc, req.GetDeliveryId())
+	if err != nil {
+		return nil, s.fail(ctx, "ListProofPoints", err)
+	}
+	out := &trackingv1.ProofPoints{Points: make([]*trackingv1.ProofPoint, len(pts))}
+	for i, p := range pts {
+		pp := &trackingv1.ProofPoint{Status: p.Status, At: timestamppb.New(p.At), Actor: p.Actor}
+		if p.Fix != nil {
+			acc := p.Fix.AccuracyM
+			pp.Position = &eventsv1.LatLng{Lat: p.Fix.Pos.Lat, Lng: p.Fix.Pos.Lng}
+			pp.PositionAt = timestamppb.New(p.Fix.T)
+			pp.AccuracyM = &acc
+		}
+		out.Points[i] = pp
+	}
+	return out, nil
+}
+
+func latLngs(pts []domain.LatLng) []*eventsv1.LatLng {
+	out := make([]*eventsv1.LatLng, len(pts))
+	for i, p := range pts {
+		out[i] = &eventsv1.LatLng{Lat: p.Lat, Lng: p.Lng}
+	}
+	return out
+}
+
+func pairLatLngs(ps []domain.Pair) []*eventsv1.LatLng {
+	out := make([]*eventsv1.LatLng, len(ps))
+	for i, p := range ps {
+		out[i] = &eventsv1.LatLng{Lat: p[0], Lng: p[1]}
+	}
+	return out
+}
+
+func partnerViewProto(v domain.PartnerViewDTO) *trackingv1.PartnerView {
+	out := &trackingv1.PartnerView{
+		DeliveryId: v.DeliveryID, DeliveryModel: string(v.DeliveryModel), Status: string(v.Status),
+		Pickup:     &eventsv1.LatLng{Lat: v.Pickup.Location.Lat, Lng: v.Pickup.Location.Lng},
+		PickupName: v.Pickup.Name,
+		Dropoff:    &eventsv1.LatLng{Lat: v.Dropoff.Location.Lat, Lng: v.Dropoff.Location.Lng}, DropoffLabel: v.Dropoff.Label,
+		Route: &trackingv1.RouteLegs{ToPickup: pairLatLngs(v.Route.ToPickup), HasToPickup: v.Route.ToPickup != nil,
+			ToDropoff: pairLatLngs(v.Route.ToDropoff)},
+		EtaState: string(v.EtaState), EtaQuality: v.EtaQuality,
+		DistanceRemainingM: v.DistanceRemainingM, Progress: v.Progress,
+		UpdatedAt: timestamppb.New(v.UpdatedAt), Version: v.Version,
+	}
+	if v.EtaSeconds != nil {
+		e := int32(min(*v.EtaSeconds, math.MaxInt32)) //nolint:gosec // clamped
+		out.EtaSeconds = &e
+	}
+	if w := v.EtaWindow; w != nil {
+		out.EtaWindow = &trackingv1.EtaWindow{MinSeconds: int32(min(w.MinSeconds, math.MaxInt32)), //nolint:gosec // clamped
+			MaxSeconds: int32(min(w.MaxSeconds, math.MaxInt32))} //nolint:gosec // clamped
+	}
+	for _, e := range v.Timeline {
+		out.Timeline = append(out.Timeline, &trackingv1.TimelineEntry{Status: string(e.Status), At: timestamppb.New(e.At)})
+	}
+	if c := v.Courier; c != nil {
+		pc := &trackingv1.PartnerCourier{Id: c.ID, ExternalId: c.ExternalID, DisplayName: c.DisplayName,
+			Vehicle: c.Vehicle, PhotoUrl: c.PhotoURL, HeadingDeg: c.HeadingDeg, SpeedKmh: c.SpeedKmh, Signal: string(c.Signal)}
+		if c.Position != nil {
+			pc.Position = &eventsv1.LatLng{Lat: c.Position.Lat, Lng: c.Position.Lng}
+		}
+		if c.PositionAt != nil {
+			pc.PositionAt = timestamppb.New(*c.PositionAt)
+		}
+		out.Courier = pc
+	}
+	return out
+}
+
+// fail maps a use-case error: not found, an invalid limit or cursor, a
+// cancelled or expired call, or (logged) tracking_unavailable.
 func (s *Server) fail(ctx context.Context, rpcName string, err error) error {
 	switch {
+	case errors.Is(err, app.ErrInvalidArgument):
+		return invalid(ctx, err.Error())
 	case errors.Is(err, app.ErrNotFound):
 		rpcauth.SetCode(ctx, "not_found")
 		return connect.NewError(connect.CodeNotFound, "delivery not found")

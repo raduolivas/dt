@@ -75,6 +75,18 @@ func (q *Queries) CourierKnown(ctx context.Context, courierID string) (bool, err
 	return known, err
 }
 
+const deliveryErasure = `-- name: DeliveryErasure :one
+SELECT erased_at FROM deliveries WHERE id = $1
+`
+
+// The delivery's erased_at; no row when the delivery is not the scope's.
+func (q *Queries) DeliveryErasure(ctx context.Context, id string) (*time.Time, error) {
+	row := q.db.QueryRow(ctx, deliveryErasure, id)
+	var erased_at *time.Time
+	err := row.Scan(&erased_at)
+	return erased_at, err
+}
+
 const ensureTrailPartition = `-- name: EnsureTrailPartition :exec
 SELECT ensure_trail_partition($1::date)
 `
@@ -376,6 +388,18 @@ func (q *Queries) SetTenantPrep(ctx context.Context, arg SetTenantPrepParams) (i
 	return result.RowsAffected(), nil
 }
 
+const simplifiedRoute = `-- name: SimplifiedRoute :one
+SELECT points FROM simplified_routes WHERE delivery_id = $1
+`
+
+// points is [[lat, lng], ...].
+func (q *Queries) SimplifiedRoute(ctx context.Context, deliveryID string) ([]byte, error) {
+	row := q.db.QueryRow(ctx, simplifiedRoute, deliveryID)
+	var points []byte
+	err := row.Scan(&points)
+	return points, err
+}
+
 const trailBetween = `-- name: TrailBetween :many
 SELECT t, lat, lng, accuracy_m, speed_mps, heading_deg, source
 FROM trail_fixes WHERE delivery_id = $1 AND courier_id = $2
@@ -414,6 +438,67 @@ func (q *Queries) TrailBetween(ctx context.Context, arg TrailBetweenParams) ([]T
 	for rows.Next() {
 		var i TrailBetweenRow
 		if err := rows.Scan(
+			&i.T,
+			&i.Lat,
+			&i.Lng,
+			&i.AccuracyM,
+			&i.SpeedMps,
+			&i.HeadingDeg,
+			&i.Source,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const trailPage = `-- name: TrailPage :many
+SELECT id, t, lat, lng, accuracy_m, speed_mps, heading_deg, source
+FROM trail_fixes
+WHERE delivery_id = $1 AND t >= $2 AND (t, id) > ($2::timestamptz, $3::bigint)
+ORDER BY t, id LIMIT $4
+`
+
+type TrailPageParams struct {
+	DeliveryID string
+	AfterT     time.Time
+	AfterID    int64
+	PageSize   int32
+}
+
+type TrailPageRow struct {
+	ID         int64
+	T          time.Time
+	Lat        float64
+	Lng        float64
+	AccuracyM  float64
+	SpeedMps   *float64
+	HeadingDeg *float64
+	Source     string
+}
+
+// Fixes strictly after (after_t, after_id) in (t, id) order. t >= after_t is
+// redundant with the row comparison and lets Postgres prune day partitions.
+func (q *Queries) TrailPage(ctx context.Context, arg TrailPageParams) ([]TrailPageRow, error) {
+	rows, err := q.db.Query(ctx, trailPage,
+		arg.DeliveryID,
+		arg.AfterT,
+		arg.AfterID,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TrailPageRow
+	for rows.Next() {
+		var i TrailPageRow
+		if err := rows.Scan(
+			&i.ID,
 			&i.T,
 			&i.Lat,
 			&i.Lng,

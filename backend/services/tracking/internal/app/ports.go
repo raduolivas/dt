@@ -214,3 +214,32 @@ type ViewerLinks interface {
 	// is refused, retryAfter says when to try again.
 	AllowSnapshot(ctx context.Context, key string) (ok bool, retryAfter time.Duration, err error)
 }
+
+// TrailEntry is one stored fix with its row id (the tie-break of the trail
+// order, which the paging cursor carries).
+type TrailEntry struct {
+	ID  int64
+	Fix domain.Fix
+}
+
+// TrailRead is what PartnerReads returns for a trail page.
+type TrailRead struct {
+	// Entries are at most limit+1 fixes in (t, id) order after the cursor;
+	// empty when RawAvailable is false.
+	Entries []TrailEntry
+	// RawAvailable is false once the raw fixes were replaced by the
+	// simplified route (retention or erasure).
+	RawAvailable bool
+	// Simplified is the stored simplified route, when there is one.
+	Simplified []domain.LatLng
+}
+
+// PartnerReads reads the partner's history endpoints (Postgres). Every call
+// returns ErrNotFound for a delivery outside the scope.
+type PartnerReads interface {
+	// Trail returns up to limit+1 of the delivery's fixes strictly after
+	// the cursor position (the zero TrailEntry reads from the start).
+	Trail(ctx context.Context, s Scope, deliveryID string, after TrailEntry, limit int) (TrailRead, error)
+	// ProofPoints returns the delivery's proof points in time order.
+	ProofPoints(ctx context.Context, s Scope, deliveryID string) ([]ProofPoint, error)
+}

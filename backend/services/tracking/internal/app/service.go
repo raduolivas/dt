@@ -40,8 +40,10 @@ const enqueueTimeout = 300 * time.Millisecond
 
 // Service holds the tracking use cases.
 type Service struct {
-	States  StateStore
-	Reads   ReadModel
+	States StateStore
+	Reads  ReadModel
+	// Partner serves the partner's trail and proof-point reads.
+	Partner PartnerReads
 	Trail   TrailWriter
 	Pub     Publisher
 	Events  Events

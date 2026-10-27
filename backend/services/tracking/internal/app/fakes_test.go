@@ -432,3 +432,48 @@ func (f *fakeStates) activeScope(id string) Scope {
 	defer f.mu.Unlock()
 	return f.activeSet[id].sc
 }
+
+// fakePartner is a PartnerReads over in-memory deliveries of sc.
+type fakePartner struct {
+	mu         sync.Mutex
+	entries    map[string][]TrailEntry
+	simplified map[string][]domain.LatLng
+	gone       map[string]bool // raw fixes replaced by the simplified route
+	proofs     map[string][]ProofPoint
+}
+
+func newFakePartner() *fakePartner {
+	return &fakePartner{entries: map[string][]TrailEntry{}, simplified: map[string][]domain.LatLng{},
+		gone: map[string]bool{}, proofs: map[string][]ProofPoint{}}
+}
+
+func (f *fakePartner) Trail(_ context.Context, s Scope, id string, after TrailEntry, limit int) (TrailRead, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if s != sc {
+		return TrailRead{}, ErrNotFound
+	}
+	if f.gone[id] {
+		return TrailRead{Simplified: f.simplified[id]}, nil
+	}
+	out := TrailRead{RawAvailable: true}
+	for _, e := range f.entries[id] {
+		if e.Fix.T.Before(after.Fix.T) || (e.Fix.T.Equal(after.Fix.T) && e.ID <= after.ID) {
+			continue
+		}
+		out.Entries = append(out.Entries, e)
+		if len(out.Entries) == limit+1 {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (f *fakePartner) ProofPoints(_ context.Context, s Scope, id string) ([]ProofPoint, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if s != sc {
+		return nil, ErrNotFound
+	}
+	return f.proofs[id], nil
+}
