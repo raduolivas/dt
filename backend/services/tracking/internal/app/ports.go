@@ -292,6 +292,9 @@ type RetentionStore interface {
 	EnsurePartitions(ctx context.Context, from time.Time, daysAhead int) error
 	// RetentionScopes returns every scope that has deliveries.
 	RetentionScopes(ctx context.Context) ([]Scope, error)
+	// DeleteErasedTrail deletes the raw fixes of the scope's deliveries
+	// erased since since (fixes that raced the erasure) and returns how many.
+	DeleteErasedTrail(ctx context.Context, s Scope, since time.Time) (int64, error)
 	// UnsimplifiedBefore returns the scope's deliveries that have a raw fix
 	// before before and no simplified route.
 	UnsimplifiedBefore(ctx context.Context, s Scope, before time.Time) ([]string, error)

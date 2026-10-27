@@ -275,4 +275,33 @@ func TestPartitionFunctionIsLockedDown(t *testing.T) {
 			t.Fatalf("%s: proconfig = %v", fn, cfg)
 		}
 	}
+
+	// The drop helper crosses tenants: even the runtime role cannot make it
+	// drop a partition within the 30-day raw retention.
+	if err := e.repo.EnsurePartitions(ctx, time.Now(), 3); err != nil {
+		t.Fatal(err)
+	}
+	parts := func() int {
+		var n int
+		if err := e.admin.QueryRow(ctx, `SELECT count(*) FROM pg_inherits WHERE inhparent = 'tracking.trail_fixes'::regclass`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	before := parts()
+	for _, cutoff := range []string{"current_date", "'9999-12-31'::date",
+		"((now() AT TIME ZONE 'UTC') - interval '29 days')::date", "NULL::date"} {
+		var n int
+		if err := e.svc.QueryRow(ctx, `SELECT drop_trail_partitions_before(`+cutoff+`)`).Scan(&n); err == nil {
+			t.Errorf("cutoff %s accepted (dropped %d)", cutoff, n)
+		}
+	}
+	if after := parts(); after != before {
+		t.Fatalf("partitions %d -> %d", before, after)
+	}
+	// The nightly job's own cutoff passes.
+	var n int
+	if err := e.svc.QueryRow(ctx, `SELECT drop_trail_partitions_before(((now() AT TIME ZONE 'UTC') - interval '30 days')::date)`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("30-day cutoff: dropped %d, %v", n, err)
+	}
 }

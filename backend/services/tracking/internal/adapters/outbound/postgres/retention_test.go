@@ -255,14 +255,50 @@ func TestErasureReplacesRawTrail(t *testing.T) {
 		t.Fatalf("other trail = %+v", tr)
 	}
 
-	// A redelivery (or a late fix flushed after the erasure) ends in the
-	// same state: no raw fix, the first simplified route.
+	// A fix still buffered in the trail writer and flushed after the
+	// erasure is never stored.
 	zigzag(t, e, scopeA, "del_a", now, 2)
+	if n := count(t, e, `SELECT count(*) FROM tracking.trail_fixes WHERE delivery_id = 'del_a'`); n != 0 {
+		t.Fatalf("late fixes stored after erasure = %d", n)
+	}
+	// A redelivery ends in the same state: no raw fix, the first route.
 	erase()
 	if n := count(t, e, `SELECT count(*) FROM tracking.trail_fixes WHERE delivery_id = 'del_a'`); n != 0 {
 		t.Fatalf("raw fixes after a repeated erasure = %d", n)
 	}
 	if again := trailOf(t, e, scopeA, "del_a"); len(again.Simplified) != len(tr.Simplified) {
 		t.Fatalf("route changed: %+v -> %+v", tr.Simplified, again.Simplified)
+	}
+}
+
+// TestRetentionDeletesRawFixesOfErasedDeliveries: a fix that raced the
+// erasure's commit (stored after the erasure deleted the trail) does not
+// stay until its partition is dropped.
+func TestRetentionDeletesRawFixesOfErasedDeliveries(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	start := now.Add(-time.Hour)
+	seed(t, e, scopeA, "cou_del_a", "del_a", start)
+	seed(t, e, scopeA, "cou_del_b", "del_b", start)
+	zigzag(t, e, scopeA, "del_a", start, 3)
+	zigzag(t, e, scopeA, "del_b", start, 3)
+	svc := retentionSvc(e)
+	inScope(t, e, scopeA, func(ctx context.Context, p app.Projection) error {
+		return svc.OnPersonalDataErased(ctx, p, scopeA, 9, "del_a", now)
+	})
+	// The raced fix, written past the insert guard.
+	if _, err := e.admin.Exec(ctx, `INSERT INTO tracking.trail_fixes (delivery_id, tenant_id, environment, courier_id, t, lat, lng, accuracy_m, source)
+		VALUES ('del_a', 'ten_a', 'test', 'cou_del_a', $1, 52.37, 4.9, 5, 'relay')`, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RunRetention(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, e, `SELECT count(*) FROM tracking.trail_fixes WHERE delivery_id = 'del_a'`); n != 0 {
+		t.Fatalf("raw fixes of an erased delivery after retention = %d", n)
+	}
+	if n := count(t, e, `SELECT count(*) FROM tracking.trail_fixes WHERE delivery_id = 'del_b'`); n != 3 {
+		t.Fatalf("other delivery's fixes = %d", n)
 	}
 }

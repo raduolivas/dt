@@ -31,13 +31,18 @@ ALTER TABLE deliveries FORCE ROW LEVEL SECURITY;
 -- drop_trail_partitions_before drops the trail's day partitions for days
 -- before cutoff and returns how many it dropped. Like
 -- ensure_trail_partition it runs as the owner of the partitions; the caller
--- has simplified every trail they hold.
+-- has simplified every trail they hold. It crosses tenants, so it refuses a
+-- cutoff later than the 30-day raw retention allows (the UTC day of now -
+-- 30 days, the job's own cutoff): it can never drop a fix younger than that.
 CREATE FUNCTION drop_trail_partitions_before(cutoff date) RETURNS int
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = tracking, extensions, pg_temp AS $$
 DECLARE
   part text;
   n int := 0;
 BEGIN
+  IF cutoff IS NULL OR cutoff > ((now() AT TIME ZONE 'UTC') - interval '30 days')::date THEN
+    RAISE EXCEPTION 'drop_trail_partitions_before: cutoff % is within the 30-day raw retention', cutoff;
+  END IF;
   PERFORM pg_advisory_xact_lock(hashtext(current_schema() || '.trail_partitions'));
   FOR part IN
     SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid

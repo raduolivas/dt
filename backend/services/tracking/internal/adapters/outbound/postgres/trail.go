@@ -157,10 +157,15 @@ func (w *TrailWriter) insert(ctx context.Context, s app.Scope, rows []app.TrailR
 	return w.insertOnce(ctx, s, rows)
 }
 
+// insertTrail skips the fixes of deliveries whose personal data was erased:
+// a fix still buffered when the erasure is applied is never stored (the
+// nightly job deletes one that raced the erasure's commit).
 const insertTrail = `INSERT INTO trail_fixes (delivery_id, tenant_id, environment, courier_id, t, lat, lng,
   accuracy_m, speed_mps, heading_deg, source)
 SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::timestamptz[], $6::float8[],
-  $7::float8[], $8::float8[], $9::float8[], $10::float8[], $11::text[])`
+  $7::float8[], $8::float8[], $9::float8[], $10::float8[], $11::text[])
+  AS u(delivery_id, tenant_id, environment, courier_id, t, lat, lng, accuracy_m, speed_mps, heading_deg, source)
+WHERE NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.id = u.delivery_id AND d.erased_at IS NOT NULL)`
 
 func (w *TrailWriter) insertOnce(ctx context.Context, s app.Scope, rows []app.TrailRow) error {
 	n := len(rows)

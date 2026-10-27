@@ -28,6 +28,20 @@ func (r *Repo) RetentionScopes(ctx context.Context) ([]app.Scope, error) {
 	return out, nil
 }
 
+// DeleteErasedTrail implements app.RetentionStore.
+func (r *Repo) DeleteErasedTrail(ctx context.Context, s app.Scope, since time.Time) (int64, error) {
+	var n int64
+	err := r.inTenant(ctx, s, func(q *db.Queries) error {
+		var err error
+		n, err = q.DeleteErasedTrail(ctx, since)
+		return err
+	})
+	if err != nil {
+		return 0, fmt.Errorf("delete erased trail: %w", err)
+	}
+	return n, nil
+}
+
 // UnsimplifiedBefore implements app.RetentionStore.
 func (r *Repo) UnsimplifiedBefore(ctx context.Context, s app.Scope, before time.Time) ([]string, error) {
 	var ids []string

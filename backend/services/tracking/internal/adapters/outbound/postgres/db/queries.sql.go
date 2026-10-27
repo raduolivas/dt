@@ -96,6 +96,20 @@ func (q *Queries) DeleteDeliveryTrail(ctx context.Context, deliveryID string) er
 	return err
 }
 
+const deleteErasedTrail = `-- name: DeleteErasedTrail :execrows
+DELETE FROM trail_fixes
+WHERE delivery_id IN (SELECT id FROM deliveries WHERE erased_at >= $1::timestamptz)
+`
+
+// Raw fixes of deliveries erased since @since (older ones have none left).
+func (q *Queries) DeleteErasedTrail(ctx context.Context, since time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteErasedTrail, since)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteProofPointsFinalBefore = `-- name: DeleteProofPointsFinalBefore :exec
 DELETE FROM proof_points p USING deliveries d WHERE d.id = p.delivery_id AND d.final_at < $1::timestamptz
 `

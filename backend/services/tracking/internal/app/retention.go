@@ -26,7 +26,8 @@ const (
 )
 
 // RunRetention is the nightly retention job for the night of now. It
-// creates the trail partitions PartitionsAhead days ahead; stores a
+// creates the trail partitions PartitionsAhead days ahead; deletes any raw
+// fix of an erased delivery; stores a
 // simplified route for every delivery with raw fixes older than
 // RawTrailRetention and none yet; then, only if every such trail was
 // simplified (no delivery loses its route), drops the day partitions whose
@@ -47,7 +48,16 @@ func (s *Service) RunRetention(ctx context.Context, now time.Time) error {
 
 	rawCutoff := now.Add(-RawTrailRetention)
 	simplified, unsimplified := 0, 0
+	var erasedFixes int64
 	for _, sc := range scopes {
+		// Raw fixes of an erased delivery never stay (a fix flushed while
+		// the erasure committed); erasures older than the raw retention
+		// have none left.
+		e, err := r.DeleteErasedTrail(ctx, sc, rawCutoff)
+		erasedFixes += e
+		if err != nil {
+			errs = append(errs, fmt.Errorf("delete erased trails: %w", err))
+		}
 		n, err := s.simplifyBefore(ctx, sc, rawCutoff, now)
 		simplified += n
 		if err != nil {
@@ -76,7 +86,7 @@ func (s *Service) RunRetention(ctx context.Context, now time.Time) error {
 	}
 
 	s.log().InfoContext(ctx, "tracking_retention_done", "scopes", len(scopes), "simplified", simplified,
-		"partitions_dropped", dropped, "deliveries_deleted", deleted,
+		"erased_fixes_deleted", erasedFixes, "partitions_dropped", dropped, "deliveries_deleted", deleted,
 		"scopes_not_simplified", unsimplified, "scopes_not_deleted", failedScopes)
 	return errors.Join(errs...)
 }

@@ -43,6 +43,11 @@ func (f *fakeRetention) UnsimplifiedBefore(_ context.Context, _ Scope, _ time.Ti
 	return ids, nil
 }
 
+func (f *fakeRetention) DeleteErasedTrail(context.Context, Scope, time.Time) (int64, error) {
+	f.calls = append(f.calls, "erased")
+	return 0, nil
+}
+
 func (f *fakeRetention) TrailPoints(_ context.Context, _ Scope, id string) ([]domain.LatLng, error) {
 	if id == f.failPoints {
 		return nil, errors.New("read failed")
@@ -93,7 +98,7 @@ func TestRetentionDropsAfterSimplifyingAndUsesTheCutoffs(t *testing.T) {
 	if err := svc.RunRetention(context.Background(), now); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(f.calls, ","); got != "ensure,simplify,simplify,drop,delete" {
+	if got := strings.Join(f.calls, ","); got != "ensure,erased,simplify,simplify,drop,delete" {
 		t.Fatalf("calls = %s", got)
 	}
 	// A straight line keeps only its ends.

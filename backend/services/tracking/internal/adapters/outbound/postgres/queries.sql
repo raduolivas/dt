@@ -138,3 +138,8 @@ DELETE FROM proof_points p USING deliveries d WHERE d.id = p.delivery_id AND d.f
 
 -- name: DeleteDeliveriesFinalBefore :execrows
 DELETE FROM deliveries WHERE final_at < @before::timestamptz;
+
+-- name: DeleteErasedTrail :execrows
+-- Raw fixes of deliveries erased since @since (older ones have none left).
+DELETE FROM trail_fixes
+WHERE delivery_id IN (SELECT id FROM deliveries WHERE erased_at >= @since::timestamptz);
