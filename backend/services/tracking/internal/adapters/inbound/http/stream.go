@@ -124,6 +124,11 @@ func (s *stream) take() []outMsg {
 func (s *stream) expireAt(at time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	select {
+	case <-s.done: // ended (or left): arm nothing
+		return
+	default:
+	}
 	if !s.expiryAt.IsZero() && !at.Before(s.expiryAt) {
 		return
 	}

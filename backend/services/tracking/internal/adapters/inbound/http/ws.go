@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -29,10 +30,18 @@ type sink interface {
 	send(ctx context.Context, typ string, body []byte) error
 }
 
+// prober checks that the peer is still there (a WebSocket ping/pong). A
+// written {type:"ping"} alone succeeds into the kernel buffer of a
+// half-open connection, so it proves nothing.
+type prober interface {
+	probe(ctx context.Context) error
+}
+
 // pump writes s's messages and the pings to out until s ends.
 func (h *Hub) pump(ctx context.Context, s *stream, out sink) {
 	ping := time.NewTicker(h.d.PingInterval)
 	defer ping.Stop()
+	var probing atomic.Bool
 	for {
 		select {
 		case <-s.done:
@@ -44,6 +53,17 @@ func (h *Hub) pump(ctx context.Context, s *stream, out sink) {
 			if err := out.send(ctx, "ping", pingBody); err != nil {
 				s.end(endGone)
 				return
+			}
+			if p, ok := out.(prober); ok && probing.CompareAndSwap(false, true) {
+				// In the background, so snapshots keep flowing meanwhile.
+				go func() {
+					defer probing.Store(false)
+					pctx, cancel := context.WithTimeout(ctx, h.d.PongTimeout)
+					defer cancel()
+					if err := p.probe(pctx); err != nil {
+						s.end(endGone) // releases the stream's slots
+					}
+				}()
 			}
 		case <-s.wake:
 			for _, m := range s.take() {
@@ -62,6 +82,10 @@ func (h *Hub) pump(ctx context.Context, s *stream, out sink) {
 }
 
 type wsSink struct{ c *websocket.Conn }
+
+// probe sends a protocol ping and waits for the pong; readLoop is the
+// concurrent reader that receives it.
+func (w wsSink) probe(ctx context.Context) error { return w.c.Ping(ctx) }
 
 func (w wsSink) send(ctx context.Context, _ string, body []byte) error {
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
@@ -194,9 +218,9 @@ func readMessage(ctx context.Context, c *websocket.Conn) (clientMessage, error) 
 }
 
 // readLoop handles client messages after authentication: a new auth swaps
-// in a refreshed token for the same link and delivery. Other types are
-// ignored; anything that is not JSON text, or swaps faster than the swap
-// interval, ends the stream.
+// in a refreshed token for the same link and delivery. Any other type,
+// anything that is not JSON text, or swaps faster than the swap
+// interval, ends the stream with 1008.
 func (h *Hub) readLoop(ctx context.Context, c *websocket.Conn, s *stream) {
 	last := time.Now()
 	for {
@@ -210,7 +234,9 @@ func (h *Hub) readLoop(ctx context.Context, c *websocket.Conn, s *stream) {
 			return
 		}
 		if m.Type != "auth" {
-			continue
+			// The protocol defines no other client message.
+			s.end(endPolicy)
+			return
 		}
 		if time.Since(last) < h.d.SwapInterval {
 			s.end(endPolicy)

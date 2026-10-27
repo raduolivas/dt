@@ -28,6 +28,10 @@ const (
 	DefaultMaxStreams = 10_000
 	// DefaultPingInterval is how often a stream gets {type:"ping"}.
 	DefaultPingInterval = 25 * time.Second
+	// DefaultPongTimeout is how long a WebSocket peer has to answer the
+	// protocol ping sent with each {type:"ping"}; a peer that does not (a
+	// half-open connection) is dropped and its slots released.
+	DefaultPongTimeout = 10 * time.Second
 	// DefaultAuthTimeout is how long a WebSocket may wait before its first
 	// message, which must be auth.
 	DefaultAuthTimeout = 5 * time.Second
@@ -62,8 +66,8 @@ type Deps struct {
 	// Log receives failures; never a token. Nil discards.
 	Log *slog.Logger
 	// Zero values take the defaults above.
-	MaxPerLink, MaxStreams                  int
-	PingInterval, AuthTimeout, SwapInterval time.Duration
+	MaxPerLink, MaxStreams                               int
+	PingInterval, PongTimeout, AuthTimeout, SwapInterval time.Duration
 }
 
 // Hub holds the instance's open streams: it fans snapshots out to them,
@@ -92,6 +96,9 @@ func NewHub(d Deps) *Hub {
 	}
 	if d.PingInterval <= 0 {
 		d.PingInterval = DefaultPingInterval
+	}
+	if d.PongTimeout <= 0 {
+		d.PongTimeout = DefaultPongTimeout
 	}
 	if d.AuthTimeout <= 0 {
 		d.AuthTimeout = DefaultAuthTimeout
@@ -214,8 +221,10 @@ func (h *Hub) join(ctx context.Context, s *stream) error {
 	return nil
 }
 
-// leave undoes join; it is safe to call more than once and without join.
+// leave undoes join and ends s; it is safe to call more than once and
+// without join.
 func (h *Hub) leave(s *stream) {
+	s.end(endGone) // no-op when already ended; later expiries arm nothing
 	s.stopTimers()
 	h.mu.Lock()
 	if s.joined {

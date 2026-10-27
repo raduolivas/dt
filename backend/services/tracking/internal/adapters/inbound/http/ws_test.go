@@ -1,6 +1,7 @@
 package httpapi_test
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -415,4 +416,66 @@ func newSigner(t *testing.T) *viewerjwt.Signer {
 		t.Fatal(err)
 	}
 	return s
+}
+
+func TestDeadPeerReleasesLinkSlot(t *testing.T) {
+	e := newEnv(t, func(d *httpapi.Deps) {
+		d.PingInterval = 200 * time.Millisecond
+		d.PongTimeout = 300 * time.Millisecond
+	})
+	tok := e.token(claimsA)
+	// A live client that reads (and so answers protocol pings) stays.
+	live := e.dial()
+	auth(t, live, tok)
+	mustRead(t, live)
+	// Four peers that authenticate, then never read again: no pongs.
+	for range 4 {
+		c := e.dial()
+		auth(t, c, tok)
+	}
+	waitStreams(t, e.hub, 5)
+	// The dead ones are ended and release their link slots.
+	deadline := time.Now().Add(5 * time.Second)
+	for e.hub.Streams() != 1 {
+		if time.Now().After(deadline) {
+			t.Fatalf("streams = %d, want 1 (dead peers kept their slots)", e.hub.Streams())
+		}
+		// Reading keeps answering the protocol pings (and gets {type:"ping"}).
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, _, err := live.Read(ctx)
+		cancel()
+		if err != nil {
+			t.Fatalf("live client: %v", err)
+		}
+	}
+	// So the link has room again: a 6th stream (and more) is accepted.
+	for range 4 {
+		c := e.dial()
+		auth(t, c, tok)
+		if s := mustRead(t, c).snapshot(t); s.DeliveryID != delA {
+			t.Fatalf("got %+v", s)
+		}
+	}
+}
+
+func TestUnknownClientMessageCloses1008(t *testing.T) {
+	e := newEnv(t)
+	for name, payload := range map[string][]byte{
+		"unknown type": []byte(`{"type":"hello"}`),
+		"not json":     []byte(`hello`),
+		"no type":      []byte(`{}`),
+	} {
+		c := e.dial()
+		auth(t, c, e.token(claimsA))
+		mustRead(t, c)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := c.Write(ctx, websocket.MessageText, payload); err != nil {
+			t.Fatal(err)
+		}
+		cancel()
+		if _, code := read(t, c, 3*time.Second); code != websocket.StatusPolicyViolation {
+			t.Fatalf("%s: close %d, want 1008", name, code)
+		}
+	}
+	waitStreams(t, e.hub, 0)
 }
