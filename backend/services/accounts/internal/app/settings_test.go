@@ -122,3 +122,35 @@ func TestSetTenantSettingsErrors(t *testing.T) {
 		t.Fatalf("settings events = %d, want none", n)
 	}
 }
+
+func TestSetTenantSettingsEmitsPrep(t *testing.T) {
+	e := setup(t, false)
+	n := 15
+	s := domain.DefaultTenantSettings()
+	s.DefaultPrepMinutes = &n
+	got, err := e.svc.SetTenantSettings(context.Background(), owner, e.ten.ID, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DefaultPrepMinutes == nil || *got.DefaultPrepMinutes != 15 ||
+		e.repo.tenants[e.ten.ID].Settings.DefaultPrepMinutes == nil {
+		t.Fatalf("got %+v", got)
+	}
+	evs := settingsEvents(e)
+	p := evs[len(evs)-1].Payload.(*eventsv1.TenantSettingsSet)
+	if p.DefaultPrepMinutes == nil || p.GetDefaultPrepMinutes() != 15 {
+		t.Fatalf("payload = %v", p)
+	}
+	s.DefaultPrepMinutes = nil
+	if _, err := e.svc.SetTenantSettings(context.Background(), owner, e.ten.ID, s); err != nil {
+		t.Fatal(err)
+	}
+	evs = settingsEvents(e)
+	if p := evs[len(evs)-1].Payload.(*eventsv1.TenantSettingsSet); p.DefaultPrepMinutes != nil {
+		t.Fatalf("cleared prep must be unset, got %v", p)
+	}
+	s.DefaultPrepMinutes = new(int)
+	if _, err := e.svc.SetTenantSettings(context.Background(), owner, e.ten.ID, s); !errors.Is(err, domain.ErrInvalidArgument) {
+		t.Fatalf("0 minutes: %v", err)
+	}
+}

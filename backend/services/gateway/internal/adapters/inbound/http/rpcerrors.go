@@ -45,6 +45,10 @@ var dtCodeProblems = map[string]int{
 	"delivery_active":      http.StatusConflict,
 	"model_not_allowed":    http.StatusUnprocessableEntity,
 	"courier_not_found":    http.StatusUnprocessableEntity,
+	// The tracking service's codes: "try again shortly", and a delivery
+	// the simulator cannot drive (final, or already being simulated).
+	"tracking_unavailable": http.StatusServiceUnavailable,
+	"simulation_state":     http.StatusConflict,
 }
 
 // toProblem maps a failed deliveries call to the problem a partner sees. The
@@ -61,9 +65,12 @@ func toProblem(err error) httpx.Problem {
 	}
 	if status, ok := dtCodeProblems[code]; ok {
 		p := httpx.Problem{Status: status, Code: code}
-		if code == "validation_failed" {
+		switch code {
+		case "validation_failed":
 			p.Detail = "The request does not match the API contract."
 			p.Errors = fieldViolations(err)
+		case "tracking_unavailable":
+			p.Detail = "Tracking is temporarily unavailable. Retry shortly."
 		}
 		return p
 	}

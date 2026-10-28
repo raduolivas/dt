@@ -33,6 +33,8 @@ type DeliveryCreated struct {
 	PickupName string
 	Dropoff    Location
 	CreatedAt  time.Time
+	// ReadyAt is nil when the partner gave none.
+	ReadyAt *time.Time
 }
 
 // StatusChanged is the payload of delivery.status_changed.
@@ -62,11 +64,13 @@ type PickupConfirmationPending struct {
 }
 
 // DeliveryUpdated is the payload of delivery.updated. Dropoff is set only
-// when the dropoff location changed.
+// when the dropoff location changed, and ReadyAt only when ready_at changed
+// (nil then means it was cleared).
 type DeliveryUpdated struct {
 	DeliveryID    string
 	ChangedFields []string
 	Dropoff       *Location
+	ReadyAt       *time.Time
 }
 
 // PersonalDataErased is the payload of delivery.personal_data_erased.

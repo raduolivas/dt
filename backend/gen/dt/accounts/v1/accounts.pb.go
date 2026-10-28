@@ -167,6 +167,7 @@ type TenantSettings struct {
 	DefaultModel       string                 `protobuf:"bytes,2,opt,name=default_model,json=defaultModel,proto3" json:"default_model,omitempty"`
 	PickupConfirmation string                 `protobuf:"bytes,3,opt,name=pickup_confirmation,json=pickupConfirmation,proto3" json:"pickup_confirmation,omitempty"` // "any" | "courier" | "store" | "courier_and_store"
 	UpdatedAt          *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	DefaultPrepMinutes *int32                 `protobuf:"varint,5,opt,name=default_prep_minutes,json=defaultPrepMinutes,proto3,oneof" json:"default_prep_minutes,omitempty"` // 1..240; unset = none
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -227,6 +228,13 @@ func (x *TenantSettings) GetUpdatedAt() *timestamppb.Timestamp {
 		return x.UpdatedAt
 	}
 	return nil
+}
+
+func (x *TenantSettings) GetDefaultPrepMinutes() int32 {
+	if x != nil && x.DefaultPrepMinutes != nil {
+		return *x.DefaultPrepMinutes
+	}
+	return 0
 }
 
 // ApiKey is a key's metadata. It never carries the hash or the plaintext.
@@ -995,6 +1003,7 @@ type SetTenantSettingsRequest struct {
 	AllowedModels      []string               `protobuf:"bytes,3,rep,name=allowed_models,json=allowedModels,proto3" json:"allowed_models,omitempty"`
 	DefaultModel       string                 `protobuf:"bytes,4,opt,name=default_model,json=defaultModel,proto3" json:"default_model,omitempty"`
 	PickupConfirmation string                 `protobuf:"bytes,5,opt,name=pickup_confirmation,json=pickupConfirmation,proto3" json:"pickup_confirmation,omitempty"`
+	DefaultPrepMinutes *int32                 `protobuf:"varint,6,opt,name=default_prep_minutes,json=defaultPrepMinutes,proto3,oneof" json:"default_prep_minutes,omitempty"` // 1..240; unset clears it
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1064,6 +1073,13 @@ func (x *SetTenantSettingsRequest) GetPickupConfirmation() string {
 	return ""
 }
 
+func (x *SetTenantSettingsRequest) GetDefaultPrepMinutes() int32 {
+	if x != nil && x.DefaultPrepMinutes != nil {
+		return *x.DefaultPrepMinutes
+	}
+	return 0
+}
+
 type SetTenantSettingsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Settings      *TenantSettings        `protobuf:"bytes,1,opt,name=settings,proto3" json:"settings,omitempty"`
@@ -1123,13 +1139,15 @@ const file_dt_accounts_v1_accounts_proto_rawDesc = "" +
 	"\flive_enabled\x18\x03 \x01(\bR\vliveEnabled\x129\n" +
 	"\n" +
 	"created_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12:\n" +
-	"\bsettings\x18\x05 \x01(\v2\x1e.dt.accounts.v1.TenantSettingsR\bsettings\"\xc8\x01\n" +
+	"\bsettings\x18\x05 \x01(\v2\x1e.dt.accounts.v1.TenantSettingsR\bsettings\"\x98\x02\n" +
 	"\x0eTenantSettings\x12%\n" +
 	"\x0eallowed_models\x18\x01 \x03(\tR\rallowedModels\x12#\n" +
 	"\rdefault_model\x18\x02 \x01(\tR\fdefaultModel\x12/\n" +
 	"\x13pickup_confirmation\x18\x03 \x01(\tR\x12pickupConfirmation\x129\n" +
 	"\n" +
-	"updated_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\x97\x03\n" +
+	"updated_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x125\n" +
+	"\x14default_prep_minutes\x18\x05 \x01(\x05H\x00R\x12defaultPrepMinutes\x88\x01\x01B\x17\n" +
+	"\x15_default_prep_minutes\"\x97\x03\n" +
 	"\x06ApiKey\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12;\n" +
@@ -1184,13 +1202,15 @@ const file_dt_accounts_v1_accounts_proto_rawDesc = "" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12;\n" +
 	"\venvironment\x18\x03 \x01(\x0e2\x19.dt.events.v1.EnvironmentR\venvironment\"H\n" +
 	"\x13ListApiKeysResponse\x121\n" +
-	"\bapi_keys\x18\x01 \x03(\v2\x16.dt.accounts.v1.ApiKeyR\aapiKeys\"\xe1\x01\n" +
+	"\bapi_keys\x18\x01 \x03(\v2\x16.dt.accounts.v1.ApiKeyR\aapiKeys\"\xb1\x02\n" +
 	"\x18SetTenantSettingsRequest\x12+\n" +
 	"\x05actor\x18\x01 \x01(\v2\x15.dt.accounts.v1.ActorR\x05actor\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12%\n" +
 	"\x0eallowed_models\x18\x03 \x03(\tR\rallowedModels\x12#\n" +
 	"\rdefault_model\x18\x04 \x01(\tR\fdefaultModel\x12/\n" +
-	"\x13pickup_confirmation\x18\x05 \x01(\tR\x12pickupConfirmation\"W\n" +
+	"\x13pickup_confirmation\x18\x05 \x01(\tR\x12pickupConfirmation\x125\n" +
+	"\x14default_prep_minutes\x18\x06 \x01(\x05H\x00R\x12defaultPrepMinutes\x88\x01\x01B\x17\n" +
+	"\x15_default_prep_minutes\"W\n" +
 	"\x19SetTenantSettingsResponse\x12:\n" +
 	"\bsettings\x18\x01 \x01(\v2\x1e.dt.accounts.v1.TenantSettingsR\bsettings2\x9a\x05\n" +
 	"\x0fAccountsService\x12Y\n" +
@@ -1287,6 +1307,8 @@ func file_dt_accounts_v1_accounts_proto_init() {
 	if File_dt_accounts_v1_accounts_proto != nil {
 		return
 	}
+	file_dt_accounts_v1_accounts_proto_msgTypes[2].OneofWrappers = []any{}
+	file_dt_accounts_v1_accounts_proto_msgTypes[16].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

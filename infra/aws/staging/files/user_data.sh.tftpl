@@ -1,0 +1,39 @@
+#!/bin/bash
+# ECS host bootstrap (ECS-optimized Amazon Linux 2023). Runs once per
+# instance; the ASG replaces the instance every working day (schedule).
+set -euo pipefail
+
+cat >>/etc/ecs/ecs.config <<CONFIG
+ECS_CLUSTER=${cluster}
+ECS_ENABLE_TASK_IAM_ROLE=true
+ECS_CONTAINER_STOP_TIMEOUT=30s
+ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=1h
+ECS_IMAGE_PULL_BEHAVIOR=prefer-cached
+ECS_LOGLEVEL=warn
+CONFIG
+
+# Session Manager is the only way onto the host (no SSH, no key pair) and
+# the dtctl port forward depends on it: install the agent if the AMI lacks
+# it, and make sure it runs. Idempotent.
+rpm -q amazon-ssm-agent >/dev/null 2>&1 || dnf install -y amazon-ssm-agent
+systemctl enable --now amazon-ssm-agent
+
+# Host volumes: NATS JetStream and the OSRM data synced from S3.
+mkdir -p /data/nats /data/osrm
+
+# Memory alarm: the CloudWatch agent publishes only mem_used_percent,
+# aggregated per Auto Scaling group (one custom metric).
+dnf install -y amazon-cloudwatch-agent
+cat >/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'AGENT'
+{
+  "agent": { "metrics_collection_interval": 60 },
+  "metrics": {
+    "namespace": "CWAgent",
+    "append_dimensions": { "AutoScalingGroupName": "$${aws:AutoScalingGroupName}" },
+    "aggregation_dimensions": [["AutoScalingGroupName"]],
+    "metrics_collected": { "mem": { "measurement": ["mem_used_percent"] } }
+  }
+}
+AGENT
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json

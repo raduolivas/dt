@@ -1,0 +1,174 @@
+package domain
+
+import "math"
+
+const earthRadiusM = 6371000.0
+
+func rad(d float64) float64 { return d * math.Pi / 180 }
+
+// distanceM is the haversine distance between a and b in metres.
+func distanceM(a, b LatLng) float64 {
+	dLat := rad(b.Lat - a.Lat)
+	dLng := rad(b.Lng - a.Lng)
+	h := math.Sin(dLat/2)*math.Sin(dLat/2) +
+		math.Cos(rad(a.Lat))*math.Cos(rad(b.Lat))*math.Sin(dLng/2)*math.Sin(dLng/2)
+	return 2 * earthRadiusM * math.Asin(math.Min(1, math.Sqrt(h)))
+}
+
+// xy is a point in a local equirectangular projection, in metres.
+type xy struct{ x, y float64 }
+
+func project(p, origin LatLng) xy {
+	return xy{
+		x: rad(p.Lng-origin.Lng) * earthRadiusM * math.Cos(rad(origin.Lat)),
+		y: rad(p.Lat-origin.Lat) * earthRadiusM,
+	}
+}
+
+// segmentDistance returns the distance from p to segment ab and the fraction
+// t in [0,1] of the closest point along ab.
+func segmentDistance(p, a, b xy) (dist, t float64) {
+	dx, dy := b.x-a.x, b.y-a.y
+	l2 := dx*dx + dy*dy
+	if l2 > 0 {
+		t = ((p.x-a.x)*dx + (p.y-a.y)*dy) / l2
+		t = math.Max(0, math.Min(1, t))
+	}
+	cx, cy := a.x+t*dx, a.y+t*dy
+	return math.Hypot(p.x-cx, p.y-cy), t
+}
+
+func pathLengthM(pts []LatLng) float64 {
+	var s float64
+	for i := 1; i < len(pts); i++ {
+		s += distanceM(pts[i-1], pts[i])
+	}
+	return s
+}
+
+// remainingAlong returns the metres left on route for a traveller at p: the
+// distance to the closest point on the route plus the rest of the route.
+func remainingAlong(route []LatLng, p LatLng) float64 {
+	if len(route) == 0 {
+		return 0
+	}
+	if len(route) == 1 {
+		return distanceM(p, route[0])
+	}
+	best, bestIdx, bestT := math.Inf(1), 0, 0.0
+	pp := project(p, p)
+	for i := 0; i+1 < len(route); i++ {
+		d, t := segmentDistance(pp, project(route[i], p), project(route[i+1], p))
+		if d < best {
+			best, bestIdx, bestT = d, i, t
+		}
+	}
+	segLen := distanceM(route[bestIdx], route[bestIdx+1])
+	return best + segLen*(1-bestT) + pathLengthM(route[bestIdx+1:])
+}
+
+// Simplify reduces points with Douglas-Peucker, keeping the endpoints and
+// every dropped point within toleranceM metres of the result.
+func Simplify(points []LatLng, toleranceM float64) []LatLng {
+	if len(points) <= 2 {
+		return append([]LatLng(nil), points...)
+	}
+	keep := make([]bool, len(points))
+	keep[0], keep[len(points)-1] = true, true
+	origin := points[0]
+	proj := make([]xy, len(points))
+	for i, p := range points {
+		proj[i] = project(p, origin)
+	}
+	type span struct{ lo, hi int }
+	stack := []span{{0, len(points) - 1}}
+	for len(stack) > 0 {
+		s := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		worst, idx := -1.0, -1
+		for i := s.lo + 1; i < s.hi; i++ {
+			d, _ := segmentDistance(proj[i], proj[s.lo], proj[s.hi])
+			if d > worst {
+				worst, idx = d, i
+			}
+		}
+		if idx >= 0 && worst > toleranceM {
+			keep[idx] = true
+			stack = append(stack, span{s.lo, idx}, span{idx, s.hi})
+		}
+	}
+	out := make([]LatLng, 0, len(points))
+	for i, k := range keep {
+		if k {
+			out = append(out, points[i])
+		}
+	}
+	return out
+}
+
+// DistanceM is the great-circle distance between a and b in metres.
+func DistanceM(a, b LatLng) float64 { return distanceM(a, b) }
+
+// PathLengthM is the length of the path in metres.
+func PathLengthM(pts []LatLng) float64 { return pathLengthM(pts) }
+
+// RemainingAlongM returns the metres left on route for a traveller at p: the
+// distance to the closest point on the route plus the rest of the route.
+func RemainingAlongM(route []LatLng, p LatLng) float64 { return remainingAlong(route, p) }
+
+// OffRouteM returns the distance in metres from p to the closest point of
+// route; 0 for an empty route.
+func OffRouteM(route []LatLng, p LatLng) float64 {
+	switch len(route) {
+	case 0:
+		return 0
+	case 1:
+		return distanceM(p, route[0])
+	}
+	best := math.Inf(1)
+	pp := project(p, p)
+	for i := 0; i+1 < len(route); i++ {
+		d, _ := segmentDistance(pp, project(route[i], p), project(route[i+1], p))
+		best = math.Min(best, d)
+	}
+	return best
+}
+
+// Destination is the point distM metres from p along the initial bearing
+// bearingDeg (degrees clockwise from north), on a sphere.
+func Destination(p LatLng, bearingDeg, distM float64) LatLng {
+	d := distM / earthRadiusM
+	th, lat1, lng1 := rad(bearingDeg), rad(p.Lat), rad(p.Lng)
+	lat2 := math.Asin(math.Sin(lat1)*math.Cos(d) + math.Cos(lat1)*math.Sin(d)*math.Cos(th))
+	lng2 := lng1 + math.Atan2(math.Sin(th)*math.Sin(d)*math.Cos(lat1), math.Cos(d)-math.Sin(lat1)*math.Sin(lat2))
+	return LatLng{Lat: lat2 * 180 / math.Pi, Lng: lng2 * 180 / math.Pi}
+}
+
+// Along is the point distM metres along path (clamped to its ends) and the
+// heading of the segment it lies on, in degrees clockwise from north.
+func Along(path []LatLng, distM float64) (LatLng, float64) {
+	if len(path) == 0 {
+		return LatLng{}, 0
+	}
+	for i := 1; i < len(path); i++ {
+		a, b := path[i-1], path[i]
+		seg := distanceM(a, b)
+		if distM <= seg || i == len(path)-1 {
+			t := 1.0
+			if seg > 0 {
+				t = math.Max(0, math.Min(1, distM/seg))
+			}
+			return LatLng{Lat: a.Lat + t*(b.Lat-a.Lat), Lng: a.Lng + t*(b.Lng-a.Lng)}, bearing(a, b)
+		}
+		distM -= seg
+	}
+	return path[0], 0
+}
+
+// bearing is the initial bearing from a to b in degrees [0, 360).
+func bearing(a, b LatLng) float64 {
+	lat1, lat2, dLng := rad(a.Lat), rad(b.Lat), rad(b.Lng-a.Lng)
+	y := math.Sin(dLng) * math.Cos(lat2)
+	x := math.Cos(lat1)*math.Sin(lat2) - math.Sin(lat1)*math.Cos(lat2)*math.Cos(dLng)
+	return math.Mod(math.Atan2(y, x)*180/math.Pi+360, 360)
+}

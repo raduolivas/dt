@@ -33,6 +33,17 @@ var StreamDeliveries = jetstream.StreamConfig{
 	MaxAge:     7 * 24 * time.Hour,
 }
 
+// StreamTracking carries the tracking service's events (tracking.*,
+// courier.location_reported). Consumers keep their own state, so it is bounded
+// to 7 days.
+var StreamTracking = jetstream.StreamConfig{
+	Name:       "TRACKING",
+	Subjects:   []string{"tracking.>"},
+	Storage:    jetstream.FileStorage,
+	Duplicates: DuplicateWindow,
+	MaxAge:     7 * 24 * time.Hour,
+}
+
 // SubjectFor returns the subject of eventType on stream:
 // "<stream name lowercased>.<event type>", e.g. accounts.apikey.created.
 func SubjectFor(stream jetstream.StreamConfig, eventType string) string {

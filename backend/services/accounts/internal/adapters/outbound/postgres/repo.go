@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/protobuf/proto"
 
@@ -58,6 +60,7 @@ func (t *tx) InsertTenant(ctx context.Context, ten domain.Tenant) error {
 		ID: ten.ID, Name: ten.Name, LiveEnabled: ten.LiveEnabled, CreatedAt: ten.CreatedAt,
 		AllowedModels: nonNil(ten.Settings.AllowedModels), DefaultModel: ten.Settings.DefaultModel,
 		PickupConfirmation: ten.Settings.PickupConfirmation, SettingsUpdatedAt: ten.Settings.UpdatedAt,
+		DefaultPrepMinutes: prepToDB(ten.Settings.DefaultPrepMinutes),
 	})
 	if err != nil {
 		return fmt.Errorf("insert tenant: %w", err)
@@ -75,6 +78,7 @@ func (t *tx) GetTenant(ctx context.Context, id string) (domain.Tenant, error) {
 		Settings: domain.TenantSettings{
 			AllowedModels: row.AllowedModels, DefaultModel: row.DefaultModel,
 			PickupConfirmation: row.PickupConfirmation, UpdatedAt: row.SettingsUpdatedAt.UTC(),
+			DefaultPrepMinutes: prepFromDB(row.DefaultPrepMinutes),
 		},
 	}, nil
 }
@@ -83,6 +87,7 @@ func (t *tx) SetTenantSettings(ctx context.Context, id string, s domain.TenantSe
 	n, err := t.q.SetTenantSettings(ctx, db.SetTenantSettingsParams{
 		ID: id, AllowedModels: nonNil(s.AllowedModels), DefaultModel: s.DefaultModel,
 		PickupConfirmation: s.PickupConfirmation, SettingsUpdatedAt: s.UpdatedAt,
+		DefaultPrepMinutes: prepToDB(s.DefaultPrepMinutes),
 	})
 	if err != nil {
 		return fmt.Errorf("set tenant settings: %w", err)
@@ -235,4 +240,19 @@ func nonNil[T any](s []T) []T {
 		return []T{}
 	}
 	return s
+}
+
+func prepToDB(p *int) pgtype.Int4 {
+	if p == nil || *p < 0 || *p > math.MaxInt32 {
+		return pgtype.Int4{} // validated to 1..240 before it gets here
+	}
+	return pgtype.Int4{Int32: int32(*p), Valid: true}
+}
+
+func prepFromDB(p pgtype.Int4) *int {
+	if !p.Valid {
+		return nil
+	}
+	v := int(p.Int32)
+	return &v
 }

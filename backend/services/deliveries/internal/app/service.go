@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/raduolivas/dt/backend/pkg/ids"
 	"github.com/raduolivas/dt/backend/services/deliveries/internal/domain"
@@ -20,6 +21,10 @@ type Service struct {
 	Repo  Repo
 	Clock Clock
 	IDs   IDs
+	// Retention serves the nightly retention job.
+	Retention RetentionStore
+	// Log defaults to a discarding logger.
+	Log *slog.Logger
 }
 
 // Create validates the input against the tenant's current settings and

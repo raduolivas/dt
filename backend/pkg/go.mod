@@ -5,6 +5,7 @@ go 1.27.3
 require (
 	connectrpc.com/connect/v2 v2.0.1
 	github.com/caarlos0/env/v11 v11.4.1
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/golang-migrate/migrate/v4 v4.20.1
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/nats-io/nats.go v1.54.0

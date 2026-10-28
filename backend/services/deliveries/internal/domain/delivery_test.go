@@ -531,3 +531,101 @@ func TestReasonAfterErasureIsDropped(t *testing.T) {
 		t.Fatalf("last entry = %+v", last)
 	}
 }
+
+func TestReadyAtBounds(t *testing.T) {
+	cases := []struct {
+		name string
+		at   time.Time
+		bad  bool
+	}{
+		{"now", t0, false},
+		{"1h before", t0.Add(-time.Hour), false},
+		{"just over 1h before", t0.Add(-time.Hour - time.Second), true},
+		{"24h ahead", t0.Add(24 * time.Hour), false},
+		{"just over 24h ahead", t0.Add(24*time.Hour + time.Second), true},
+	}
+	for _, tc := range cases {
+		t.Run("create "+tc.name, func(t *testing.T) {
+			in := validInput()
+			in.ReadyAt = ptr(tc.at)
+			d, _, err := NewDelivery("del_1", "ten_1", "test", in, DefaultTenantSettings(), t0)
+			if tc.bad {
+				wantValidation(t, err, "ready_at", "out_of_range")
+				return
+			}
+			if err != nil || d.ReadyAt == nil || !d.ReadyAt.Equal(tc.at) {
+				t.Fatalf("err = %v, ready_at = %v", err, d)
+			}
+		})
+		t.Run("patch "+tc.name, func(t *testing.T) {
+			d := newDel(t, ModelDirect, PolicyAny)
+			later := t0.Add(10 * time.Minute) // bounds: created - 1h, patch time + 24h
+			at := tc.at
+			switch tc.name {
+			case "24h ahead", "just over 24h ahead":
+				at = later.Add(at.Sub(t0))
+			}
+			_, err := d.Update(Patch{ReadyAt: ptr(ptr(at))}, later)
+			if tc.bad {
+				wantValidation(t, err, "ready_at", "out_of_range")
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestReadyAtPatchLockedAfterPickup(t *testing.T) {
+	ready := ptr(ptr(t0.Add(20 * time.Minute)))
+	for _, s := range []Status{StatusConfirmed, StatusAtPickup} {
+		d := atState(ModelDirect, s, PolicyAny)
+		if _, err := d.Update(Patch{ReadyAt: ready}, t0.Add(time.Minute)); err != nil {
+			t.Fatalf("%s: %v", s, err)
+		}
+	}
+	for _, s := range []Status{StatusPickedUp, StatusArriving, StatusDelivered} {
+		d := atState(ModelDirect, s, PolicyAny)
+		if _, err := d.Update(Patch{ReadyAt: ready}, t0.Add(time.Minute)); !errors.Is(err, ErrInvalidTransition) {
+			t.Fatalf("%s: err = %v", s, err)
+		}
+	}
+}
+
+func TestReadyAtInEvents(t *testing.T) {
+	in := validInput()
+	in.ReadyAt = ptr(t0.Add(15 * time.Minute))
+	d, evs, err := NewDelivery("del_1", "ten_1", "test", in, DefaultTenantSettings(), t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := evs[0].Payload.(DeliveryCreated)
+	if c.ReadyAt == nil || !c.ReadyAt.Equal(*in.ReadyAt) {
+		t.Fatalf("created = %+v", c)
+	}
+	// Change it.
+	nv := t0.Add(30 * time.Minute)
+	evs, err = d.Update(Patch{ReadyAt: ptr(&nv)}, t0.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := evs[0].Payload.(DeliveryUpdated)
+	if !reflect.DeepEqual(u.ChangedFields, []string{"ready_at"}) || u.ReadyAt == nil || !u.ReadyAt.Equal(nv) {
+		t.Fatalf("updated = %+v", u)
+	}
+	// Same value: no event.
+	same := nv
+	if evs, err = d.Update(Patch{ReadyAt: ptr(&same)}, t0.Add(2*time.Minute)); err != nil || len(evs) != 0 {
+		t.Fatalf("same value: %v %v", evs, err)
+	}
+	// Clear it: in changed_fields, value unset.
+	evs, err = d.Update(Patch{ReadyAt: ptr[*time.Time](nil)}, t0.Add(3*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	u = evs[0].Payload.(DeliveryUpdated)
+	if !reflect.DeepEqual(u.ChangedFields, []string{"ready_at"}) || u.ReadyAt != nil || d.ReadyAt != nil {
+		t.Fatalf("cleared = %+v, delivery %v", u, d.ReadyAt)
+	}
+}

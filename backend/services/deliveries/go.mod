@@ -3,7 +3,9 @@ module github.com/raduolivas/dt/backend/services/deliveries
 go 1.27.3
 
 require (
+	connectrpc.com/connect/v2 v2.0.1
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/nats-io/nats.go v1.54.0
 	github.com/raduolivas/dt/backend/gen v0.0.0
 	github.com/raduolivas/dt/backend/pkg v0.0.0
 	google.golang.org/protobuf v1.36.12
@@ -51,7 +53,6 @@ require (
 	github.com/moby/sys/user v0.4.1 // indirect
 	github.com/moby/sys/userns v0.1.0 // indirect
 	github.com/moby/term v0.5.2 // indirect
-	github.com/nats-io/nats.go v1.54.0 // indirect
 	github.com/nats-io/nkeys v0.4.16 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/oklog/ulid/v2 v2.1.2 // indirect

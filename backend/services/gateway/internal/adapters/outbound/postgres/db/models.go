@@ -60,6 +60,12 @@ type Inbox struct {
 	ProcessedAt time.Time
 }
 
+type JobLease struct {
+	Name      string
+	Holder    string
+	ExpiresAt time.Time
+}
+
 type Outbox struct {
 	EventID     string
 	Subject     string
@@ -67,4 +73,20 @@ type Outbox struct {
 	Headers     []byte
 	CreatedAt   time.Time
 	PublishedAt *time.Time
+}
+
+type TrackingLink struct {
+	ID          string
+	TenantID    string
+	Environment string
+	DeliveryID  string
+	TokenHash   []byte
+	CreatedAt   time.Time
+	RevokedAt   *time.Time
+	ExpiresAt   *time.Time
+}
+
+type TrackingLinkExpiry struct {
+	DeliveryID string
+	ExpiresAt  time.Time
 }

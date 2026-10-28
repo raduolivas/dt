@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
 	"time"
 
@@ -115,7 +116,7 @@ func (s *Server) ListApiKeys(ctx context.Context, req *accountsv1.ListApiKeysReq
 func (s *Server) SetTenantSettings(ctx context.Context, req *accountsv1.SetTenantSettingsRequest) (*accountsv1.SetTenantSettingsResponse, error) {
 	st, err := s.svc.SetTenantSettings(ctx, toActor(req.GetActor()), req.GetTenantId(), domain.TenantSettings{
 		AllowedModels: req.GetAllowedModels(), DefaultModel: req.GetDefaultModel(),
-		PickupConfirmation: req.GetPickupConfirmation(),
+		PickupConfirmation: req.GetPickupConfirmation(), DefaultPrepMinutes: prepFromProto(req.DefaultPrepMinutes),
 	})
 	if err != nil {
 		return nil, ToConnect(ctx, s.log, err)
@@ -173,7 +174,24 @@ func toProtoSettings(s domain.TenantSettings) *accountsv1.TenantSettings {
 	return &accountsv1.TenantSettings{
 		AllowedModels: s.AllowedModels, DefaultModel: s.DefaultModel,
 		PickupConfirmation: s.PickupConfirmation, UpdatedAt: timestamppb.New(s.UpdatedAt),
+		DefaultPrepMinutes: prepToProto(s.DefaultPrepMinutes),
 	}
+}
+
+func prepFromProto(p *int32) *int {
+	if p == nil {
+		return nil
+	}
+	v := int(*p)
+	return &v
+}
+
+func prepToProto(p *int) *int32 {
+	if p == nil || *p < 0 || *p > math.MaxInt32 {
+		return nil // validated to 1..240 before it gets here
+	}
+	v := int32(*p)
+	return &v
 }
 
 func ts(t *time.Time) *timestamppb.Timestamp {

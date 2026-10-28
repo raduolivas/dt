@@ -6,6 +6,7 @@
 //
 //	DT_ACCOUNTS_URL        accounts base URL (default http://127.0.0.1:8084)
 //	DT_INTERNAL_RPC_TOKEN  the accounts INTERNAL_RPC_TOKEN (required)
+//	DT_INTERNAL_RPC_TLS_CERT, _KEY, _CA  client certificate files for mTLS (all or none)
 //
 // A key's plaintext secret is printed once on stdout and nowhere else; all
 // other output goes to stderr, except the data a command is asked for
@@ -20,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,13 +38,17 @@ import (
 const usage = `usage:
   dtctl tenant create --name NAME
   dtctl tenant live   --tenant ID --enabled=true|false
-  dtctl tenant settings --tenant ID [--models direct,end_to_end] [--default direct] [--pickup any]
+  dtctl tenant settings --tenant ID [--models direct,end_to_end] [--default direct] [--pickup any] [--prep-minutes N|none]
   dtctl key create    --tenant ID --env test|live [--name N] [--scope S]... [--allow-ip CIDR]...
   dtctl key roll      --tenant ID --key ID
   dtctl key revoke    --tenant ID --key ID
   dtctl key list      --tenant ID --env test|live
 
-env: DT_ACCOUNTS_URL (default http://127.0.0.1:8084), DT_INTERNAL_RPC_TOKEN (required)
+note: "tenant settings" replaces the settings whole: a flag you omit returns to its default (omitting --prep-minutes
+clears the preparation time), so pass every setting you want to keep.
+
+env: DT_ACCOUNTS_URL (default http://127.0.0.1:8084), DT_INTERNAL_RPC_TOKEN (required),
+     DT_INTERNAL_RPC_TLS_CERT, DT_INTERNAL_RPC_TLS_KEY, DT_INTERNAL_RPC_TLS_CA (mTLS; use an https URL)
 `
 
 // actor is who dtctl acts as: the dev owner of every tenant.
@@ -90,6 +96,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		fs.Var(&settings.models, "models", "comma-separated allowed models (default direct,end_to_end)")
 		fs.StringVar(&settings.defaultModel, "default", "direct", "default model")
 		fs.StringVar(&settings.pickup, "pickup", "any", "pickup confirmation: any, courier, store or courier_and_store")
+		fs.Var(&settings.prep, "prep-minutes", "default preparation time, 1-240 minutes, or none (default none)")
 	case "key create":
 		fs.StringVar(&tenant, "tenant", "", "tenant id")
 		fs.StringVar(&env, "env", "", "test or live")
@@ -176,13 +183,15 @@ func call(ctx context.Context, c accountsv1connect.AccountsServiceClient, cmd st
 		res, err := c.SetTenantSettings(ctx, &accountsv1.SetTenantSettingsRequest{
 			Actor: actor, TenantId: tenant, AllowedModels: settings.models,
 			DefaultModel: settings.defaultModel, PickupConfirmation: settings.pickup,
+			DefaultPrepMinutes: settings.prep.v,
 		})
 		if err != nil {
 			return err
 		}
 		st := res.GetSettings()
-		notef(stderr, "tenant %s settings: models=%s default=%s pickup=%s\n", tenant,
-			strings.Join(st.GetAllowedModels(), ","), st.GetDefaultModel(), st.GetPickupConfirmation())
+		notef(stderr, "tenant %s settings: models=%s default=%s pickup=%s prep_minutes=%s\n", tenant,
+			strings.Join(st.GetAllowedModels(), ","), st.GetDefaultModel(), st.GetPickupConfirmation(),
+			prepString(st.DefaultPrepMinutes))
 	case "key create":
 		res, err := c.CreateApiKey(ctx, &accountsv1.CreateApiKeyRequest{
 			Actor: actor, TenantId: tenant, Environment: env, Name: name, Scopes: scopes, AllowedIps: allowIPs,
@@ -231,7 +240,16 @@ func newClient() (accountsv1connect.AccountsServiceClient, error) {
 	if base == "" {
 		base = "http://127.0.0.1:8084"
 	}
-	hc := bearer{c: &http.Client{Timeout: 15 * time.Second}, value: "Bearer " + token}
+	// DT_INTERNAL_RPC_TLS_CERT/_KEY/_CA select mTLS (then the URL is https).
+	tlsCfg, err := rpcauth.ClientTLSFromEnv("DT_INTERNAL_RPC")
+	if err != nil {
+		return nil, err
+	}
+	c := &http.Client{Timeout: 15 * time.Second}
+	if tlsCfg != nil {
+		c.Transport = &http.Transport{TLSClientConfig: tlsCfg}
+	}
+	hc := bearer{c: c, value: "Bearer " + token}
 	return accountsv1connect.NewAccountsServiceClient(connect.NewClient(connecthttp.NewTransport(hc, base))), nil
 }
 
@@ -343,6 +361,33 @@ func (l *list) Set(v string) error { *l = append(*l, v); return nil }
 type tenantSettings struct {
 	models               csv
 	defaultModel, pickup string
+	prep                 prepMinutes
+}
+
+// prepMinutes is the --prep-minutes flag: N in 1..240, or "none" (unset).
+// The server validates the range.
+type prepMinutes struct{ v *int32 }
+
+func (p *prepMinutes) String() string { return prepString(p.v) }
+func (p *prepMinutes) Set(s string) error {
+	if s == "none" {
+		p.v = nil
+		return nil
+	}
+	n, err := strconv.ParseInt(s, 10, 32)
+	if err != nil {
+		return fmt.Errorf("want a number of minutes or none: %w", err)
+	}
+	v := int32(n)
+	p.v = &v
+	return nil
+}
+
+func prepString(p *int32) string {
+	if p == nil {
+		return "none"
+	}
+	return strconv.Itoa(int(*p))
 }
 
 // csv is a flag.Value that takes one comma-separated list.

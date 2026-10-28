@@ -451,7 +451,7 @@ func TestGetMeMatchesContract(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &me); err != nil {
 		t.Fatal(err)
 	}
-	if me.TenantId != tenantID || me.Environment != api.Live ||
+	if me.TenantId != tenantID || me.Environment != api.EnvironmentLive ||
 		me.Credential.Type != api.SecretKey || me.Credential.Id != k.rec.ID {
 		t.Fatalf("me = %+v", me)
 	}
@@ -642,8 +642,47 @@ func TestMiddlewareHookOrder(t *testing.T) {
 func TestRoutesTable(t *testing.T) {
 	t.Parallel()
 	rs := httpapi.Routes(httpapi.Deps{})
-	if len(rs) != 10 { // me.get plus the nine delivery and courier routes
-		t.Fatalf("routes = %d, want 10", len(rs))
+	if len(rs) != 16 { // me.get, the ten delivery and courier routes, the four tracking routes, the simulator
+		t.Fatalf("routes = %d, want 16", len(rs))
+	}
+	type props struct {
+		method, pattern string
+		scope           domain.Scope
+		bucket          string
+		auditReads      bool
+		maxBody         int64
+		noIdempotency   bool
+		noAudit         bool
+	}
+	want := map[string]props{
+		"deliveries.get_tracking":      {http.MethodGet, "/v1/deliveries/{id}/tracking", domain.ScopeDeliveriesRead, "", false, 0, false, false},
+		"deliveries.list_trail":        {http.MethodGet, "/v1/deliveries/{id}/trail", domain.ScopeDeliveriesRead, "", true, 0, false, false},
+		"deliveries.list_proof_points": {http.MethodGet, "/v1/deliveries/{id}/proof-points", domain.ScopeDeliveriesRead, "", true, 0, false, false},
+		"couriers.report_locations": {http.MethodPost, "/v1/couriers/{id}/locations", domain.ScopeCouriersWrite,
+			httpapi.RateBucketRelay, false, 16 << 10, true, true},
+		// A normal write (idempotent, audited), for test keys only.
+		"deliveries.simulate": {http.MethodPost, "/v1/test/deliveries/{id}/simulate", domain.ScopeDeliveriesWrite, "", false, 0, false, false},
+	}
+	for _, r := range rs {
+		w, ok := want[r.Name]
+		if !ok {
+			if r.RateBucket != "" || r.AuditReads || r.MaxBody != 0 || r.NoIdempotency || r.NoAudit {
+				t.Errorf("route %s has tracking-only settings: %+v", r.Name, r)
+			}
+			continue
+		}
+		delete(want, r.Name)
+		got := props{r.Method, r.Pattern, r.Scope, r.RateBucket, r.AuditReads, r.MaxBody, r.NoIdempotency, r.NoAudit}
+		wantEnv, wantStatus := httpapi.AnyEnv, http.StatusOK
+		if r.Name == "deliveries.simulate" {
+			wantEnv, wantStatus = httpapi.TestOnly, http.StatusAccepted
+		}
+		if got != w || r.Env != wantEnv || r.SuccessStatus != wantStatus {
+			t.Errorf("route %s = %+v, want %+v", r.Name, got, w)
+		}
+	}
+	if len(want) != 0 {
+		t.Errorf("missing routes: %v", want)
 	}
 	r := rs[0]
 	if r.Name != "me.get" || r.Method != http.MethodGet || r.Pattern != "/v1/me" || r.Scope != "" ||

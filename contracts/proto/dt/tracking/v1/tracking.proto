@@ -1,0 +1,177 @@
+syntax = "proto3";
+package dt.tracking.v1;
+
+import "dt/events/v1/envelope.proto";
+import "dt/events/v1/deliveries.proto";
+import "google/protobuf/timestamp.proto";
+
+// TrackingService is the internal tracking API, called by the gateway. It is
+// never routed publicly and requires
+// "Authorization: Bearer <INTERNAL_RPC_TOKEN>". Errors carry a "dt-code"
+// response trailer (snake_case: not_found, validation_failed,
+// simulation_state, tracking_unavailable); over the Connect protocol it
+// arrives as the HTTP header "Trailer-Dt-Code".
+//
+// The response types PartnerView, TrailPage and ProofPoints, and IngestRequest
+// and IngestResponse, are named for what they are, not for the RPC.
+service TrackingService {
+  // buf:lint:ignore RPC_REQUEST_STANDARD_NAME
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  rpc IngestLocations(IngestRequest) returns (IngestResponse);
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  rpc GetPartnerView(GetPartnerViewRequest) returns (PartnerView);
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  rpc ListTrail(ListTrailRequest) returns (TrailPage);
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  rpc ListProofPoints(ListProofPointsRequest) returns (ProofPoints);
+  rpc Simulate(SimulateRequest) returns (SimulateResponse);
+  // GetSnapshot returns the customer's viewer snapshot (the visibility
+  // filter applied), for the gateway's tracking session exchange.
+  rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotResponse);
+}
+
+// Scope is the tenant, environment and caller every request runs under.
+message Scope {
+  string tenant_id = 1;
+  dt.events.v1.Environment environment = 2;
+  string actor_id = 3; // the API key id
+}
+
+// Fix is one courier GPS fix.
+message Fix {
+  google.protobuf.Timestamp t = 1;
+  double lat = 2;
+  double lng = 3;
+  double accuracy_m = 4;
+  optional double speed_mps = 5;
+  optional double heading_deg = 6;
+  string source = 7; // "relay" | "simulator" (later "sdk" | "link"); set by the server
+}
+
+message IngestRequest {
+  Scope scope = 1;
+  string courier_id = 2; // a cou_ id
+  repeated Fix fixes = 3; // at most 50
+  string source = 4; // "relay" | "simulator"
+}
+
+message IngestResponse {
+  int32 accepted = 1;
+  int32 dropped = 2;
+}
+
+message GetPartnerViewRequest {
+  Scope scope = 1;
+  string delivery_id = 2;
+}
+
+message EtaWindow {
+  int32 min_seconds = 1;
+  int32 max_seconds = 2;
+}
+
+message PartnerCourier {
+  string id = 1;
+  string external_id = 2;
+  string display_name = 3;
+  string vehicle = 4;
+  optional string photo_url = 5;
+  dt.events.v1.LatLng position = 6; // unset = no fix yet
+  optional double heading_deg = 7;
+  optional double speed_kmh = 8;
+  google.protobuf.Timestamp position_at = 9;
+  string signal = 10; // "pending" | "live" | "stale" | "lost"
+}
+
+message RouteLegs {
+  repeated dt.events.v1.LatLng to_pickup = 1; // empty = none
+  repeated dt.events.v1.LatLng to_dropoff = 2;
+  bool has_to_pickup = 3;
+}
+
+message TimelineEntry {
+  string status = 1;
+  google.protobuf.Timestamp at = 2;
+}
+
+// PartnerView is the live view without the visibility filter.
+message PartnerView {
+  string delivery_id = 1;
+  string delivery_model = 2;
+  string status = 3;
+  PartnerCourier courier = 4; // unset = none assigned
+  dt.events.v1.LatLng pickup = 5;
+  string pickup_name = 6;
+  dt.events.v1.LatLng dropoff = 7;
+  optional string dropoff_label = 8;
+  RouteLegs route = 9;
+  optional int32 eta_seconds = 10;
+  EtaWindow eta_window = 11; // unset = none
+  string eta_state = 12; // "calculating" | "estimated" | "live"
+  string eta_quality = 13; // "osrm" | "estimated"
+  optional double distance_remaining_m = 14;
+  optional double progress = 15;
+  repeated TimelineEntry timeline = 16;
+  google.protobuf.Timestamp updated_at = 17;
+  int64 version = 18;
+}
+
+message ListTrailRequest {
+  Scope scope = 1;
+  string delivery_id = 2;
+  string starting_after = 3; // opaque cursor from the previous page
+  int32 limit = 4; // 0 = default 500; max 1000
+}
+
+message TrailPage {
+  repeated Fix fixes = 1;
+  bool has_more = 2;
+  bool raw_available = 3; // false once raw fixes are gone; `simplified` is then the route
+  repeated dt.events.v1.LatLng simplified = 4;
+  string next_cursor = 5; // pass as starting_after when has_more
+}
+
+message ListProofPointsRequest {
+  Scope scope = 1;
+  string delivery_id = 2;
+}
+
+message ProofPoint {
+  string status = 1; // at_pickup | pickup_confirmed | arriving | delivered | failed
+  google.protobuf.Timestamp at = 2;
+  string actor = 3; // "partner" | "courier" | "system"
+  dt.events.v1.LatLng position = 4; // unset = no fix within 2 minutes
+  google.protobuf.Timestamp position_at = 5;
+  optional double accuracy_m = 6;
+}
+
+message ProofPoints {
+  repeated ProofPoint points = 1;
+}
+
+message SignalGap {
+  int32 after_s = 1;
+  int32 duration_s = 2;
+}
+
+message SimulateRequest {
+  Scope scope = 1;
+  string delivery_id = 2;
+  double speed_factor = 3; // 0 = 1; 1..20
+  SignalGap gap = 4; // unset = no gap
+}
+
+message SimulateResponse {
+  string simulation_id = 1; // a sim_ id
+}
+
+message GetSnapshotRequest {
+  Scope scope = 1;
+  string delivery_id = 2;
+}
+
+message GetSnapshotResponse {
+  // snapshot_json is the TrackingSnapshot of the public API (OpenAPI
+  // components.schemas.TrackingSnapshot), exactly as the stream sends it.
+  bytes snapshot_json = 1;
+}

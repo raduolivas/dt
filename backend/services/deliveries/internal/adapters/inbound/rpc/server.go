@@ -134,7 +134,11 @@ func (s *Server) ReportEvent(ctx context.Context, req *deliveriesv1.ReportEventR
 	if err != nil {
 		return nil, s.fail(ctx, err)
 	}
-	d, outcome, err := s.svc.Report(ctx, sc, req.GetId(), toReport(req))
+	rep, err := toReport(req)
+	if err != nil {
+		return nil, s.fail(ctx, err)
+	}
+	d, outcome, err := s.svc.Report(ctx, sc, req.GetId(), rep)
 	if err != nil {
 		return nil, s.fail(ctx, err)
 	}

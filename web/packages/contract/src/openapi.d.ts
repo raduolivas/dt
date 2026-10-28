@@ -39,7 +39,7 @@ export interface paths {
         put?: never;
         /**
          * Create a delivery
-         * @description Creates a delivery in `confirmed` status. `external_id` is unique per tenant and environment. Requires scope `deliveries:write`. Problem codes: `validation_failed` (400), `external_id_conflict` (409, the external id is already used by another delivery), `model_not_allowed` (422, the tenant does not allow the requested model).
+         * @description Creates a delivery in `confirmed` status. `external_id` is unique per tenant and environment. Requires scope `deliveries:write`. Problem codes: `validation_failed` (400), `external_id_conflict` (409, the external id is already used by another delivery), `model_not_allowed` (422, the tenant does not allow the requested model). The response carries the customer's tracking link in `tracking`; it is `null` if issuing the link failed, in which case call `rotateTrackingLink`.
          */
         post: operations["createDelivery"];
         delete?: never;
@@ -73,7 +73,7 @@ export interface paths {
         head?: never;
         /**
          * Update a delivery
-         * @description Changes the dropoff location, dropoff label, notes or metadata. Send `null` to clear `dropoff_label` or `notes` (the dropoff location cannot be cleared); a `metadata` value replaces the whole map and `null` clears it. Requires scope `deliveries:write`. Problem codes: `validation_failed` (400), `not_found` (404), `dropoff_locked` (409, the delivery is past pickup or final, so the dropoff location cannot change).
+         * @description Changes the dropoff location, dropoff label, notes, metadata or ready time. Send `null` to clear `dropoff_label`, `notes` or `ready_at` (the dropoff location cannot be cleared); a `metadata` value replaces the whole map and `null` clears it. Requires scope `deliveries:write`. Problem codes: `validation_failed` (400), `not_found` (404), `dropoff_locked` (409, the delivery is past pickup or final, so the dropoff location cannot change).
          */
         patch: operations["updateDelivery"];
         trace?: never;
@@ -202,6 +202,222 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/deliveries/{id}/tracking-link/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rotate the tracking link
+         * @description Invalidates the delivery's current tracking link at once and returns a new one. Viewers already connected through the old link are disconnected within a second. When the delivery has no link (for example because issuing it failed at creation) a link is issued. Requires scope `deliveries:write`. Problem codes: `not_found` (404), `tracking_unavailable` (503: the link could not be rotated or the revocation not published; retry with the same Idempotency-Key, which rotates again).
+         */
+        post: operations["rotateTrackingLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/deliveries/{id}/tracking": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get the live tracking view
+         * @description The live view of a delivery without the visibility filter the customer's viewer applies: the courier's position, heading, speed and signal are always included once a courier is assigned, whatever the delivery model and status. Available in every state; after a final state it returns the last values. Requires scope `deliveries:read`. Problem codes: `not_found` (404), `tracking_unavailable` (503).
+         */
+        get: operations["getDeliveryTracking"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/deliveries/{id}/trail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * List the courier trail
+         * @description The courier's accepted fixes for the delivery window (from assignment, or from creation in the Direct model, until the delivery is final), oldest first. Raw fixes are kept for 30 days; afterwards `raw_available` is `false`, `data` is empty and `simplified` holds the route. With `format=geojson` the response is a GeoJSON FeatureCollection (`application/geo+json`) with one LineString and one Point per fix. Every read is audited. Requires scope `deliveries:read`. Problem codes: `validation_failed` (400), `not_found` (404), `tracking_unavailable` (503).
+         */
+        get: operations["listDeliveryTrail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/deliveries/{id}/proof-points": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * List the proof points
+         * @description One entry per reported status in which the courier's position matters (`at_pickup`, `pickup_confirmed`, `arriving`, `delivered`, `failed`), with the latest accepted fix from the 2 minutes before it, or `position: null` when there was none. Every read is audited. Requires scope `deliveries:read`. Problem codes: `not_found` (404), `tracking_unavailable` (503).
+         */
+        get: operations["listDeliveryProofPoints"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/couriers/{id}/locations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The courier id (`cou_…`), as returned when you upserted the courier.
+                 * @example cou_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: components["schemas"]["CourierId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report courier locations
+         * @description Relays GPS fixes your own courier app collects. A batch holds at most 50 fixes and 16 KB. A fix is accepted only while the courier has an assigned delivery that is not final, and it applies to each of those deliveries; others are counted as `dropped`, as are fixes that are implausible (over 200 km/h, or a jump over 1 km in under 10 s) or dated more than 5 seconds in the future. Fixes older than 2 minutes are stored but do not move the live position. Has its own rate limit (1 request/s per courier, burst 5; 500 requests/s per tenant). Requires scope `couriers:write`. Problem codes: `validation_failed` (400), `not_found` (404, no such courier), `payload_too_large` (413), `rate_limited` (429), `tracking_unavailable` (503).
+         */
+        post: operations["reportCourierLocations"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/test/deliveries/{id}/simulate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Simulate a delivery
+         * @description Sandbox only. Drives a virtual courier through the delivery: it emits location fixes through the same path as the relay and reports the courier's status events the delivery's model requires. If no courier is assigned, a test courier (`external_id` `dt-simulator`) is created and assigned. Runs in the background; follow it with the tracking endpoints. Requires scope `deliveries:write` and a test key; a live key gets `403 environment_not_allowed`. Problem codes: `validation_failed` (400), `not_found` (404), `simulation_state` (409, the delivery is final or in a state the simulator cannot drive), `tracking_unavailable` (503).
+         */
+        post: operations["simulateDelivery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tracking/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a tracking session
+         * @description Exchanges the tracking link token for a viewer token (valid 15 minutes) and returns the current snapshot. No API key is involved; this is called from the customer's browser or webview. Any origin may call it. Rate limited to 10 requests/minute per IP and 30/minute per link. Problem codes: `link_invalid` (401, the token is unknown, rotated or expired), `rate_limited` (429), `tracking_unavailable` (503).
+         */
+        post: operations["createTrackingSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tracking/session/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Renew a viewer token
+         * @description Takes a viewer token that is still valid and returns a new one, provided the tracking link is still valid. The link token is not needed again. Rate limited with `/tracking/session`. Problem codes: `viewer_token_invalid` (401, the viewer token is missing, expired, malformed or its link was rotated or has expired), `rate_limited` (429), `tracking_unavailable` (503).
+         */
+        post: operations["refreshTrackingSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tracking/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the current snapshot
+         * @description The current snapshot, for clients that poll instead of streaming. At most 30 requests/minute per viewer token. Problem codes: `viewer_token_invalid` (401), `rate_limited` (429), `tracking_unavailable` (503).
+         */
+        get: operations["getTrackingSnapshot"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -313,13 +529,23 @@ export interface components {
             item_count?: number;
             notes?: string;
             metadata?: components["schemas"]["Metadata"];
+            /**
+             * Format: date-time
+             * @description When the order will be ready for pickup. Between 1 hour before and 24 hours after now. Drives the ETA before pickup; without it the tenant's default preparation time applies.
+             */
+            ready_at?: string;
         };
-        /** @description Only the fields sent change. `null` clears `dropoff_label`, `notes` and `metadata`; the dropoff location cannot be cleared. */
+        /** @description Only the fields sent change. `null` clears `dropoff_label`, `notes`, `metadata` and `ready_at`; the dropoff location cannot be cleared. */
         UpdateDeliveryRequest: {
             dropoff?: {
                 location: components["schemas"]["LatLng"];
             };
             dropoff_label?: string | null;
+            /**
+             * Format: date-time
+             * @description When the order will be ready for pickup (between 1 hour before and 24 hours after now); `null` clears it. Changeable until pickup.
+             */
+            ready_at?: string | null;
             notes?: string | null;
             /**
              * @description Up to 50 string key/value pairs. Keys are 1 to 40 characters of `a-zA-Z0-9_`; values are at most 500 characters.
@@ -416,6 +642,11 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+            /**
+             * Format: date-time
+             * @description When the order is expected to be ready for pickup, if you gave one.
+             */
+            ready_at: string | null;
         };
         DeliveryList: {
             data: components["schemas"]["Delivery"][];
@@ -424,6 +655,243 @@ export interface components {
         DeliveryEventResult: {
             outcome: components["schemas"]["DeliveryEventOutcome"];
             delivery: components["schemas"]["Delivery"];
+        };
+        /** @description A customer-facing tracking link. Put `url` in an SMS, email or push notification. */
+        TrackingLink: {
+            /**
+             * Format: uri
+             * @description The hosted tracking page for this delivery.
+             */
+            url: string;
+            /** @description The link token; the part of `url` after `/t/`. Treat it like a password for this delivery. */
+            token: string;
+            /**
+             * Format: date-time
+             * @description `null` until the delivery is final; then 30 minutes after it ended.
+             */
+            expires_at: string | null;
+        };
+        /** @description The created delivery with its tracking link. */
+        CreateDeliveryResponse: components["schemas"]["Delivery"] & {
+            /** @description `null` when the link could not be issued; the delivery is still created. Call `rotateTrackingLink` to issue one. */
+            tracking: components["schemas"]["TrackingLink"] | null;
+        };
+        /**
+         * @description `pending`: the courier is visible but no fix has arrived yet. `live`: the last fix is at most 30 seconds old. `stale`: older than 30 seconds. `lost`: older than 5 minutes (or still `pending` after 5 minutes).
+         * @enum {string}
+         */
+        CourierSignal: "pending" | "live" | "stale" | "lost";
+        /**
+         * @description `calculating`: the ready time is unknown, so there is no ETA yet. `estimated`: before pickup, preparation plus drive, shown as `eta_window`. `live`: after pickup, the drive time from the courier's position.
+         * @enum {string}
+         */
+        EtaState: "calculating" | "estimated" | "live";
+        /**
+         * @description `osrm`: from the routing engine. `estimated`: a fallback (straight-line or last known route) because routing was unavailable or the courier signal is stale.
+         * @enum {string}
+         */
+        EtaQuality: "osrm" | "estimated";
+        /** @description The expected arrival range in seconds from now. Set before pickup; `null` otherwise. */
+        EtaWindow: {
+            min_seconds: number;
+            max_seconds: number;
+        } | null;
+        /** @description `[lat, lng]`. */
+        LatLngPair: number[];
+        TrackingRoute: {
+            /** @description The courier's route to the pickup. `null` in the Direct model and once picked up. */
+            to_pickup: components["schemas"]["LatLngPair"][] | null;
+            to_dropoff: components["schemas"]["LatLngPair"][];
+        };
+        TrackingTimelineEntry: {
+            status: components["schemas"]["DeliveryStatus"];
+            /** Format: date-time */
+            at: string;
+        };
+        /** @description The courier as the customer sees them. */
+        TrackingCourier: {
+            display_name: string;
+            vehicle: components["schemas"]["Vehicle"];
+            photo_url: string | null;
+            /** @description `null` while `signal` is `pending`. */
+            position: components["schemas"]["LatLng"] | null;
+            heading_deg: number | null;
+            speed_kmh: number | null;
+            /** Format: date-time */
+            position_at: string | null;
+            signal: components["schemas"]["CourierSignal"];
+        };
+        /** @description The assigned courier, always with their position and your own ids. */
+        PartnerCourier: components["schemas"]["TrackingCourier"] & {
+            id: components["schemas"]["CourierId"];
+            external_id: components["schemas"]["ExternalId"];
+        };
+        /** @description What the customer's tracking page shows. `courier` is `null` while the courier is not visible (End-to-end: from assignment; Direct: from pickup) and `route.to_pickup` is `null` in the Direct model. Clients ignore a snapshot whose `version` is not greater than the last one applied. */
+        TrackingSnapshot: {
+            delivery_id: components["schemas"]["DeliveryId"];
+            delivery_model: components["schemas"]["DeliveryModel"];
+            status: components["schemas"]["DeliveryStatus"];
+            courier: components["schemas"]["TrackingCourier"] | null;
+            pickup: {
+                location: components["schemas"]["LatLng"];
+                name: string;
+            };
+            dropoff: {
+                location: components["schemas"]["LatLng"];
+                label: string | null;
+            };
+            route: components["schemas"]["TrackingRoute"];
+            /** @description Seconds until arrival; the midpoint of `eta_window` before pickup. `null` while `eta_state` is `calculating`. */
+            eta_seconds: number | null;
+            eta_window: components["schemas"]["EtaWindow"];
+            eta_state: components["schemas"]["EtaState"];
+            eta_quality: components["schemas"]["EtaQuality"];
+            distance_remaining_m: number | null;
+            progress: number | null;
+            timeline: components["schemas"]["TrackingTimelineEntry"][];
+            /** Format: date-time */
+            updated_at: string;
+            /**
+             * Format: int64
+             * @description Increases monotonically per delivery.
+             */
+            version: number;
+        };
+        /** @description The live view for the partner. The same fields as `TrackingSnapshot`, but `courier` is `null` only when none is assigned, and carries `id` and `external_id`. */
+        PartnerView: {
+            delivery_id: components["schemas"]["DeliveryId"];
+            delivery_model: components["schemas"]["DeliveryModel"];
+            status: components["schemas"]["DeliveryStatus"];
+            courier: components["schemas"]["PartnerCourier"] | null;
+            pickup: {
+                location: components["schemas"]["LatLng"];
+                name: string;
+            };
+            dropoff: {
+                location: components["schemas"]["LatLng"];
+                label: string | null;
+            };
+            route: components["schemas"]["TrackingRoute"];
+            eta_seconds: number | null;
+            eta_window: components["schemas"]["EtaWindow"];
+            eta_state: components["schemas"]["EtaState"];
+            eta_quality: components["schemas"]["EtaQuality"];
+            distance_remaining_m: number | null;
+            progress: number | null;
+            timeline: components["schemas"]["TrackingTimelineEntry"][];
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version: number;
+        };
+        TrailFix: {
+            /** Format: date-time */
+            t: string;
+            /** Format: double */
+            lat: number;
+            /** Format: double */
+            lng: number;
+            accuracy_m: number;
+            speed_mps: number | null;
+            heading_deg: number | null;
+            /** @description Where the fix came from (`relay` or `simulator`). */
+            source: string;
+        };
+        TrailPage: {
+            data: components["schemas"]["TrailFix"][];
+            has_more: boolean;
+            /** @description Pass as `starting_after` for the next page; `null` on the last page. */
+            next_cursor: string | null;
+            /** @description `false` once the raw fixes were deleted (after 30 days or on erasure). */
+            raw_available: boolean;
+            /** @description The simplified route; set when `raw_available` is `false`. */
+            simplified: components["schemas"]["LatLngPair"][] | null;
+        };
+        /** @description A GeoJSON FeatureCollection (coordinates are `[lng, lat]`). */
+        TrailGeoJson: {
+            /** @enum {string} */
+            type: "FeatureCollection";
+            features: {
+                /** @enum {string} */
+                type: "Feature";
+                geometry: {
+                    /** @enum {string} */
+                    type: "LineString" | "Point";
+                    coordinates: unknown[];
+                };
+                properties: Record<string, never>;
+            }[];
+        };
+        ProofPoint: {
+            status: components["schemas"]["DeliveryEventType"];
+            /** Format: date-time */
+            at: string;
+            /** @enum {string} */
+            actor: "partner" | "courier" | "system";
+            /** @description `null` when no fix was received in the 2 minutes before `at`. */
+            position: components["schemas"]["LatLng"] | null;
+            /** Format: date-time */
+            position_at: string | null;
+            accuracy_m: number | null;
+        };
+        ProofPointList: {
+            data: components["schemas"]["ProofPoint"][];
+        };
+        CourierFix: {
+            /**
+             * Format: date-time
+             * @description When the fix was taken. At most 5 seconds after receipt.
+             */
+            t: string;
+            /** Format: double */
+            lat: number;
+            /** Format: double */
+            lng: number;
+            accuracy_m: number;
+            speed_mps?: number;
+            heading_deg?: number;
+        };
+        ReportCourierLocationsRequest: {
+            fixes: components["schemas"]["CourierFix"][];
+        };
+        ReportCourierLocationsResult: {
+            accepted: number;
+            dropped: number;
+        };
+        SimulateDeliveryRequest: {
+            /**
+             * @description How many times faster than real time the courier drives.
+             * @default 1
+             */
+            speed_factor: number;
+            /** @description Stop sending fixes for a while, to test the stale and lost states. */
+            signal_gap?: {
+                /** @description Seconds of simulated time after the start. */
+                after_s: number;
+                /** @description Seconds of real time without fixes, so the stale (30 s) and lost (5 min) states show at any speed factor. The courier keeps driving at real-time speed meanwhile. */
+                duration_s: number;
+            };
+        };
+        SimulationStarted: {
+            simulation_id: string;
+        };
+        CreateTrackingSessionRequest: {
+            /** @description The tracking link token. */
+            token: string;
+        };
+        TrackingSession: {
+            /** @description A short-lived bearer token for the snapshot and stream endpoints. */
+            viewer_token: string;
+            /** Format: date-time */
+            expires_at: string;
+            snapshot: components["schemas"]["TrackingSnapshot"];
+            /** @description Always `null` for now. */
+            branding: null;
+        };
+        ViewerTokenRefresh: {
+            viewer_token: string;
+            /** Format: date-time */
+            expires_at: string;
         };
     };
     responses: {
@@ -475,6 +943,26 @@ export interface components {
         };
         /** @description The resource does not exist for this tenant and environment (`not_found`). Resources of other tenants or environments are never revealed. */
         NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The viewer token is missing, malformed, expired, or its tracking link was rotated or has expired (`viewer_token_invalid`). Start a new session with the link token. */
+        ViewerTokenInvalid: {
+            headers: {
+                /** @description Always `Bearer`. */
+                "WWW-Authenticate"?: string;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The tracking service cannot be reached right now (`tracking_unavailable`). Retry shortly. */
+        TrackingUnavailable: {
             headers: {
                 [name: string]: unknown;
             };
@@ -594,13 +1082,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The created delivery. */
+            /** @description The created delivery, with its tracking link. */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Delivery"];
+                    "application/json": components["schemas"]["CreateDeliveryResponse"];
                 };
             };
             400: components["responses"]["ValidationFailed"];
@@ -937,6 +1425,317 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             413: components["responses"]["PayloadTooLarge"];
             429: components["responses"]["TooManyRequests"];
+        };
+    };
+    rotateTrackingLink: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Client-chosen key that makes a POST safe to retry (1 to 255 printable ASCII characters). A retry with the same key and body replays the first response for 24 hours; a different body is refused. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The new tracking link. `expires_at` is `null` until the delivery is final, then 30 minutes after it ended. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackingLink"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["TrackingUnavailable"];
+        };
+    };
+    getDeliveryTracking: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The live view. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PartnerView"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["TrackingUnavailable"];
+        };
+    };
+    listDeliveryTrail: {
+        parameters: {
+            query?: {
+                /** @description Response format. */
+                format?: "json" | "geojson";
+                /** @description Page size. */
+                limit?: number;
+                /** @description The `next_cursor` of the previous page. */
+                starting_after?: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of the trail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrailPage"];
+                    "application/geo+json": components["schemas"]["TrailGeoJson"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["TrackingUnavailable"];
+        };
+    };
+    listDeliveryProofPoints: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The proof points, oldest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProofPointList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["TrackingUnavailable"];
+        };
+    };
+    reportCourierLocations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The courier id (`cou_…`), as returned when you upserted the courier.
+                 * @example cou_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: components["schemas"]["CourierId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportCourierLocationsRequest"];
+            };
+        };
+        responses: {
+            /** @description How many fixes were accepted and dropped. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportCourierLocationsResult"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The batch is larger than 16 KB (`payload_too_large`). */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["TrackingUnavailable"];
+        };
+    };
+    simulateDelivery: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Client-chosen key that makes a POST safe to retry (1 to 255 printable ASCII characters). A retry with the same key and body replays the first response for 24 hours; a different body is refused. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /**
+                 * @description The delivery id.
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SimulateDeliveryRequest"];
+            };
+        };
+        responses: {
+            /** @description The simulation was started. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimulationStarted"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description `simulation_state`: the delivery is final or in a state the simulator cannot drive. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["TrackingUnavailable"];
+        };
+    };
+    createTrackingSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTrackingSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description The viewer token and the current snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackingSession"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            /** @description `link_invalid`: the token is unknown, rotated or expired. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["TrackingUnavailable"];
+        };
+    };
+    refreshTrackingSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A new viewer token. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ViewerTokenRefresh"];
+                };
+            };
+            401: components["responses"]["ViewerTokenInvalid"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["TrackingUnavailable"];
+        };
+    };
+    getTrackingSnapshot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackingSnapshot"];
+                };
+            };
+            401: components["responses"]["ViewerTokenInvalid"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["TrackingUnavailable"];
         };
     };
 }

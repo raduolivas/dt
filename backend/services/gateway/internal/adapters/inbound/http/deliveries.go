@@ -29,6 +29,9 @@ type deliveriesAPI struct {
 	c      deliveriesv1connect.DeliveriesServiceClient
 	purger app.IdempotencyPurger // nil: no purge on erasure
 	log    *slog.Logger
+	// links issues tracking links (nil: none); trackingBase prefixes their url.
+	links        TrackingLinkIssuer
+	trackingBase string
 }
 
 // Coordinates use the generated api.LatLng (float64, format: double in the
@@ -62,6 +65,7 @@ type deliveryJSON struct {
 	PersonalDataErased  bool                  `json:"personal_data_erased"`
 	CreatedAt           time.Time             `json:"created_at"`
 	UpdatedAt           time.Time             `json:"updated_at"`
+	ReadyAt             *time.Time            `json:"ready_at"`
 }
 
 type courierRefJSON struct {
@@ -95,6 +99,10 @@ func toDeliveryJSON(d *deliveriesv1.Delivery) deliveryJSON {
 	}
 	if out.Metadata == nil {
 		out.Metadata = map[string]string{}
+	}
+	if t := d.GetReadyAt(); t != nil {
+		v := t.AsTime()
+		out.ReadyAt = &v
 	}
 	out.Pickup.Name = d.GetPickup().GetName()
 	out.Pickup.Location = api.LatLng{Lat: d.GetPickup().GetLocation().GetLat(), Lng: d.GetPickup().GetLocation().GetLng()}
@@ -169,12 +177,17 @@ func (a *deliveriesAPI) create(w http.ResponseWriter, r *http.Request) {
 		ItemCount    *int32            `json:"item_count"`
 		Notes        *string           `json:"notes"`
 		Metadata     map[string]string `json:"metadata"`
+		ReadyAt      *time.Time        `json:"ready_at"`
 	}
 	if !decodeBody(w, r, &in) {
 		return
 	}
+	var readyAt *timestamppb.Timestamp
+	if in.ReadyAt != nil {
+		readyAt = timestamppb.New(*in.ReadyAt)
+	}
 	res, err := callRPC(r.Context(), func(ctx context.Context) (*deliveriesv1.CreateDeliveryResponse, error) {
-		return a.c.CreateDelivery(ctx, &deliveriesv1.CreateDeliveryRequest{
+		return a.c.CreateDelivery(ctx, &deliveriesv1.CreateDeliveryRequest{ReadyAt: readyAt,
 			Scope: sc, ExternalId: in.ExternalID, DeliveryModel: in.DeliveryModel,
 			Pickup:       &deliveriesv1.Pickup{Location: toLatLng(in.Pickup.Location), Name: in.Pickup.Name},
 			Dropoff:      &deliveriesv1.Dropoff{Location: toLatLng(in.Dropoff.Location), Label: in.Dropoff.Label},
@@ -187,7 +200,13 @@ func (a *deliveriesAPI) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	SetAuditTarget(r, res.GetDelivery().GetId())
-	writeJSON(w, http.StatusCreated, toDeliveryJSON(res.GetDelivery()))
+	out := struct {
+		deliveryJSON
+		Tracking *trackingLinkJSON `json:"tracking"`
+	}{deliveryJSON: toDeliveryJSON(res.GetDelivery())}
+	out.Tracking = a.issueLink(r, res.GetDelivery().GetId())
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusCreated, out)
 }
 
 func (a *deliveriesAPI) list(w http.ResponseWriter, r *http.Request) {
@@ -296,6 +315,17 @@ func (a *deliveriesAPI) update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		*f.dst = &s
+	}
+	if m, present := raw["ready_at"]; present {
+		paths = append(paths, "ready_at")
+		if !isNull(m) {
+			var t time.Time
+			if err := json.Unmarshal(m, &t); err != nil {
+				bad()
+				return
+			}
+			req.ReadyAt = timestamppb.New(t)
+		}
 	}
 	if m, present := raw["metadata"]; present {
 		paths = append(paths, "metadata")
@@ -426,4 +456,8 @@ func (a *deliveriesAPI) reply(w http.ResponseWriter, r *http.Request, d *deliver
 		return
 	}
 	writeJSON(w, http.StatusOK, toDeliveryJSON(d))
+}
+
+func deliveriesGetRequest(sc *deliveriesv1.Scope, id string) *deliveriesv1.GetDeliveryRequest {
+	return &deliveriesv1.GetDeliveryRequest{Scope: sc, Id: id}
 }

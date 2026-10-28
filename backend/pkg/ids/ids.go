@@ -19,6 +19,10 @@ const (
 	// Delivery and Courier identify the deliveries service's entities.
 	Delivery = "del"
 	Courier  = "cou"
+	// TrackingLink identifies a partner-issued tracking link; Simulation a
+	// sandbox simulator run.
+	TrackingLink = "tl"
+	Simulation   = "sim"
 )
 
 var (

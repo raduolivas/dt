@@ -1,0 +1,202 @@
+name: deploy-staging
+
+# Deploys every push to main once CI has passed on it (and on demand from
+# main). Infra: infra/aws/staging; owner steps: docs/runbooks/staging.md.
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time, never cancelled half-way.
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-central-1
+  CLUSTER: dt-staging
+  SERVICES: gateway deliveries tracking webhooks accounts
+  API_URL: https://api.staging.deliveryontrack.io
+
+jobs:
+  deploy:
+    # Skipped until the owner has applied staging and set the variable
+    # AWS_DEPLOY_ROLE_ARN (docs/runbooks/staging.md, step 3).
+    if: >-
+      vars.AWS_DEPLOY_ROLE_ARN != '' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # The OIDC trust of dt-deploy-staging accepts only this environment.
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write # AWS OIDC and keyless cosign signing
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SHA }}
+          persist-credentials: false
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: deploy-staging-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
+
+      - name: Log in to ECR
+        run: |
+          account="$(aws sts get-caller-identity --query Account --output text)"
+          registry="${account}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "REGISTRY=${registry}" >>"$GITHUB_ENV"
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
+
+      # Step 1. Tags are immutable: a re-run finds <sha> already pushed and
+      # only makes sure it is signed.
+      - name: Build, push and sign the images (linux/amd64)
+        env:
+          IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/deploy-staging\.yml@refs/heads/main$
+        run: |
+          set -euo pipefail
+          verify() {
+            cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --certificate-identity-regexp "$IDENTITY" "$1" >/dev/null 2>&1
+          }
+          for svc in $SERVICES; do
+            repo="${REGISTRY}/dt-${svc}"
+            if digest="$(aws ecr describe-images --repository-name "dt-${svc}" --image-ids imageTag="$SHA" \
+                 --query 'imageDetails[0].imageDigest' --output text 2>/dev/null)"; then
+              echo "dt-${svc}:${SHA} is already in ECR"
+            else
+              docker build --platform linux/amd64 --build-arg SERVICE="$svc" -t "${repo}:${SHA}" backend
+              docker push "${repo}:${SHA}"
+              digest="$(aws ecr describe-images --repository-name "dt-${svc}" --image-ids imageTag="$SHA" \
+                --query 'imageDetails[0].imageDigest' --output text)"
+            fi
+            verify "${repo}@${digest}" || cosign sign --yes "${repo}@${digest}"
+            verify "${repo}@${digest}" || { echo "::error::signature of dt-${svc} does not verify"; exit 1; }
+          done
+
+      - name: Is the host awake?
+        id: host
+        run: |
+          n="$(aws ecs describe-clusters --clusters "$CLUSTER" \
+            --query 'clusters[0].registeredContainerInstancesCount' --output text)"
+          if [[ "$n" -ge 1 ]]; then
+            echo "awake=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "awake=false" >>"$GITHUB_OUTPUT"
+            echo "::warning::Staging is asleep (outside 08:00-20:00 Mon-Fri). The images are pushed and signed and the task definitions registered, but nothing is migrated or rolled out (the services never migrate themselves). Re-run this workflow during working hours, or about 10 minutes after make staging-wake, to deploy."
+          fi
+
+      # New revisions of the task definitions: the latest revision of each
+      # family (so environment changes made by tofu carry over) with only
+      # the service image changed. No tags: the deploy role has no
+      # ecs:TagResource.
+      - name: Register task definitions with the new images
+        run: |
+          set -euo pipefail
+          register() { # family container image
+            aws ecs describe-task-definition --task-definition "$1" --query taskDefinition --output json |
+              jq --arg c "$2" --arg img "$3" '
+                .containerDefinitions |= map(if .name == $c then .image = $img else . end)
+                | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities,
+                      .registeredAt, .registeredBy, .deregisteredAt)' >td.json
+            aws ecs register-task-definition --cli-input-json file://td.json \
+              --query taskDefinition.taskDefinitionArn --output text
+          }
+          for svc in $SERVICES; do
+            image="${REGISTRY}/dt-${svc}:${SHA}"
+            echo "TD_MIGRATE_${svc}=$(register "dt-staging-migrate-${svc}" "$svc" "$image")" >>"$GITHUB_ENV"
+            echo "TD_${svc}=$(register "dt-staging-${svc}" "$svc" "$image")" >>"$GITHUB_ENV"
+          done
+          rm -f td.json
+
+      # Step 2. Roles and passwords first (idempotent), then each service's
+      # migrations as its mig_<svc> role (MIGRATIONS=only), one at a time.
+      # Every task runs by its full task-definition ARN (the deploy role's
+      # RunTask allows task-definition/dt-staging-*:*).
+      - name: Run the database bootstrap and the migrations
+        if: steps.host.outputs.awake == 'true'
+        run: |
+          set -euo pipefail
+          run_once() { # task-definition container
+            local arn code reason
+            arn="$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$1" --started-by "deploy-${GITHUB_RUN_ID}" \
+              --query 'tasks[0].taskArn' --output text)"
+            [[ -n "$arn" && "$arn" != None ]] || { echo "::error::could not start $1 (no capacity?)"; return 1; }
+            aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$arn"
+            code="$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$arn" \
+              --query "tasks[0].containers[?name=='$2'].exitCode | [0]" --output text)"
+            reason="$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$arn" --query 'tasks[0].stoppedReason' --output text)"
+            if [[ "$code" != 0 ]]; then
+              echo "::error::$1 failed (exit ${code}: ${reason}); logs: CloudWatch /dt/staging. Right after make staging-wake or the 08:00 start the database may still be starting (about 10 minutes): wait and re-run."
+              return 1
+            fi
+            echo "$1: ok"
+          }
+          bootstrap_td="$(aws ecs describe-task-definition --task-definition dt-staging-db-bootstrap \
+            --query taskDefinition.taskDefinitionArn --output text)"
+          run_once "$bootstrap_td" db-bootstrap
+          for svc in $SERVICES; do
+            var="TD_MIGRATE_${svc}"
+            run_once "${!var}" "$svc"
+          done
+
+      # Step 3. The circuit breaker (rollback on) is set on the services by tofu.
+      # Asleep: no rollout, since the new revisions would start unmigrated
+      # (MIGRATIONS=skip) when the host wakes.
+      - name: Update the services
+        if: steps.host.outputs.awake == 'true'
+        run: |
+          set -euo pipefail
+          for svc in $SERVICES; do
+            var="TD_${svc}"
+            aws ecs update-service --cluster "$CLUSTER" --service "$svc" --task-definition "${!var}" \
+              --query 'service.serviceName' --output text
+          done
+
+      # Step 4. services-stable also returns after a circuit-breaker rollback,
+      # so check that every service runs the new revision.
+      - name: Wait until the services are stable
+        if: steps.host.outputs.awake == 'true'
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086 # SERVICES is a word list
+          aws ecs wait services-stable --cluster "$CLUSTER" --services $SERVICES ||
+            aws ecs wait services-stable --cluster "$CLUSTER" --services $SERVICES
+          for svc in $SERVICES; do
+            var="TD_${svc}"
+            running="$(aws ecs describe-services --cluster "$CLUSTER" --services "$svc" \
+              --query 'services[0].deployments[?status==`PRIMARY`].taskDefinition | [0]' --output text)"
+            state="$(aws ecs describe-services --cluster "$CLUSTER" --services "$svc" \
+              --query 'services[0].deployments[?status==`PRIMARY`].rolloutState | [0]' --output text)"
+            if [[ "$running" != "${!var}" || "$state" != COMPLETED ]]; then
+              echo "::error::${svc} did not roll out (primary ${running}, ${state}); the circuit breaker rolled it back"
+              exit 1
+            fi
+          done
+          curl -fsS --max-time 10 "${API_URL}/livez" >/dev/null
+
+      # Step 5. Public API only: the test key's tenant was set up by the
+      # owner with dtctl over SSM (runbook).
+      - name: Smoke test against staging
+        if: steps.host.outputs.awake == 'true'
+        env:
+          DT_SMOKE_KEY: ${{ secrets.STAGING_TEST_KEY }}
+          DT_GATEWAY_URL: ${{ env.API_URL }}
+          DT_TRACKING_URL: ${{ env.API_URL }}
+        run: scripts/smoke-m3.sh

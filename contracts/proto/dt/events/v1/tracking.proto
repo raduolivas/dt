@@ -1,0 +1,44 @@
+syntax = "proto3";
+package dt.events.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Payloads of the tracking.* and courier.* events on the TRACKING stream,
+// which the tracking service owns. They never carry a courier position.
+
+// tracking.arrival_detected: the courier is within 200 m of the dropoff, or
+// the ETA is 90 s or less. Published once per delivery.
+message ArrivalDetected {
+  string delivery_id = 1;
+  google.protobuf.Timestamp at = 2;
+  double distance_m = 3;
+  int32 eta_seconds = 4;
+}
+
+// tracking.eta_changed
+message EtaChanged {
+  string delivery_id = 1;
+  int32 eta_seconds = 2;
+  string eta_state = 3; // "calculating" | "estimated" | "live"
+  google.protobuf.Timestamp at = 4;
+}
+
+// tracking.courier_signal_lost: once per gap.
+message CourierSignalLost {
+  string delivery_id = 1;
+  string courier_id = 2;
+  google.protobuf.Timestamp last_fix_at = 3; // unset when no fix ever arrived
+}
+
+// tracking.courier_signal_restored
+message CourierSignalRestored {
+  string delivery_id = 1;
+  string courier_id = 2;
+  google.protobuf.Timestamp at = 3;
+}
+
+// courier.location_reported (sampled, at most 1/min per courier)
+message CourierLocationReported {
+  string courier_id = 1;
+  int32 fixes = 2;
+}

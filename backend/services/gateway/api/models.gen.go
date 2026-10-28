@@ -7,27 +7,51 @@ import (
 	"time"
 )
 
+// Defines values for CourierSignal.
+const (
+	CourierSignalLive    CourierSignal = "live"
+	CourierSignalLost    CourierSignal = "lost"
+	CourierSignalPending CourierSignal = "pending"
+	CourierSignalStale   CourierSignal = "stale"
+)
+
+// Valid indicates whether the value is a known member of the CourierSignal enum.
+func (e CourierSignal) Valid() bool {
+	switch e {
+	case CourierSignalLive:
+		return true
+	case CourierSignalLost:
+		return true
+	case CourierSignalPending:
+		return true
+	case CourierSignalStale:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DeliveryEventOutcome.
 const (
-	Applied   DeliveryEventOutcome = "applied"
-	Conflict  DeliveryEventOutcome = "conflict"
-	Duplicate DeliveryEventOutcome = "duplicate"
-	Recorded  DeliveryEventOutcome = "recorded"
-	Stale     DeliveryEventOutcome = "stale"
+	DeliveryEventOutcomeApplied   DeliveryEventOutcome = "applied"
+	DeliveryEventOutcomeConflict  DeliveryEventOutcome = "conflict"
+	DeliveryEventOutcomeDuplicate DeliveryEventOutcome = "duplicate"
+	DeliveryEventOutcomeRecorded  DeliveryEventOutcome = "recorded"
+	DeliveryEventOutcomeStale     DeliveryEventOutcome = "stale"
 )
 
 // Valid indicates whether the value is a known member of the DeliveryEventOutcome enum.
 func (e DeliveryEventOutcome) Valid() bool {
 	switch e {
-	case Applied:
+	case DeliveryEventOutcomeApplied:
 		return true
-	case Conflict:
+	case DeliveryEventOutcomeConflict:
 		return true
-	case Duplicate:
+	case DeliveryEventOutcomeDuplicate:
 		return true
-	case Recorded:
+	case DeliveryEventOutcomeRecorded:
 		return true
-	case Stale:
+	case DeliveryEventOutcomeStale:
 		return true
 	default:
 		return false
@@ -117,16 +141,55 @@ func (e DeliveryStatus) Valid() bool {
 
 // Defines values for Environment.
 const (
-	Live Environment = "live"
-	Test Environment = "test"
+	EnvironmentLive Environment = "live"
+	EnvironmentTest Environment = "test"
 )
 
 // Valid indicates whether the value is a known member of the Environment enum.
 func (e Environment) Valid() bool {
 	switch e {
-	case Live:
+	case EnvironmentLive:
 		return true
-	case Test:
+	case EnvironmentTest:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EtaQuality.
+const (
+	EtaQualityEstimated EtaQuality = "estimated"
+	EtaQualityOsrm      EtaQuality = "osrm"
+)
+
+// Valid indicates whether the value is a known member of the EtaQuality enum.
+func (e EtaQuality) Valid() bool {
+	switch e {
+	case EtaQualityEstimated:
+		return true
+	case EtaQualityOsrm:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EtaState.
+const (
+	EtaStateCalculating EtaState = "calculating"
+	EtaStateEstimated   EtaState = "estimated"
+	EtaStateLive        EtaState = "live"
+)
+
+// Valid indicates whether the value is a known member of the EtaState enum.
+func (e EtaState) Valid() bool {
+	switch e {
+	case EtaStateCalculating:
+		return true
+	case EtaStateEstimated:
+		return true
+	case EtaStateLive:
 		return true
 	default:
 		return false
@@ -193,6 +256,27 @@ func (e PickupPolicy) Valid() bool {
 	}
 }
 
+// Defines values for ProofPointActor.
+const (
+	ProofPointActorCourier ProofPointActor = "courier"
+	ProofPointActorPartner ProofPointActor = "partner"
+	ProofPointActorSystem  ProofPointActor = "system"
+)
+
+// Valid indicates whether the value is a known member of the ProofPointActor enum.
+func (e ProofPointActor) Valid() bool {
+	switch e {
+	case ProofPointActorCourier:
+		return true
+	case ProofPointActorPartner:
+		return true
+	case ProofPointActorSystem:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReportDeliveryEventRequestBy.
 const (
 	ReportDeliveryEventRequestByPartner ReportDeliveryEventRequestBy = "partner"
@@ -235,6 +319,54 @@ func (e Scope) Valid() bool {
 	}
 }
 
+// Defines values for TrailGeoJsonFeaturesGeometryType.
+const (
+	LineString TrailGeoJsonFeaturesGeometryType = "LineString"
+	Point      TrailGeoJsonFeaturesGeometryType = "Point"
+)
+
+// Valid indicates whether the value is a known member of the TrailGeoJsonFeaturesGeometryType enum.
+func (e TrailGeoJsonFeaturesGeometryType) Valid() bool {
+	switch e {
+	case LineString:
+		return true
+	case Point:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TrailGeoJsonFeaturesType.
+const (
+	Feature TrailGeoJsonFeaturesType = "Feature"
+)
+
+// Valid indicates whether the value is a known member of the TrailGeoJsonFeaturesType enum.
+func (e TrailGeoJsonFeaturesType) Valid() bool {
+	switch e {
+	case Feature:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TrailGeoJsonType.
+const (
+	FeatureCollection TrailGeoJsonType = "FeatureCollection"
+)
+
+// Valid indicates whether the value is a known member of the TrailGeoJsonType enum.
+func (e TrailGeoJsonType) Valid() bool {
+	switch e {
+	case FeatureCollection:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Vehicle.
 const (
 	Bicycle Vehicle = "bicycle"
@@ -256,6 +388,24 @@ func (e Vehicle) Valid() bool {
 	case OnFoot:
 		return true
 	case Scooter:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListDeliveryTrailParamsFormat.
+const (
+	Geojson ListDeliveryTrailParamsFormat = "geojson"
+	Json    ListDeliveryTrailParamsFormat = "json"
+)
+
+// Valid indicates whether the value is a known member of the ListDeliveryTrailParamsFormat enum.
+func (e ListDeliveryTrailParamsFormat) Valid() bool {
+	switch e {
+	case Geojson:
+		return true
+	case Json:
 		return true
 	default:
 		return false
@@ -291,6 +441,18 @@ type Courier struct {
 	Vehicle   Vehicle   `json:"vehicle"`
 }
 
+// CourierFix defines model for CourierFix.
+type CourierFix struct {
+	AccuracyM  float32  `json:"accuracy_m"`
+	HeadingDeg *float32 `json:"heading_deg,omitempty"`
+	Lat        float64  `json:"lat"`
+	Lng        float64  `json:"lng"`
+	SpeedMps   *float32 `json:"speed_mps,omitempty"`
+
+	// T When the fix was taken. At most 5 seconds after receipt.
+	T time.Time `json:"t"`
+}
+
 // CourierId Examples: cou_01j9z3k8m2q4r6s8t0v2w4x6y8
 type CourierId = string
 
@@ -307,6 +469,9 @@ type CourierRef struct {
 	Id      CourierId `json:"id"`
 	Vehicle Vehicle   `json:"vehicle"`
 }
+
+// CourierSignal `pending`: the courier is visible but no fix has arrived yet. `live`: the last fix is at most 30 seconds old. `stale`: older than 30 seconds. `lost`: older than 5 minutes (or still `pending` after 5 minutes).
+type CourierSignal string
 
 // CreateDeliveryRequest Pickup and dropoff must be at most 100 km apart.
 type CreateDeliveryRequest struct {
@@ -329,6 +494,68 @@ type CreateDeliveryRequest struct {
 	Metadata *Metadata `json:"metadata,omitempty"`
 	Notes    *string   `json:"notes,omitempty"`
 	Pickup   Pickup    `json:"pickup"`
+
+	// ReadyAt When the order will be ready for pickup. Between 1 hour before and 24 hours after now. Drives the ETA before pickup; without it the tenant's default preparation time applies.
+	ReadyAt *time.Time `json:"ready_at,omitempty"`
+}
+
+// CreateDeliveryResponse The created delivery with its tracking link.
+type CreateDeliveryResponse struct {
+	Courier   *CourierRef `json:"courier"`
+	CreatedAt time.Time   `json:"created_at"`
+	Customer  struct {
+		FirstName *string `json:"first_name"`
+	} `json:"customer"`
+
+	// DeliveryModel `direct`: the partner reports progress. `end_to_end`: DT couriers report it.
+	DeliveryModel DeliveryModel `json:"delivery_model"`
+	Dropoff       struct {
+		Label *string `json:"label"`
+
+		// Location WGS84 coordinate.
+		Location LatLng `json:"location"`
+	} `json:"dropoff"`
+
+	// Environment Test and live data are fully separate.
+	Environment Environment `json:"environment"`
+
+	// ExternalId Your identifier (1 to 255 printable ASCII characters).
+	//
+	// Examples: order-1042
+	ExternalId ExternalId `json:"external_id"`
+
+	// Id Examples: del_01j9z3k8m2q4r6s8t0v2w4x6y8
+	Id                 DeliveryId        `json:"id"`
+	ItemCount          *int              `json:"item_count"`
+	ItemsSummary       *string           `json:"items_summary"`
+	Metadata           map[string]string `json:"metadata"`
+	Notes              *string           `json:"notes"`
+	PersonalDataErased bool              `json:"personal_data_erased"`
+	Pickup             struct {
+		// Location WGS84 coordinate.
+		Location LatLng `json:"location"`
+		Name     string `json:"name"`
+	} `json:"pickup"`
+	PickupConfirmations []PickupConfirmation `json:"pickup_confirmations"`
+
+	// PickupPolicy Who must confirm the pickup. A delivery keeps the policy it was created with.
+	PickupPolicy PickupPolicy `json:"pickup_policy"`
+
+	// ReadyAt When the order is expected to be ready for pickup, if you gave one.
+	ReadyAt *time.Time `json:"ready_at"`
+
+	// Status `delivered`, `cancelled` and `failed` are final.
+	Status DeliveryStatus `json:"status"`
+
+	// Tracking `null` when the link could not be issued; the delivery is still created. Call `rotateTrackingLink` to issue one.
+	Tracking  *TrackingLink `json:"tracking"`
+	UpdatedAt time.Time     `json:"updated_at"`
+}
+
+// CreateTrackingSessionRequest defines model for CreateTrackingSessionRequest.
+type CreateTrackingSessionRequest struct {
+	// Token The tracking link token.
+	Token string `json:"token"`
 }
 
 // Customer defines model for Customer.
@@ -378,6 +605,9 @@ type Delivery struct {
 	// PickupPolicy Who must confirm the pickup. A delivery keeps the policy it was created with.
 	PickupPolicy PickupPolicy `json:"pickup_policy"`
 
+	// ReadyAt When the order is expected to be ready for pickup, if you gave one.
+	ReadyAt *time.Time `json:"ready_at"`
+
 	// Status `delivered`, `cancelled` and `failed` are final.
 	Status    DeliveryStatus `json:"status"`
 	UpdatedAt time.Time      `json:"updated_at"`
@@ -421,6 +651,18 @@ type Dropoff struct {
 // Environment Test and live data are fully separate.
 type Environment string
 
+// EtaQuality `osrm`: from the routing engine. `estimated`: a fallback (straight-line or last known route) because routing was unavailable or the courier signal is stale.
+type EtaQuality string
+
+// EtaState `calculating`: the ready time is unknown, so there is no ETA yet. `estimated`: before pickup, preparation plus drive, shown as `eta_window`. `live`: after pickup, the drive time from the courier's position.
+type EtaState string
+
+// EtaWindow The expected arrival range in seconds from now. Set before pickup; `null` otherwise.
+type EtaWindow struct {
+	MaxSeconds int `json:"max_seconds"`
+	MinSeconds int `json:"min_seconds"`
+}
+
 // ExternalId Your identifier (1 to 255 printable ASCII characters).
 //
 // Examples: order-1042
@@ -438,6 +680,9 @@ type LatLng struct {
 	Lat float64 `json:"lat"`
 	Lng float64 `json:"lng"`
 }
+
+// LatLngPair `[lat, lng]`.
+type LatLngPair = []float64
 
 // Me The credential a request authenticated with.
 type Me struct {
@@ -462,6 +707,71 @@ type MeCredentialType string
 //
 // Examples: {"table":"12"}
 type Metadata map[string]string
+
+// PartnerCourier The assigned courier, always with their position and your own ids.
+type PartnerCourier struct {
+	DisplayName string `json:"display_name"`
+
+	// ExternalId Your identifier (1 to 255 printable ASCII characters).
+	//
+	// Examples: order-1042
+	ExternalId ExternalId `json:"external_id"`
+	HeadingDeg *float32   `json:"heading_deg"`
+
+	// Id Examples: cou_01j9z3k8m2q4r6s8t0v2w4x6y8
+	Id       CourierId `json:"id"`
+	PhotoUrl *string   `json:"photo_url"`
+
+	// Position `null` while `signal` is `pending`.
+	Position   *LatLng    `json:"position"`
+	PositionAt *time.Time `json:"position_at"`
+
+	// Signal `pending`: the courier is visible but no fix has arrived yet. `live`: the last fix is at most 30 seconds old. `stale`: older than 30 seconds. `lost`: older than 5 minutes (or still `pending` after 5 minutes).
+	Signal   CourierSignal `json:"signal"`
+	SpeedKmh *float32      `json:"speed_kmh"`
+	Vehicle  Vehicle       `json:"vehicle"`
+}
+
+// PartnerView The live view for the partner. The same fields as `TrackingSnapshot`, but `courier` is `null` only when none is assigned, and carries `id` and `external_id`.
+type PartnerView struct {
+	Courier *PartnerCourier `json:"courier"`
+
+	// DeliveryId Examples: del_01j9z3k8m2q4r6s8t0v2w4x6y8
+	DeliveryId DeliveryId `json:"delivery_id"`
+
+	// DeliveryModel `direct`: the partner reports progress. `end_to_end`: DT couriers report it.
+	DeliveryModel      DeliveryModel `json:"delivery_model"`
+	DistanceRemainingM *float32      `json:"distance_remaining_m"`
+	Dropoff            struct {
+		Label *string `json:"label"`
+
+		// Location WGS84 coordinate.
+		Location LatLng `json:"location"`
+	} `json:"dropoff"`
+
+	// EtaQuality `osrm`: from the routing engine. `estimated`: a fallback (straight-line or last known route) because routing was unavailable or the courier signal is stale.
+	EtaQuality EtaQuality `json:"eta_quality"`
+	EtaSeconds *int       `json:"eta_seconds"`
+
+	// EtaState `calculating`: the ready time is unknown, so there is no ETA yet. `estimated`: before pickup, preparation plus drive, shown as `eta_window`. `live`: after pickup, the drive time from the courier's position.
+	EtaState EtaState `json:"eta_state"`
+
+	// EtaWindow The expected arrival range in seconds from now. Set before pickup; `null` otherwise.
+	EtaWindow *EtaWindow `json:"eta_window"`
+	Pickup    struct {
+		// Location WGS84 coordinate.
+		Location LatLng `json:"location"`
+		Name     string `json:"name"`
+	} `json:"pickup"`
+	Progress *float32      `json:"progress"`
+	Route    TrackingRoute `json:"route"`
+
+	// Status `delivered`, `cancelled` and `failed` are final.
+	Status    DeliveryStatus          `json:"status"`
+	Timeline  []TrackingTimelineEntry `json:"timeline"`
+	UpdatedAt time.Time               `json:"updated_at"`
+	Version   int64                   `json:"version"`
+}
 
 // Pickup defines model for Pickup.
 type Pickup struct {
@@ -493,6 +803,37 @@ type Problem struct {
 	Type      string        `json:"type"`
 }
 
+// ProofPoint defines model for ProofPoint.
+type ProofPoint struct {
+	AccuracyM *float32        `json:"accuracy_m"`
+	Actor     ProofPointActor `json:"actor"`
+	At        time.Time       `json:"at"`
+
+	// Position `null` when no fix was received in the 2 minutes before `at`.
+	Position   *LatLng           `json:"position"`
+	PositionAt *time.Time        `json:"position_at"`
+	Status     DeliveryEventType `json:"status"`
+}
+
+// ProofPointActor defines model for ProofPoint.Actor.
+type ProofPointActor string
+
+// ProofPointList defines model for ProofPointList.
+type ProofPointList struct {
+	Data []ProofPoint `json:"data"`
+}
+
+// ReportCourierLocationsRequest defines model for ReportCourierLocationsRequest.
+type ReportCourierLocationsRequest struct {
+	Fixes []CourierFix `json:"fixes"`
+}
+
+// ReportCourierLocationsResult defines model for ReportCourierLocationsResult.
+type ReportCourierLocationsResult struct {
+	Accepted int `json:"accepted"`
+	Dropped  int `json:"dropped"`
+}
+
 // ReportDeliveryEventRequest defines model for ReportDeliveryEventRequest.
 type ReportDeliveryEventRequest struct {
 	// By Who confirms. Only meaningful for `pickup_confirmed`; defaults to `partner`.
@@ -515,7 +856,179 @@ type ReportDeliveryEventRequestBy string
 // Scope A permission a secret key carries.
 type Scope string
 
-// UpdateDeliveryRequest Only the fields sent change. `null` clears `dropoff_label`, `notes` and `metadata`; the dropoff location cannot be cleared.
+// SimulateDeliveryRequest defines model for SimulateDeliveryRequest.
+type SimulateDeliveryRequest struct {
+	// SignalGap Stop sending fixes for a while, to test the stale and lost states.
+	SignalGap *struct {
+		// AfterS Seconds of simulated time after the start.
+		AfterS int `json:"after_s"`
+
+		// DurationS Seconds of real time without fixes, so the stale (30 s) and lost (5 min) states show at any speed factor. The courier keeps driving at real-time speed meanwhile.
+		DurationS int `json:"duration_s"`
+	} `json:"signal_gap,omitempty"`
+
+	// SpeedFactor How many times faster than real time the courier drives.
+	SpeedFactor *float32 `json:"speed_factor,omitempty"`
+}
+
+// SimulationStarted defines model for SimulationStarted.
+type SimulationStarted struct {
+	SimulationId string `json:"simulation_id"`
+}
+
+// TrackingCourier The courier as the customer sees them.
+type TrackingCourier struct {
+	DisplayName string   `json:"display_name"`
+	HeadingDeg  *float32 `json:"heading_deg"`
+	PhotoUrl    *string  `json:"photo_url"`
+
+	// Position `null` while `signal` is `pending`.
+	Position   *LatLng    `json:"position"`
+	PositionAt *time.Time `json:"position_at"`
+
+	// Signal `pending`: the courier is visible but no fix has arrived yet. `live`: the last fix is at most 30 seconds old. `stale`: older than 30 seconds. `lost`: older than 5 minutes (or still `pending` after 5 minutes).
+	Signal   CourierSignal `json:"signal"`
+	SpeedKmh *float32      `json:"speed_kmh"`
+	Vehicle  Vehicle       `json:"vehicle"`
+}
+
+// TrackingLink A customer-facing tracking link. Put `url` in an SMS, email or push notification.
+type TrackingLink struct {
+	// ExpiresAt `null` until the delivery is final; then 30 minutes after it ended.
+	ExpiresAt *time.Time `json:"expires_at"`
+
+	// Token The link token; the part of `url` after `/t/`. Treat it like a password for this delivery.
+	Token string `json:"token"`
+
+	// Url The hosted tracking page for this delivery.
+	Url string `json:"url"`
+}
+
+// TrackingRoute defines model for TrackingRoute.
+type TrackingRoute struct {
+	ToDropoff []LatLngPair `json:"to_dropoff"`
+
+	// ToPickup The courier's route to the pickup. `null` in the Direct model and once picked up.
+	ToPickup *[]LatLngPair `json:"to_pickup"`
+}
+
+// TrackingSession defines model for TrackingSession.
+type TrackingSession struct {
+	// Branding Always `null` for now.
+	Branding  any       `json:"branding"`
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// Snapshot What the customer's tracking page shows. `courier` is `null` while the courier is not visible (End-to-end: from assignment; Direct: from pickup) and `route.to_pickup` is `null` in the Direct model. Clients ignore a snapshot whose `version` is not greater than the last one applied.
+	Snapshot TrackingSnapshot `json:"snapshot"`
+
+	// ViewerToken A short-lived bearer token for the snapshot and stream endpoints.
+	ViewerToken string `json:"viewer_token"`
+}
+
+// TrackingSnapshot What the customer's tracking page shows. `courier` is `null` while the courier is not visible (End-to-end: from assignment; Direct: from pickup) and `route.to_pickup` is `null` in the Direct model. Clients ignore a snapshot whose `version` is not greater than the last one applied.
+type TrackingSnapshot struct {
+	Courier *TrackingCourier `json:"courier"`
+
+	// DeliveryId Examples: del_01j9z3k8m2q4r6s8t0v2w4x6y8
+	DeliveryId DeliveryId `json:"delivery_id"`
+
+	// DeliveryModel `direct`: the partner reports progress. `end_to_end`: DT couriers report it.
+	DeliveryModel      DeliveryModel `json:"delivery_model"`
+	DistanceRemainingM *float32      `json:"distance_remaining_m"`
+	Dropoff            struct {
+		Label *string `json:"label"`
+
+		// Location WGS84 coordinate.
+		Location LatLng `json:"location"`
+	} `json:"dropoff"`
+
+	// EtaQuality `osrm`: from the routing engine. `estimated`: a fallback (straight-line or last known route) because routing was unavailable or the courier signal is stale.
+	EtaQuality EtaQuality `json:"eta_quality"`
+
+	// EtaSeconds Seconds until arrival; the midpoint of `eta_window` before pickup. `null` while `eta_state` is `calculating`.
+	EtaSeconds *int `json:"eta_seconds"`
+
+	// EtaState `calculating`: the ready time is unknown, so there is no ETA yet. `estimated`: before pickup, preparation plus drive, shown as `eta_window`. `live`: after pickup, the drive time from the courier's position.
+	EtaState EtaState `json:"eta_state"`
+
+	// EtaWindow The expected arrival range in seconds from now. Set before pickup; `null` otherwise.
+	EtaWindow *EtaWindow `json:"eta_window"`
+	Pickup    struct {
+		// Location WGS84 coordinate.
+		Location LatLng `json:"location"`
+		Name     string `json:"name"`
+	} `json:"pickup"`
+	Progress *float32      `json:"progress"`
+	Route    TrackingRoute `json:"route"`
+
+	// Status `delivered`, `cancelled` and `failed` are final.
+	Status    DeliveryStatus          `json:"status"`
+	Timeline  []TrackingTimelineEntry `json:"timeline"`
+	UpdatedAt time.Time               `json:"updated_at"`
+
+	// Version Increases monotonically per delivery.
+	Version int64 `json:"version"`
+}
+
+// TrackingTimelineEntry defines model for TrackingTimelineEntry.
+type TrackingTimelineEntry struct {
+	At time.Time `json:"at"`
+
+	// Status `delivered`, `cancelled` and `failed` are final.
+	Status DeliveryStatus `json:"status"`
+}
+
+// TrailFix defines model for TrailFix.
+type TrailFix struct {
+	AccuracyM  float32  `json:"accuracy_m"`
+	HeadingDeg *float32 `json:"heading_deg"`
+	Lat        float64  `json:"lat"`
+	Lng        float64  `json:"lng"`
+
+	// Source Where the fix came from (`relay` or `simulator`).
+	Source   string    `json:"source"`
+	SpeedMps *float32  `json:"speed_mps"`
+	T        time.Time `json:"t"`
+}
+
+// TrailGeoJson A GeoJSON FeatureCollection (coordinates are `[lng, lat]`).
+type TrailGeoJson struct {
+	Features []struct {
+		Geometry struct {
+			Coordinates []interface{}                    `json:"coordinates"`
+			Type        TrailGeoJsonFeaturesGeometryType `json:"type"`
+		} `json:"geometry"`
+		Properties map[string]interface{}   `json:"properties"`
+		Type       TrailGeoJsonFeaturesType `json:"type"`
+	} `json:"features"`
+	Type TrailGeoJsonType `json:"type"`
+}
+
+// TrailGeoJsonFeaturesGeometryType defines model for TrailGeoJson.Features.Geometry.Type.
+type TrailGeoJsonFeaturesGeometryType string
+
+// TrailGeoJsonFeaturesType defines model for TrailGeoJson.Features.Type.
+type TrailGeoJsonFeaturesType string
+
+// TrailGeoJsonType defines model for TrailGeoJson.Type.
+type TrailGeoJsonType string
+
+// TrailPage defines model for TrailPage.
+type TrailPage struct {
+	Data    []TrailFix `json:"data"`
+	HasMore bool       `json:"has_more"`
+
+	// NextCursor Pass as `starting_after` for the next page; `null` on the last page.
+	NextCursor *string `json:"next_cursor"`
+
+	// RawAvailable `false` once the raw fixes were deleted (after 30 days or on erasure).
+	RawAvailable bool `json:"raw_available"`
+
+	// Simplified The simplified route; set when `raw_available` is `false`.
+	Simplified *[]LatLngPair `json:"simplified"`
+}
+
+// UpdateDeliveryRequest Only the fields sent change. `null` clears `dropoff_label`, `notes`, `metadata` and `ready_at`; the dropoff location cannot be cleared.
 type UpdateDeliveryRequest struct {
 	Dropoff *struct {
 		// Location WGS84 coordinate.
@@ -528,6 +1041,9 @@ type UpdateDeliveryRequest struct {
 	// Examples: {"table":"12"}
 	Metadata *map[string]string `json:"metadata,omitempty"`
 	Notes    *string            `json:"notes,omitempty"`
+
+	// ReadyAt When the order will be ready for pickup (between 1 hour before and 24 hours after now); `null` clears it. Changeable until pickup.
+	ReadyAt *time.Time `json:"ready_at,omitempty"`
 }
 
 // UpsertCourierRequest defines model for UpsertCourierRequest.
@@ -539,6 +1055,12 @@ type UpsertCourierRequest struct {
 
 // Vehicle defines model for Vehicle.
 type Vehicle string
+
+// ViewerTokenRefresh defines model for ViewerTokenRefresh.
+type ViewerTokenRefresh struct {
+	ExpiresAt   time.Time `json:"expires_at"`
+	ViewerToken string    `json:"viewer_token"`
+}
 
 // CreatedGte defines model for CreatedGte.
 type CreatedGte = time.Time
@@ -578,11 +1100,17 @@ type PayloadTooLarge = Problem
 // TooManyRequests RFC 9457 problem details.
 type TooManyRequests = Problem
 
+// TrackingUnavailable RFC 9457 problem details.
+type TrackingUnavailable = Problem
+
 // Unauthenticated RFC 9457 problem details.
 type Unauthenticated = Problem
 
 // ValidationFailed RFC 9457 problem details.
 type ValidationFailed = Problem
+
+// ViewerTokenInvalid RFC 9457 problem details.
+type ViewerTokenInvalid = Problem
 
 // ListDeliveriesParams defines parameters for ListDeliveries.
 type ListDeliveriesParams struct {
@@ -632,8 +1160,38 @@ type ReportDeliveryEventParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
+// RotateTrackingLinkParams defines parameters for RotateTrackingLink.
+type RotateTrackingLinkParams struct {
+	// IdempotencyKey Client-chosen key that makes a POST safe to retry (1 to 255 printable ASCII characters). A retry with the same key and body replays the first response for 24 hours; a different body is refused.
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// ListDeliveryTrailParams defines parameters for ListDeliveryTrail.
+type ListDeliveryTrailParams struct {
+	// Format Response format.
+	Format *ListDeliveryTrailParamsFormat `form:"format,omitempty" json:"format,omitempty"`
+
+	// Limit Page size.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// StartingAfter The `next_cursor` of the previous page.
+	StartingAfter *string `form:"starting_after,omitempty" json:"starting_after,omitempty"`
+}
+
+// ListDeliveryTrailParamsFormat defines parameters for ListDeliveryTrail.
+type ListDeliveryTrailParamsFormat string
+
+// SimulateDeliveryParams defines parameters for SimulateDelivery.
+type SimulateDeliveryParams struct {
+	// IdempotencyKey Client-chosen key that makes a POST safe to retry (1 to 255 printable ASCII characters). A retry with the same key and body replays the first response for 24 hours; a different body is refused.
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
 // UpsertCourierJSONRequestBody defines body for UpsertCourier for application/json ContentType.
 type UpsertCourierJSONRequestBody = UpsertCourierRequest
+
+// ReportCourierLocationsJSONRequestBody defines body for ReportCourierLocations for application/json ContentType.
+type ReportCourierLocationsJSONRequestBody = ReportCourierLocationsRequest
 
 // CreateDeliveryJSONRequestBody defines body for CreateDelivery for application/json ContentType.
 type CreateDeliveryJSONRequestBody = CreateDeliveryRequest
@@ -649,3 +1207,9 @@ type CancelDeliveryJSONRequestBody = CancelDeliveryRequest
 
 // ReportDeliveryEventJSONRequestBody defines body for ReportDeliveryEvent for application/json ContentType.
 type ReportDeliveryEventJSONRequestBody = ReportDeliveryEventRequest
+
+// SimulateDeliveryJSONRequestBody defines body for SimulateDelivery for application/json ContentType.
+type SimulateDeliveryJSONRequestBody = SimulateDeliveryRequest
+
+// CreateTrackingSessionJSONRequestBody defines body for CreateTrackingSession for application/json ContentType.
+type CreateTrackingSessionJSONRequestBody = CreateTrackingSessionRequest

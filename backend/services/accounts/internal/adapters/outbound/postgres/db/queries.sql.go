@@ -9,6 +9,8 @@ import (
 	"context"
 	"net/netip"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const getKeyForUpdate = `-- name: GetKeyForUpdate :one
@@ -42,7 +44,7 @@ func (q *Queries) GetKeyForUpdate(ctx context.Context, arg GetKeyForUpdateParams
 }
 
 const getTenant = `-- name: GetTenant :one
-SELECT id, name, live_enabled, created_at, allowed_models, default_model, pickup_confirmation, settings_updated_at
+SELECT id, name, live_enabled, created_at, allowed_models, default_model, pickup_confirmation, settings_updated_at, default_prep_minutes
 FROM tenants WHERE id = $1
 `
 
@@ -58,6 +60,7 @@ func (q *Queries) GetTenant(ctx context.Context, id string) (Tenant, error) {
 		&i.DefaultModel,
 		&i.PickupConfirmation,
 		&i.SettingsUpdatedAt,
+		&i.DefaultPrepMinutes,
 	)
 	return i, err
 }
@@ -104,8 +107,8 @@ func (q *Queries) InsertKey(ctx context.Context, arg InsertKeyParams) error {
 }
 
 const insertTenant = `-- name: InsertTenant :exec
-INSERT INTO tenants (id, name, live_enabled, created_at, allowed_models, default_model, pickup_confirmation, settings_updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO tenants (id, name, live_enabled, created_at, allowed_models, default_model, pickup_confirmation, settings_updated_at, default_prep_minutes)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 `
 
 type InsertTenantParams struct {
@@ -117,6 +120,7 @@ type InsertTenantParams struct {
 	DefaultModel       string
 	PickupConfirmation string
 	SettingsUpdatedAt  time.Time
+	DefaultPrepMinutes pgtype.Int4
 }
 
 func (q *Queries) InsertTenant(ctx context.Context, arg InsertTenantParams) error {
@@ -129,6 +133,7 @@ func (q *Queries) InsertTenant(ctx context.Context, arg InsertTenantParams) erro
 		arg.DefaultModel,
 		arg.PickupConfirmation,
 		arg.SettingsUpdatedAt,
+		arg.DefaultPrepMinutes,
 	)
 	return err
 }
@@ -194,7 +199,7 @@ func (q *Queries) SetLiveEnabled(ctx context.Context, arg SetLiveEnabledParams) 
 }
 
 const setTenantSettings = `-- name: SetTenantSettings :execrows
-UPDATE tenants SET allowed_models = $2, default_model = $3, pickup_confirmation = $4, settings_updated_at = $5
+UPDATE tenants SET allowed_models = $2, default_model = $3, pickup_confirmation = $4, settings_updated_at = $5, default_prep_minutes = $6
 WHERE id = $1
 `
 
@@ -204,6 +209,7 @@ type SetTenantSettingsParams struct {
 	DefaultModel       string
 	PickupConfirmation string
 	SettingsUpdatedAt  time.Time
+	DefaultPrepMinutes pgtype.Int4
 }
 
 func (q *Queries) SetTenantSettings(ctx context.Context, arg SetTenantSettingsParams) (int64, error) {
@@ -213,6 +219,7 @@ func (q *Queries) SetTenantSettings(ctx context.Context, arg SetTenantSettingsPa
 		arg.DefaultModel,
 		arg.PickupConfirmation,
 		arg.SettingsUpdatedAt,
+		arg.DefaultPrepMinutes,
 	)
 	if err != nil {
 		return 0, err

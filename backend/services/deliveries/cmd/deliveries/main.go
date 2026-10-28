@@ -1,6 +1,8 @@
 // Command deliveries runs the deliveries service: an internal Connect RPC
-// API, the tenant settings consumer, the pickup confirmation sweeper and the
-// outbox relay that publishes the deliveries.* events.
+// API, the tenant settings consumer, the tracking arrivals consumer (which
+// applies arriving), the pickup confirmation sweeper, the nightly retention
+// job (02:00 UTC) and the outbox relay that publishes the deliveries.*
+// events.
 package main
 
 import (
@@ -19,6 +21,7 @@ import (
 	"github.com/raduolivas/dt/backend/pkg/bootstrap"
 	"github.com/raduolivas/dt/backend/pkg/httpx"
 	"github.com/raduolivas/dt/backend/pkg/ids"
+	"github.com/raduolivas/dt/backend/pkg/nightly"
 	"github.com/raduolivas/dt/backend/pkg/outbox"
 	"github.com/raduolivas/dt/backend/pkg/rpcauth"
 	"github.com/raduolivas/dt/backend/pkg/sealbox"
@@ -52,7 +55,18 @@ func run(ctx context.Context) error {
 	// js is set by Setup; the accounts_stream check reads it per probe.
 	var js atomic.Pointer[jetstream.JetStream]
 
+	serverTLS, err := rpcauth.ServerTLSFromEnv("INTERNAL_RPC")
+	if err != nil {
+		return fmt.Errorf("deliveries: config: %w", err)
+	}
+
+	holder, err := nightly.NewHolder()
+	if err != nil {
+		return fmt.Errorf("deliveries: %w", err)
+	}
+
 	return bootstrap.Run(ctx, bootstrap.Options{
+		TLS:        serverTLS,
 		Name:       "deliveries",
 		Needs:      bootstrap.Needs{NATS: true},
 		Migrations: migrations.FS,
@@ -70,7 +84,7 @@ func run(ctx context.Context) error {
 				return nil, err
 			}
 			repo := postgres.New(d.DB, box)
-			svc := &app.Service{Repo: repo, Clock: systemClock{}, IDs: idGen{}}
+			svc := &app.Service{Repo: repo, Clock: systemClock{}, IDs: idGen{}, Retention: repo, Log: d.Log}
 			if err := rpc.Mount(mux, svc, token, d.Log); err != nil {
 				return nil, err
 			}
@@ -83,7 +97,17 @@ func run(ctx context.Context) error {
 				return outbox.Consume(ctx, d.JS, d.DB, d.Log, consumer.SettingsStream,
 					consumer.SettingsConfig, consumer.Settings(repo.ApplySettings, d.Log))
 			}
-			return []bootstrap.Worker{relay.Run, settings, sweeper.Run}, nil
+			// TRACKING belongs to tracking: wait for it like ACCOUNTS.
+			arrivals := func(ctx context.Context) error {
+				if err := outbox.WaitForStream(ctx, d.JS, outbox.StreamTracking.Name, d.Log); err != nil {
+					return err
+				}
+				return outbox.Consume(ctx, d.JS, d.DB, d.Log, consumer.TrackingStream,
+					consumer.TrackingConfig, consumer.Tracking(svc, d.Log))
+			}
+			retention := &nightly.Job{Name: "deliveries_retention", Lease: nightly.NewPostgresLease(d.DB, "deliveries_retention"),
+				Holder: holder, Do: svc.RunRetention, Log: d.Log}
+			return []bootstrap.Worker{relay.Run, settings, arrivals, sweeper.Run, retention.Run}, nil
 		},
 	})
 }

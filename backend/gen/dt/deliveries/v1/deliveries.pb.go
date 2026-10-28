@@ -527,6 +527,7 @@ type Delivery struct {
 	PersonalDataErased  bool                   `protobuf:"varint,16,opt,name=personal_data_erased,json=personalDataErased,proto3" json:"personal_data_erased,omitempty"`
 	CreatedAt           *timestamppb.Timestamp `protobuf:"bytes,17,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	UpdatedAt           *timestamppb.Timestamp `protobuf:"bytes,18,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	ReadyAt             *timestamppb.Timestamp `protobuf:"bytes,19,opt,name=ready_at,json=readyAt,proto3" json:"ready_at,omitempty"` // unset = none
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -687,6 +688,13 @@ func (x *Delivery) GetUpdatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Delivery) GetReadyAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ReadyAt
+	}
+	return nil
+}
+
 type CreateDeliveryRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Scope         *Scope                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
@@ -699,6 +707,7 @@ type CreateDeliveryRequest struct {
 	ItemCount     *int32                 `protobuf:"varint,8,opt,name=item_count,json=itemCount,proto3,oneof" json:"item_count,omitempty"`
 	Notes         *string                `protobuf:"bytes,9,opt,name=notes,proto3,oneof" json:"notes,omitempty"`
 	Metadata      map[string]string      `protobuf:"bytes,10,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ReadyAt       *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=ready_at,json=readyAt,proto3" json:"ready_at,omitempty"` // unset = none
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -799,6 +808,13 @@ func (x *CreateDeliveryRequest) GetNotes() string {
 func (x *CreateDeliveryRequest) GetMetadata() map[string]string {
 	if x != nil {
 		return x.Metadata
+	}
+	return nil
+}
+
+func (x *CreateDeliveryRequest) GetReadyAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ReadyAt
 	}
 	return nil
 }
@@ -1097,7 +1113,7 @@ func (x *ListDeliveriesResponse) GetHasMore() bool {
 
 // UpdateDeliveryRequest patches a delivery. Only fields named in update_mask
 // change; a masked field that is unset means "clear" (PATCH null). Mask paths:
-// dropoff, dropoff_label, notes, metadata. dropoff cannot be cleared.
+// dropoff, dropoff_label, notes, metadata, ready_at. dropoff cannot be cleared.
 type UpdateDeliveryRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Scope         *Scope                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
@@ -1107,6 +1123,7 @@ type UpdateDeliveryRequest struct {
 	DropoffLabel  *string                `protobuf:"bytes,5,opt,name=dropoff_label,json=dropoffLabel,proto3,oneof" json:"dropoff_label,omitempty"`
 	Notes         *string                `protobuf:"bytes,6,opt,name=notes,proto3,oneof" json:"notes,omitempty"`
 	Metadata      map[string]string      `protobuf:"bytes,7,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ReadyAt       *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=ready_at,json=readyAt,proto3" json:"ready_at,omitempty"` // masked; unset = clear
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1186,6 +1203,13 @@ func (x *UpdateDeliveryRequest) GetNotes() string {
 func (x *UpdateDeliveryRequest) GetMetadata() map[string]string {
 	if x != nil {
 		return x.Metadata
+	}
+	return nil
+}
+
+func (x *UpdateDeliveryRequest) GetReadyAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ReadyAt
 	}
 	return nil
 }
@@ -1347,6 +1371,7 @@ type ReportEventRequest struct {
 	OccurredAt    *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=occurred_at,json=occurredAt,proto3" json:"occurred_at,omitempty"` // unset = receipt time
 	By            string                 `protobuf:"bytes,6,opt,name=by,proto3" json:"by,omitempty"`                                   // "partner" | "store"; only for pickup_confirmed
 	Reason        string                 `protobuf:"bytes,7,opt,name=reason,proto3" json:"reason,omitempty"`
+	Actor         string                 `protobuf:"bytes,8,opt,name=actor,proto3" json:"actor,omitempty"` // "" or "partner" | "courier"; the gateway never sets it
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1426,6 +1451,13 @@ func (x *ReportEventRequest) GetBy() string {
 func (x *ReportEventRequest) GetReason() string {
 	if x != nil {
 		return x.Reason
+	}
+	return ""
+}
+
+func (x *ReportEventRequest) GetActor() string {
+	if x != nil {
+		return x.Actor
 	}
 	return ""
 }
@@ -1856,7 +1888,7 @@ const file_dt_deliveries_v1_deliveries_proto_rawDesc = "" +
 	"\n" +
 	"updated_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAtB\f\n" +
 	"\n" +
-	"_photo_url\"\xcb\a\n" +
+	"_photo_url\"\x82\b\n" +
 	"\bDelivery\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1f\n" +
 	"\vexternal_id\x18\x02 \x01(\tR\n" +
@@ -1880,13 +1912,14 @@ const file_dt_deliveries_v1_deliveries_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\x11 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\x12 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x1a;\n" +
+	"updated_at\x18\x12 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x125\n" +
+	"\bready_at\x18\x13 \x01(\v2\x1a.google.protobuf.TimestampR\areadyAt\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x10\n" +
 	"\x0e_items_summaryB\r\n" +
 	"\v_item_countB\b\n" +
-	"\x06_notes\"\xd1\x04\n" +
+	"\x06_notes\"\x88\x05\n" +
 	"\x15CreateDeliveryRequest\x12-\n" +
 	"\x05scope\x18\x01 \x01(\v2\x17.dt.deliveries.v1.ScopeR\x05scope\x12\x1f\n" +
 	"\vexternal_id\x18\x02 \x01(\tR\n" +
@@ -1900,7 +1933,8 @@ const file_dt_deliveries_v1_deliveries_proto_rawDesc = "" +
 	"item_count\x18\b \x01(\x05H\x01R\titemCount\x88\x01\x01\x12\x19\n" +
 	"\x05notes\x18\t \x01(\tH\x02R\x05notes\x88\x01\x01\x12Q\n" +
 	"\bmetadata\x18\n" +
-	" \x03(\v25.dt.deliveries.v1.CreateDeliveryRequest.MetadataEntryR\bmetadata\x1a;\n" +
+	" \x03(\v25.dt.deliveries.v1.CreateDeliveryRequest.MetadataEntryR\bmetadata\x125\n" +
+	"\bready_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\areadyAt\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x10\n" +
@@ -1928,7 +1962,7 @@ const file_dt_deliveries_v1_deliveries_proto_rawDesc = "" +
 	"\x0estarting_after\x18\b \x01(\tR\rstartingAfter\"c\n" +
 	"\x16ListDeliveriesResponse\x12.\n" +
 	"\x04data\x18\x01 \x03(\v2\x1a.dt.deliveries.v1.DeliveryR\x04data\x12\x19\n" +
-	"\bhas_more\x18\x02 \x01(\bR\ahasMore\"\xb4\x03\n" +
+	"\bhas_more\x18\x02 \x01(\bR\ahasMore\"\xeb\x03\n" +
 	"\x15UpdateDeliveryRequest\x12-\n" +
 	"\x05scope\x18\x01 \x01(\v2\x17.dt.deliveries.v1.ScopeR\x05scope\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12;\n" +
@@ -1937,7 +1971,8 @@ const file_dt_deliveries_v1_deliveries_proto_rawDesc = "" +
 	"\adropoff\x18\x04 \x01(\v2\x14.dt.events.v1.LatLngR\adropoff\x12(\n" +
 	"\rdropoff_label\x18\x05 \x01(\tH\x00R\fdropoffLabel\x88\x01\x01\x12\x19\n" +
 	"\x05notes\x18\x06 \x01(\tH\x01R\x05notes\x88\x01\x01\x12Q\n" +
-	"\bmetadata\x18\a \x03(\v25.dt.deliveries.v1.UpdateDeliveryRequest.MetadataEntryR\bmetadata\x1a;\n" +
+	"\bmetadata\x18\a \x03(\v25.dt.deliveries.v1.UpdateDeliveryRequest.MetadataEntryR\bmetadata\x125\n" +
+	"\bready_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\areadyAt\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x10\n" +
@@ -1951,7 +1986,7 @@ const file_dt_deliveries_v1_deliveries_proto_rawDesc = "" +
 	"\n" +
 	"courier_id\x18\x03 \x01(\tR\tcourierId\"O\n" +
 	"\x15AssignCourierResponse\x126\n" +
-	"\bdelivery\x18\x01 \x01(\v2\x1a.dt.deliveries.v1.DeliveryR\bdelivery\"\xe7\x01\n" +
+	"\bdelivery\x18\x01 \x01(\v2\x1a.dt.deliveries.v1.DeliveryR\bdelivery\"\xfd\x01\n" +
 	"\x12ReportEventRequest\x12-\n" +
 	"\x05scope\x18\x01 \x01(\v2\x17.dt.deliveries.v1.ScopeR\x05scope\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x19\n" +
@@ -1960,7 +1995,8 @@ const file_dt_deliveries_v1_deliveries_proto_rawDesc = "" +
 	"\voccurred_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"occurredAt\x12\x0e\n" +
 	"\x02by\x18\x06 \x01(\tR\x02by\x12\x16\n" +
-	"\x06reason\x18\a \x01(\tR\x06reason\"g\n" +
+	"\x06reason\x18\a \x01(\tR\x06reason\x12\x14\n" +
+	"\x05actor\x18\b \x01(\tR\x05actor\"g\n" +
 	"\x13ReportEventResponse\x126\n" +
 	"\bdelivery\x18\x01 \x01(\v2\x1a.dt.deliveries.v1.DeliveryR\bdelivery\x12\x18\n" +
 	"\aoutcome\x18\x02 \x01(\tR\aoutcome\"n\n" +
@@ -2064,57 +2100,60 @@ var file_dt_deliveries_v1_deliveries_proto_depIdxs = []int32{
 	5,  // 12: dt.deliveries.v1.Delivery.pickup_confirmations:type_name -> dt.deliveries.v1.PickupConfirmation
 	32, // 13: dt.deliveries.v1.Delivery.created_at:type_name -> google.protobuf.Timestamp
 	32, // 14: dt.deliveries.v1.Delivery.updated_at:type_name -> google.protobuf.Timestamp
-	0,  // 15: dt.deliveries.v1.CreateDeliveryRequest.scope:type_name -> dt.deliveries.v1.Scope
-	2,  // 16: dt.deliveries.v1.CreateDeliveryRequest.pickup:type_name -> dt.deliveries.v1.Pickup
-	3,  // 17: dt.deliveries.v1.CreateDeliveryRequest.dropoff:type_name -> dt.deliveries.v1.Dropoff
-	4,  // 18: dt.deliveries.v1.CreateDeliveryRequest.customer:type_name -> dt.deliveries.v1.Customer
-	28, // 19: dt.deliveries.v1.CreateDeliveryRequest.metadata:type_name -> dt.deliveries.v1.CreateDeliveryRequest.MetadataEntry
-	8,  // 20: dt.deliveries.v1.CreateDeliveryResponse.delivery:type_name -> dt.deliveries.v1.Delivery
-	0,  // 21: dt.deliveries.v1.GetDeliveryRequest.scope:type_name -> dt.deliveries.v1.Scope
-	8,  // 22: dt.deliveries.v1.GetDeliveryResponse.delivery:type_name -> dt.deliveries.v1.Delivery
-	0,  // 23: dt.deliveries.v1.ListDeliveriesRequest.scope:type_name -> dt.deliveries.v1.Scope
-	32, // 24: dt.deliveries.v1.ListDeliveriesRequest.created_gte:type_name -> google.protobuf.Timestamp
-	32, // 25: dt.deliveries.v1.ListDeliveriesRequest.created_lt:type_name -> google.protobuf.Timestamp
-	8,  // 26: dt.deliveries.v1.ListDeliveriesResponse.data:type_name -> dt.deliveries.v1.Delivery
-	0,  // 27: dt.deliveries.v1.UpdateDeliveryRequest.scope:type_name -> dt.deliveries.v1.Scope
-	33, // 28: dt.deliveries.v1.UpdateDeliveryRequest.update_mask:type_name -> google.protobuf.FieldMask
-	31, // 29: dt.deliveries.v1.UpdateDeliveryRequest.dropoff:type_name -> dt.events.v1.LatLng
-	29, // 30: dt.deliveries.v1.UpdateDeliveryRequest.metadata:type_name -> dt.deliveries.v1.UpdateDeliveryRequest.MetadataEntry
-	8,  // 31: dt.deliveries.v1.UpdateDeliveryResponse.delivery:type_name -> dt.deliveries.v1.Delivery
-	0,  // 32: dt.deliveries.v1.AssignCourierRequest.scope:type_name -> dt.deliveries.v1.Scope
-	8,  // 33: dt.deliveries.v1.AssignCourierResponse.delivery:type_name -> dt.deliveries.v1.Delivery
-	0,  // 34: dt.deliveries.v1.ReportEventRequest.scope:type_name -> dt.deliveries.v1.Scope
-	32, // 35: dt.deliveries.v1.ReportEventRequest.occurred_at:type_name -> google.protobuf.Timestamp
-	8,  // 36: dt.deliveries.v1.ReportEventResponse.delivery:type_name -> dt.deliveries.v1.Delivery
-	0,  // 37: dt.deliveries.v1.CancelDeliveryRequest.scope:type_name -> dt.deliveries.v1.Scope
-	8,  // 38: dt.deliveries.v1.CancelDeliveryResponse.delivery:type_name -> dt.deliveries.v1.Delivery
-	0,  // 39: dt.deliveries.v1.ErasePersonalDataRequest.scope:type_name -> dt.deliveries.v1.Scope
-	8,  // 40: dt.deliveries.v1.ErasePersonalDataResponse.delivery:type_name -> dt.deliveries.v1.Delivery
-	0,  // 41: dt.deliveries.v1.UpsertCourierRequest.scope:type_name -> dt.deliveries.v1.Scope
-	7,  // 42: dt.deliveries.v1.UpsertCourierResponse.courier:type_name -> dt.deliveries.v1.Courier
-	9,  // 43: dt.deliveries.v1.DeliveriesService.CreateDelivery:input_type -> dt.deliveries.v1.CreateDeliveryRequest
-	11, // 44: dt.deliveries.v1.DeliveriesService.GetDelivery:input_type -> dt.deliveries.v1.GetDeliveryRequest
-	13, // 45: dt.deliveries.v1.DeliveriesService.ListDeliveries:input_type -> dt.deliveries.v1.ListDeliveriesRequest
-	15, // 46: dt.deliveries.v1.DeliveriesService.UpdateDelivery:input_type -> dt.deliveries.v1.UpdateDeliveryRequest
-	17, // 47: dt.deliveries.v1.DeliveriesService.AssignCourier:input_type -> dt.deliveries.v1.AssignCourierRequest
-	19, // 48: dt.deliveries.v1.DeliveriesService.ReportEvent:input_type -> dt.deliveries.v1.ReportEventRequest
-	21, // 49: dt.deliveries.v1.DeliveriesService.CancelDelivery:input_type -> dt.deliveries.v1.CancelDeliveryRequest
-	23, // 50: dt.deliveries.v1.DeliveriesService.ErasePersonalData:input_type -> dt.deliveries.v1.ErasePersonalDataRequest
-	25, // 51: dt.deliveries.v1.DeliveriesService.UpsertCourier:input_type -> dt.deliveries.v1.UpsertCourierRequest
-	10, // 52: dt.deliveries.v1.DeliveriesService.CreateDelivery:output_type -> dt.deliveries.v1.CreateDeliveryResponse
-	12, // 53: dt.deliveries.v1.DeliveriesService.GetDelivery:output_type -> dt.deliveries.v1.GetDeliveryResponse
-	14, // 54: dt.deliveries.v1.DeliveriesService.ListDeliveries:output_type -> dt.deliveries.v1.ListDeliveriesResponse
-	16, // 55: dt.deliveries.v1.DeliveriesService.UpdateDelivery:output_type -> dt.deliveries.v1.UpdateDeliveryResponse
-	18, // 56: dt.deliveries.v1.DeliveriesService.AssignCourier:output_type -> dt.deliveries.v1.AssignCourierResponse
-	20, // 57: dt.deliveries.v1.DeliveriesService.ReportEvent:output_type -> dt.deliveries.v1.ReportEventResponse
-	22, // 58: dt.deliveries.v1.DeliveriesService.CancelDelivery:output_type -> dt.deliveries.v1.CancelDeliveryResponse
-	24, // 59: dt.deliveries.v1.DeliveriesService.ErasePersonalData:output_type -> dt.deliveries.v1.ErasePersonalDataResponse
-	26, // 60: dt.deliveries.v1.DeliveriesService.UpsertCourier:output_type -> dt.deliveries.v1.UpsertCourierResponse
-	52, // [52:61] is the sub-list for method output_type
-	43, // [43:52] is the sub-list for method input_type
-	43, // [43:43] is the sub-list for extension type_name
-	43, // [43:43] is the sub-list for extension extendee
-	0,  // [0:43] is the sub-list for field type_name
+	32, // 15: dt.deliveries.v1.Delivery.ready_at:type_name -> google.protobuf.Timestamp
+	0,  // 16: dt.deliveries.v1.CreateDeliveryRequest.scope:type_name -> dt.deliveries.v1.Scope
+	2,  // 17: dt.deliveries.v1.CreateDeliveryRequest.pickup:type_name -> dt.deliveries.v1.Pickup
+	3,  // 18: dt.deliveries.v1.CreateDeliveryRequest.dropoff:type_name -> dt.deliveries.v1.Dropoff
+	4,  // 19: dt.deliveries.v1.CreateDeliveryRequest.customer:type_name -> dt.deliveries.v1.Customer
+	28, // 20: dt.deliveries.v1.CreateDeliveryRequest.metadata:type_name -> dt.deliveries.v1.CreateDeliveryRequest.MetadataEntry
+	32, // 21: dt.deliveries.v1.CreateDeliveryRequest.ready_at:type_name -> google.protobuf.Timestamp
+	8,  // 22: dt.deliveries.v1.CreateDeliveryResponse.delivery:type_name -> dt.deliveries.v1.Delivery
+	0,  // 23: dt.deliveries.v1.GetDeliveryRequest.scope:type_name -> dt.deliveries.v1.Scope
+	8,  // 24: dt.deliveries.v1.GetDeliveryResponse.delivery:type_name -> dt.deliveries.v1.Delivery
+	0,  // 25: dt.deliveries.v1.ListDeliveriesRequest.scope:type_name -> dt.deliveries.v1.Scope
+	32, // 26: dt.deliveries.v1.ListDeliveriesRequest.created_gte:type_name -> google.protobuf.Timestamp
+	32, // 27: dt.deliveries.v1.ListDeliveriesRequest.created_lt:type_name -> google.protobuf.Timestamp
+	8,  // 28: dt.deliveries.v1.ListDeliveriesResponse.data:type_name -> dt.deliveries.v1.Delivery
+	0,  // 29: dt.deliveries.v1.UpdateDeliveryRequest.scope:type_name -> dt.deliveries.v1.Scope
+	33, // 30: dt.deliveries.v1.UpdateDeliveryRequest.update_mask:type_name -> google.protobuf.FieldMask
+	31, // 31: dt.deliveries.v1.UpdateDeliveryRequest.dropoff:type_name -> dt.events.v1.LatLng
+	29, // 32: dt.deliveries.v1.UpdateDeliveryRequest.metadata:type_name -> dt.deliveries.v1.UpdateDeliveryRequest.MetadataEntry
+	32, // 33: dt.deliveries.v1.UpdateDeliveryRequest.ready_at:type_name -> google.protobuf.Timestamp
+	8,  // 34: dt.deliveries.v1.UpdateDeliveryResponse.delivery:type_name -> dt.deliveries.v1.Delivery
+	0,  // 35: dt.deliveries.v1.AssignCourierRequest.scope:type_name -> dt.deliveries.v1.Scope
+	8,  // 36: dt.deliveries.v1.AssignCourierResponse.delivery:type_name -> dt.deliveries.v1.Delivery
+	0,  // 37: dt.deliveries.v1.ReportEventRequest.scope:type_name -> dt.deliveries.v1.Scope
+	32, // 38: dt.deliveries.v1.ReportEventRequest.occurred_at:type_name -> google.protobuf.Timestamp
+	8,  // 39: dt.deliveries.v1.ReportEventResponse.delivery:type_name -> dt.deliveries.v1.Delivery
+	0,  // 40: dt.deliveries.v1.CancelDeliveryRequest.scope:type_name -> dt.deliveries.v1.Scope
+	8,  // 41: dt.deliveries.v1.CancelDeliveryResponse.delivery:type_name -> dt.deliveries.v1.Delivery
+	0,  // 42: dt.deliveries.v1.ErasePersonalDataRequest.scope:type_name -> dt.deliveries.v1.Scope
+	8,  // 43: dt.deliveries.v1.ErasePersonalDataResponse.delivery:type_name -> dt.deliveries.v1.Delivery
+	0,  // 44: dt.deliveries.v1.UpsertCourierRequest.scope:type_name -> dt.deliveries.v1.Scope
+	7,  // 45: dt.deliveries.v1.UpsertCourierResponse.courier:type_name -> dt.deliveries.v1.Courier
+	9,  // 46: dt.deliveries.v1.DeliveriesService.CreateDelivery:input_type -> dt.deliveries.v1.CreateDeliveryRequest
+	11, // 47: dt.deliveries.v1.DeliveriesService.GetDelivery:input_type -> dt.deliveries.v1.GetDeliveryRequest
+	13, // 48: dt.deliveries.v1.DeliveriesService.ListDeliveries:input_type -> dt.deliveries.v1.ListDeliveriesRequest
+	15, // 49: dt.deliveries.v1.DeliveriesService.UpdateDelivery:input_type -> dt.deliveries.v1.UpdateDeliveryRequest
+	17, // 50: dt.deliveries.v1.DeliveriesService.AssignCourier:input_type -> dt.deliveries.v1.AssignCourierRequest
+	19, // 51: dt.deliveries.v1.DeliveriesService.ReportEvent:input_type -> dt.deliveries.v1.ReportEventRequest
+	21, // 52: dt.deliveries.v1.DeliveriesService.CancelDelivery:input_type -> dt.deliveries.v1.CancelDeliveryRequest
+	23, // 53: dt.deliveries.v1.DeliveriesService.ErasePersonalData:input_type -> dt.deliveries.v1.ErasePersonalDataRequest
+	25, // 54: dt.deliveries.v1.DeliveriesService.UpsertCourier:input_type -> dt.deliveries.v1.UpsertCourierRequest
+	10, // 55: dt.deliveries.v1.DeliveriesService.CreateDelivery:output_type -> dt.deliveries.v1.CreateDeliveryResponse
+	12, // 56: dt.deliveries.v1.DeliveriesService.GetDelivery:output_type -> dt.deliveries.v1.GetDeliveryResponse
+	14, // 57: dt.deliveries.v1.DeliveriesService.ListDeliveries:output_type -> dt.deliveries.v1.ListDeliveriesResponse
+	16, // 58: dt.deliveries.v1.DeliveriesService.UpdateDelivery:output_type -> dt.deliveries.v1.UpdateDeliveryResponse
+	18, // 59: dt.deliveries.v1.DeliveriesService.AssignCourier:output_type -> dt.deliveries.v1.AssignCourierResponse
+	20, // 60: dt.deliveries.v1.DeliveriesService.ReportEvent:output_type -> dt.deliveries.v1.ReportEventResponse
+	22, // 61: dt.deliveries.v1.DeliveriesService.CancelDelivery:output_type -> dt.deliveries.v1.CancelDeliveryResponse
+	24, // 62: dt.deliveries.v1.DeliveriesService.ErasePersonalData:output_type -> dt.deliveries.v1.ErasePersonalDataResponse
+	26, // 63: dt.deliveries.v1.DeliveriesService.UpsertCourier:output_type -> dt.deliveries.v1.UpsertCourierResponse
+	55, // [55:64] is the sub-list for method output_type
+	46, // [46:55] is the sub-list for method input_type
+	46, // [46:46] is the sub-list for extension type_name
+	46, // [46:46] is the sub-list for extension extendee
+	0,  // [0:46] is the sub-list for field type_name
 }
 
 func init() { file_dt_deliveries_v1_deliveries_proto_init() }

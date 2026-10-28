@@ -115,7 +115,7 @@ func (r *Repo) Create(ctx context.Context, s app.Scope, d *domain.Delivery, evts
 			DropoffLat: d.Dropoff.Lat, DropoffLng: d.Dropoff.Lng,
 			DropoffLabelSealed: sealed.dropoffLabel, CustomerFirstNameSealed: sealed.customerFirstName,
 			NotesSealed: sealed.notes, MetadataSealed: sealed.metadata,
-			ItemsSummary: d.ItemsSummary, ItemCount: itemCount(d.ItemCount), CourierID: courierID(d),
+			ItemsSummary: d.ItemsSummary, ItemCount: itemCount(d.ItemCount), ReadyAt: d.ReadyAt, CourierID: courierID(d),
 			ErasedAt: d.ErasedAt, DroppedReports: droppedReports(d), Version: d.Version,
 			CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 		})
@@ -235,8 +235,8 @@ func (r *Repo) Mutate(ctx context.Context, s app.Scope, id string, fn func(*doma
 			ID: d.ID, Status: string(d.Status), DropoffLat: d.Dropoff.Lat, DropoffLng: d.Dropoff.Lng,
 			DropoffLabelSealed: sealed.dropoffLabel, CustomerFirstNameSealed: sealed.customerFirstName,
 			NotesSealed: sealed.notes, MetadataSealed: sealed.metadata,
-			CourierID: courierID(d), ErasedAt: d.ErasedAt, DroppedReports: droppedReports(d), Version: d.Version,
-			UpdatedAt: d.UpdatedAt,
+			ReadyAt: d.ReadyAt, CourierID: courierID(d), ErasedAt: d.ErasedAt, DroppedReports: droppedReports(d),
+			Version: d.Version, UpdatedAt: d.UpdatedAt,
 		})
 		if err != nil {
 			return fmt.Errorf("update delivery: %w", err)
@@ -394,7 +394,7 @@ func (r *Repo) toDelivery(row db.GetDeliveryRow, hist []db.ListHistoryRow) (*dom
 		Model: domain.Model(row.Model), Status: domain.Status(row.Status), Policy: domain.PickupPolicy(row.PickupPolicy),
 		Pickup: domain.Location{Lat: row.PickupLat, Lng: row.PickupLng}, PickupName: row.PickupName,
 		Dropoff:      domain.Location{Lat: row.DropoffLat, Lng: row.DropoffLng},
-		ItemsSummary: row.ItemsSummary, ErasedAt: utc(row.ErasedAt), DroppedReports: int(row.DroppedReports),
+		ItemsSummary: row.ItemsSummary, ReadyAt: utc(row.ReadyAt), ErasedAt: utc(row.ErasedAt), DroppedReports: int(row.DroppedReports),
 		Version: row.Version, CreatedAt: row.CreatedAt.UTC(), UpdatedAt: row.UpdatedAt.UTC(),
 	}
 	var err error

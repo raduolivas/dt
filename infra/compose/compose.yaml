@@ -8,6 +8,9 @@ x-service: &service
   depends_on:
     postgres:
       condition: service_healthy
+  # Dev mTLS material from scripts/dev-certs.sh (make dev runs it).
+  volumes:
+    - ./certs:/certs:ro
 
 services:
   postgres:
@@ -69,6 +72,8 @@ services:
         condition: service_healthy
       deliveries:
         condition: service_started
+      tracking:
+        condition: service_started
     build:
       context: ../../backend
       args:
@@ -84,7 +89,11 @@ services:
       APIKEY_PEPPER: "ZGV2LW9ubHktbm90LWEtc2VjcmV0LXBlcHBlci0wMDAwMDAwMDAwMDA=" # gitleaks:allow (dev-only placeholder)
       # CIDRs of proxies whose X-Forwarded-For hops count; empty: none.
       TRUSTED_PROXIES: ""
-      DELIVERIES_RPC_URL: "http://deliveries:8081"
+      DELIVERIES_RPC_URL: "https://deliveries:8081"
+      # Internal RPC over mTLS (dev certs from scripts/dev-certs.sh).
+      INTERNAL_RPC_TLS_CERT: /certs/gateway.pem
+      INTERNAL_RPC_TLS_KEY: /certs/gateway.key
+      INTERNAL_RPC_TLS_CA: /certs/ca.pem
       # Dev-only placeholder, never a real secret: the same value as deliveries'.
       INTERNAL_RPC_TOKEN: "dev-only-not-a-secret-internal-token-0000"
       # Dev-only placeholder, never a real secret: seals stored idempotency
@@ -92,6 +101,17 @@ services:
       # "dev-only-not-a-secret-gateway-k0"; not shared with deliveries.
       DATA_KEYS: "gw1:ZGV2LW9ubHktbm90LWEtc2VjcmV0LWdhdGV3YXktazA=" # gitleaks:allow (dev-only placeholder)
       DATA_KEY_CURRENT: "gw1"
+      # Dev-only placeholder, never a real secret: the Ed25519 seed (id "vw1")
+      # that signs viewer tokens, base64 of "dev-only-not-a-secret-viewer-k00".
+      # The public half is served at /.well-known/jwks.json.
+      VIEWER_SIGNING_KEYS: "vw1:ZGV2LW9ubHktbm90LWEtc2VjcmV0LXZpZXdlci1rMDA=" # gitleaks:allow (dev-only placeholder)
+      VIEWER_SIGNING_KEY_CURRENT: "vw1"
+      # Tracking links are <base>/t/<token>; the hosted page arrives in M4.
+      TRACKING_URL_BASE: "http://localhost:8080"
+      # Tracking's internal RPC (mTLS port); the gateway reads viewer
+      # snapshots from it. delivery.status_changed arrives over NATS
+      # (consumer gateway-deliveries, waits for the DELIVERIES stream).
+      TRACKING_RPC_URL: "https://tracking:8085"
     ports:
       - "127.0.0.1:8080:8080"
 
@@ -112,6 +132,10 @@ services:
       DATABASE_URL: "postgres://svc_deliveries:svc_deliveries@postgres:5432/dt?sslmode=disable"
       MIGRATIONS_DATABASE_URL: "postgres://mig_deliveries:mig_deliveries@postgres:5432/dt?sslmode=disable"
       NATS_URL: "nats://nats:4222"
+      # Internal RPC over mTLS (dev certs from scripts/dev-certs.sh).
+      INTERNAL_RPC_TLS_CERT: /certs/deliveries.pem
+      INTERNAL_RPC_TLS_KEY: /certs/deliveries.key
+      INTERNAL_RPC_TLS_CA: /certs/ca.pem
       # Dev-only placeholders, never real secrets. DATA_KEYS holds one key
       # (id "dev1") that is base64 of "dev-only-not-a-secret-data-key-0".
       INTERNAL_RPC_TOKEN: "dev-only-not-a-secret-internal-token-0000"
@@ -122,17 +146,82 @@ services:
 
   tracking:
     <<: *service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      osrm-car:
+        condition: service_healthy
+      osrm-bike:
+        condition: service_healthy
     build:
       context: ../../backend
       args:
         SERVICE: tracking
     environment:
+      # PORT serves health and the public viewer endpoints (snapshot,
+      # WebSocket and SSE streams): plain HTTP. The internal RPC API has its
+      # own mTLS port, INTERNAL_RPC_PORT; viewer routes are never on it.
       PORT: "8082"
+      INTERNAL_RPC_PORT: "8085"
       LOG_LEVEL: info
       DATABASE_URL: "postgres://svc_tracking:svc_tracking@postgres:5432/dt?sslmode=disable"
       MIGRATIONS_DATABASE_URL: "postgres://mig_tracking:mig_tracking@postgres:5432/dt?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      NATS_URL: "nats://nats:4222"
+      OSRM_CAR_URL: "http://osrm-car:5000"
+      OSRM_BIKE_URL: "http://osrm-bike:5000"
+      # The sandbox simulator drives deliveries through their internal RPC.
+      DELIVERIES_RPC_URL: "https://deliveries:8081"
+      # Internal RPC over mTLS (dev certs from scripts/dev-certs.sh).
+      INTERNAL_RPC_TLS_CERT: /certs/tracking.pem
+      INTERNAL_RPC_TLS_KEY: /certs/tracking.key
+      INTERNAL_RPC_TLS_CA: /certs/ca.pem
+      # Dev-only placeholder, never a real secret: the same value as the other services'.
+      INTERNAL_RPC_TOKEN: "dev-only-not-a-secret-internal-token-0000"
+      # The gateway's viewer token keys (fetched lazily, cached 5 minutes).
+      JWKS_URL: "http://gateway:8080/.well-known/jwks.json"
     ports:
       - "127.0.0.1:8082:8082"
+      - "127.0.0.1:8085:8085"
+
+  # OSRM routing data comes from `make osrm-data` (scripts/osrm-prepare.sh).
+  # The image is pinned by digest, the same one the script preprocesses with.
+  osrm-car:
+    image: osrm/osrm-backend@sha256:af5d4a83fb90086a43b1ae2ca22872e6768766ad5fcbb07a29ff90ec644ee409
+    restart: unless-stopped
+    command: osrm-routed --algorithm mld --port 5000 /data/region.osrm
+    volumes:
+      - ./osrm/car:/data:ro
+    ports:
+      - "127.0.0.1:5000:5000"
+    healthcheck: &osrm-health
+      # The image has no curl or wget: speak HTTP over bash's /dev/tcp.
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/5000 &&
+          printf 'GET /nearest/v1/driving/4.9,52.37 HTTP/1.0\r\n\r\n' >&3 &&
+          head -n 1 <&3 | grep -q ' 200 '
+      start_period: 10s
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  osrm-bike:
+    image: osrm/osrm-backend@sha256:af5d4a83fb90086a43b1ae2ca22872e6768766ad5fcbb07a29ff90ec644ee409
+    restart: unless-stopped
+    command: osrm-routed --algorithm mld --port 5000 /data/region.osrm
+    volumes:
+      - ./osrm/bike:/data:ro
+    ports:
+      - "127.0.0.1:5001:5000"
+    healthcheck: *osrm-health
 
   webhooks:
     <<: *service
@@ -168,6 +257,10 @@ services:
       # Dev-only placeholders, never real secrets. APIKEY_PEPPER is base64 of
       # "dev-only-not-a-secret-pepper-000000000000" and must match the gateway's.
       APIKEY_PEPPER: "ZGV2LW9ubHktbm90LWEtc2VjcmV0LXBlcHBlci0wMDAwMDAwMDAwMDA=" # gitleaks:allow (dev-only placeholder)
+      # Internal RPC over mTLS (dev certs from scripts/dev-certs.sh).
+      INTERNAL_RPC_TLS_CERT: /certs/accounts.pem
+      INTERNAL_RPC_TLS_KEY: /certs/accounts.key
+      INTERNAL_RPC_TLS_CA: /certs/ca.pem
       INTERNAL_RPC_TOKEN: "dev-only-not-a-secret-internal-token-0000"
     ports:
       - "127.0.0.1:8084:8084"

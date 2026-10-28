@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars (git-ignored) and fill in. These values are fake.
+owner_email              = "owner@example.invalid"
+alert_email              = "alerts@example.invalid"
+staging_account_email    = "aws-dt-staging@example.invalid"
+production_account_email = "aws-dt-production@example.invalid"
+
+# Optional overrides:
+# budget_unit  = "USD"   # only if AWS Budgets rejects EUR
+# budget_limit = "82"

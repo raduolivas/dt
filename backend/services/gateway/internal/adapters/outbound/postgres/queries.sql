@@ -78,3 +78,51 @@ WHERE id IN (
   ORDER BY x.occurred_at
   LIMIT @batch
 );
+
+-- name: LockDeliveryLinks :exec
+-- Serializes Replace and Expire of one delivery's links for the transaction.
+SELECT pg_advisory_xact_lock(hashtextextended('tracking_links:' || @delivery_id::text, 0));
+
+-- name: GetLinkExpiry :one
+SELECT expires_at FROM tracking_link_expiry WHERE delivery_id = $1;
+
+-- name: InsertLinkExpiry :exec
+-- The first final time wins.
+INSERT INTO tracking_link_expiry (delivery_id, expires_at) VALUES ($1, $2)
+ON CONFLICT (delivery_id) DO NOTHING;
+
+-- name: RevokeUnrevokedLinks :exec
+UPDATE tracking_links SET revoked_at = @revoked_at
+WHERE delivery_id = @delivery_id AND revoked_at IS NULL;
+
+-- name: InsertTrackingLink :exec
+INSERT INTO tracking_links (id, tenant_id, environment, delivery_id, token_hash, created_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7);
+
+-- name: GetTrackingLinkByHash :one
+SELECT id, tenant_id, environment, delivery_id, created_at, revoked_at, expires_at
+FROM tracking_links WHERE token_hash = $1;
+
+-- name: GetTrackingLink :one
+SELECT id, tenant_id, environment, delivery_id, created_at, revoked_at, expires_at
+FROM tracking_links WHERE id = $1;
+
+-- name: ExpireUnrevokedLinks :many
+-- Also returns the links that already carry the expiry, so a repeated call
+-- lists every unrevoked link of the delivery.
+UPDATE tracking_links SET expires_at = @expires_at
+WHERE delivery_id = @delivery_id AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at = @expires_at)
+RETURNING id;
+
+-- name: LinksRevokedSince :many
+SELECT id FROM tracking_links
+WHERE delivery_id = @delivery_id AND revoked_at >= @since
+ORDER BY revoked_at;
+
+-- name: DeleteExpiredLinks :execrows
+DELETE FROM tracking_links
+WHERE revoked_at < @revoked_before::timestamptz OR expires_at < @expires_before::timestamptz;
+
+-- name: DeleteLinkExpiriesBefore :exec
+DELETE FROM tracking_link_expiry WHERE expires_at < @expires_before::timestamptz;

@@ -53,10 +53,55 @@ func TestOpenAPIExamplesValidate(t *testing.T) {
 			}
 		}
 	}
-	// 9 delivery/courier operations carry examples; guard against a silent no-op.
-	if checked < 20 {
+	// The delivery/courier operations and the M3 tracking operations carry
+	// examples; guard against a silent no-op.
+	if checked < 35 {
 		t.Fatalf("only %d examples checked", checked)
 	}
+	// Every M3 operation must carry an example on each JSON request and
+	// response body, so none can be added without one.
+	for _, id := range m3Operations {
+		op := operationByID(doc, id)
+		if op == nil {
+			t.Errorf("operation %s missing", id)
+			continue
+		}
+		if op.RequestBody != nil {
+			for mt, c := range op.RequestBody.Value.Content {
+				if len(c.Examples) == 0 {
+					t.Errorf("%s request %s has no example", id, mt)
+				}
+			}
+		}
+		for status, resp := range op.Responses.Map() {
+			if !strings.HasPrefix(status, "2") {
+				continue
+			}
+			for mt, c := range resp.Value.Content {
+				if len(c.Examples) == 0 {
+					t.Errorf("%s %s %s has no example", id, status, mt)
+				}
+			}
+		}
+	}
+}
+
+// m3Operations are the operation ids M3 adds.
+var m3Operations = []string{
+	"rotateTrackingLink", "getDeliveryTracking", "listDeliveryTrail", "listDeliveryProofPoints",
+	"reportCourierLocations", "simulateDelivery", "createTrackingSession", "refreshTrackingSession",
+	"getTrackingSnapshot",
+}
+
+func operationByID(doc *openapi3.T, id string) *openapi3.Operation {
+	for _, item := range doc.Paths.Map() {
+		for _, op := range item.Operations() {
+			if op.OperationID == id {
+				return op
+			}
+		}
+	}
+	return nil
 }
 
 // TestOpenAPIOperations pins the operation ids and the problem+json error
@@ -69,6 +114,12 @@ func TestOpenAPIOperations(t *testing.T) {
 		"assignCourier": "POST /deliveries/{id}/assignment", "reportDeliveryEvent": "POST /deliveries/{id}/events",
 		"cancelDelivery": "POST /deliveries/{id}/cancel", "erasePersonalData": "DELETE /deliveries/{id}/personal-data",
 		"upsertCourier": "PUT /couriers/{external_id}",
+		// M3
+		"rotateTrackingLink": "POST /deliveries/{id}/tracking-link/rotate", "getDeliveryTracking": "GET /deliveries/{id}/tracking",
+		"listDeliveryTrail": "GET /deliveries/{id}/trail", "listDeliveryProofPoints": "GET /deliveries/{id}/proof-points",
+		"reportCourierLocations": "POST /couriers/{id}/locations", "simulateDelivery": "POST /test/deliveries/{id}/simulate",
+		"createTrackingSession": "POST /tracking/session", "refreshTrackingSession": "POST /tracking/session/refresh",
+		"getTrackingSnapshot": "GET /tracking/snapshot",
 	}
 	got := map[string]string{}
 	for path, item := range doc.Paths.Map() {
@@ -89,9 +140,20 @@ func TestOpenAPIOperations(t *testing.T) {
 			t.Errorf("operation %s = %q, want %q", id, got[id], route)
 		}
 	}
-	for _, scheme := range []string{"CourierToken", "ViewerToken"} {
-		if _, ok := doc.Components.SecuritySchemes[scheme]; ok {
-			t.Errorf("security scheme %s should be removed until M3/M5", scheme)
+	if _, ok := doc.Components.SecuritySchemes["CourierToken"]; ok {
+		t.Error("security scheme CourierToken should be removed until M5")
+	}
+	if _, ok := doc.Components.SecuritySchemes["ViewerToken"]; !ok {
+		t.Error("security scheme ViewerToken is missing")
+	}
+	// Only the session exchange is unauthenticated; the other viewer routes use the viewer token.
+	if sec := operationByID(doc, "createTrackingSession").Security; sec == nil || len(*sec) != 0 {
+		t.Error("createTrackingSession must declare security: []")
+	}
+	for _, id := range []string{"refreshTrackingSession", "getTrackingSnapshot"} {
+		sec := operationByID(doc, id).Security
+		if sec == nil || len(*sec) != 1 || (*sec)[0]["ViewerToken"] == nil {
+			t.Errorf("%s must use ViewerToken", id)
 		}
 	}
 }

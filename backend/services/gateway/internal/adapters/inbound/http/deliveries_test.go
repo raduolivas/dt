@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -510,7 +511,7 @@ func TestDeliveryRoutesMapRequests(t *testing.T) {
 	}
 	r := g.fake.last().(*deliveriesv1.ReportEventRequest)
 	if r.GetId() != delID || r.GetEventId() != "e-1" || r.GetType() != "pickup_confirmed" || r.GetBy() != "store" ||
-		r.GetReason() != "r" || r.GetOccurredAt().AsTime() != time.Date(2026, 10, 22, 14, 0, 0, 0, time.UTC) {
+		r.GetReason() != "r" || r.GetActor() != "" || r.GetOccurredAt().AsTime() != time.Date(2026, 10, 22, 14, 0, 0, 0, time.UTC) {
 		t.Fatalf("event = %v", r)
 	}
 	g.do(t, g.req("POST", "/v1/deliveries/"+delID+"/events", `{"event_id":"e-2","type":"arriving"}`), http.StatusOK)
@@ -538,7 +539,7 @@ func TestDeliveryWithCourierAndConfirmations(t *testing.T) {
 	}
 	if d.Courier == nil || d.Courier.Id != couID || len(d.PickupConfirmations) != 1 || d.PickupConfirmations[0].By != "courier" ||
 		*d.Notes != "n" || *d.Dropoff.Label != "l" || *d.Customer.FirstName != "Ana" || *d.ItemCount != 2 ||
-		d.Metadata["table"] != "12" || d.Environment != api.Live {
+		d.Metadata["table"] != "12" || d.Environment != api.EnvironmentLive {
 		t.Fatalf("delivery = %s", rec.Body.String())
 	}
 }
@@ -791,5 +792,61 @@ func TestCoordinatesRoundTripExactly(t *testing.T) {
 	}
 	if l := resp.Pickup.Location; l.Lat != lat || l.Lng != lng {
 		t.Fatalf("response pickup = %v, want %v,%v: %s", l, lat, lng, rec.Body.String())
+	}
+}
+
+func TestCreateWithReadyAtRoundTrip(t *testing.T) {
+	t.Parallel()
+	g := newGW(t)
+	ready := time.Date(2026, 10, 22, 14, 15, 0, 0, time.UTC)
+	g.fake.del.ReadyAt = timestamppb.New(ready)
+	body := strings.Replace(create, `"notes"`, `"ready_at":"2026-10-22T14:15:00Z","notes"`, 1)
+	rec := g.do(t, g.req("POST", "/v1/deliveries", body), http.StatusCreated)
+
+	got := g.fake.last().(*deliveriesv1.CreateDeliveryRequest)
+	if !got.GetReadyAt().AsTime().Equal(ready) {
+		t.Fatalf("ready_at = %v", got.GetReadyAt())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["ready_at"] != "2026-10-22T14:15:00Z" {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+
+	// Without a ready_at the field is present and null.
+	g.fake.del.ReadyAt = nil
+	rec = g.do(t, g.req("POST", "/v1/deliveries", create), http.StatusCreated)
+	if got := g.fake.last().(*deliveriesv1.CreateDeliveryRequest); got.ReadyAt != nil {
+		t.Fatalf("ready_at = %v, want unset", got.ReadyAt)
+	}
+	out = nil
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if v, present := out["ready_at"]; !present || v != nil {
+		t.Fatalf("ready_at = %v (present %t), want null", v, present)
+	}
+}
+
+func TestPatchReadyAt(t *testing.T) {
+	t.Parallel()
+	g := newGW(t)
+	patch := func(body string) *deliveriesv1.UpdateDeliveryRequest {
+		t.Helper()
+		g.do(t, g.req("PATCH", "/v1/deliveries/"+delID, body), http.StatusOK)
+		return g.fake.last().(*deliveriesv1.UpdateDeliveryRequest)
+	}
+	r := patch(`{"ready_at":"2026-10-22T14:25:00Z"}`)
+	if !slices.Contains(r.GetUpdateMask().GetPaths(), "ready_at") ||
+		!r.GetReadyAt().AsTime().Equal(time.Date(2026, 10, 22, 14, 25, 0, 0, time.UTC)) {
+		t.Fatalf("set: %v", r)
+	}
+	r = patch(`{"ready_at":null}`)
+	if !slices.Contains(r.GetUpdateMask().GetPaths(), "ready_at") || r.ReadyAt != nil {
+		t.Fatalf("clear: %v", r)
+	}
+	r = patch(`{"notes":"x"}`)
+	if slices.Contains(r.GetUpdateMask().GetPaths(), "ready_at") {
+		t.Fatalf("absent but masked: %v", r)
 	}
 }

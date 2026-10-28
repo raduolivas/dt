@@ -2,7 +2,35 @@ openapi: 3.1.0
 info:
   title: DT API
   version: 1.0.0
-  description: Public API for DT live delivery tracking. See the docs for guides.
+  description: |-
+    Public API for DT live delivery tracking. See the docs for guides.
+
+    ## Realtime tracking streams
+
+    Besides `GET /tracking/snapshot`, a customer's client can stream snapshots over a
+    WebSocket at `/tracking/stream` or, where WebSockets are blocked, over Server-Sent
+    Events at `GET /tracking/stream/sse` (send `Authorization: Bearer <viewer_token>`; use
+    `fetch`, not `EventSource`). These are not OpenAPI operations.
+
+    - **WebSocket auth.** The first client message must be `{"type":"auth","token":"<viewer_token>"}`,
+      sent within 5 seconds; otherwise the stream closes with code 4401. The token is never sent in the URL.
+      Client messages are at most 4 KB. A tracking link allows 5 concurrent streams.
+    - **Server messages**, each a JSON object with a `type`:
+      - `snapshot`: `{"type":"snapshot","data":<TrackingSnapshot>}`. Ignore any whose `version` is not greater than the last applied.
+      - `status`: `{"type":"status","data":{"status":"<delivery status>","at":"<time>"}}` after the snapshot that changed the delivery status.
+      - `ping`: `{"type":"ping"}`, a keep-alive, every 25 seconds.
+      - `revoked`: `{"type":"revoked"}`: the tracking link was rotated or has expired. The server then closes the stream (WebSocket close code 4401); do not reconnect with the same token.
+    - **SSE** sends the same messages as events: `event: <type>` and `data: <the same JSON object>`.
+    - **Close codes.** 4401: authentication failed or the link was revoked or expired. 1013: too many streams, or try
+      again later. 1012: the server is restarting; reconnect with backoff and resync from `GET /tracking/snapshot`.
+    - **Renewing.** The viewer token lasts 15 minutes; call `POST /tracking/session/refresh` before it expires and, on
+      an open WebSocket, send `{"type":"auth","token":"<new viewer_token>"}` (same link and delivery; any other token
+      closes the stream with 4401). An open stream stays open past the token's expiry unless the link is revoked or expires.
+
+    ## Error codes added for tracking
+
+    `link_invalid` (401), `viewer_token_invalid` (401), `simulation_state` (409) and
+    `tracking_unavailable` (503), documented on the operations where they apply.
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -15,7 +43,11 @@ tags:
   - name: Deliveries
     description: Create deliveries, report their progress and read them back.
   - name: Couriers
-    description: Couriers you register for assignment.
+    description: Couriers you register for assignment, and the locations you relay for them.
+  - name: Tracking
+    description: Tracking links, the customer's viewer session, and the courier data partners can read.
+  - name: Sandbox
+    description: Test-mode helpers. They refuse live keys.
 paths:
   /me:
     get:
@@ -47,7 +79,8 @@ paths:
       description: 'Creates a delivery in `confirmed` status. `external_id` is unique per tenant and environment.
         Requires scope `deliveries:write`. Problem codes: `validation_failed` (400), `external_id_conflict`
         (409, the external id is already used by another delivery), `model_not_allowed` (422, the tenant
-        does not allow the requested model).'
+        does not allow the requested model). The response carries the customer''s tracking link in `tracking`;
+        it is `null` if issuing the link failed, in which case call `rotateTrackingLink`.'
       tags:
       - Deliveries
       security:
@@ -97,16 +130,17 @@ paths:
                   notes: Ring twice
                   metadata:
                     table: '12'
+                  ready_at: '2026-10-22T14:15:00Z'
       responses:
         '201':
-          description: The created delivery.
+          description: The created delivery, with its tracking link.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Delivery'
+                $ref: '#/components/schemas/CreateDeliveryResponse'
               examples:
                 default:
-                  value: &id001
+                  value:
                     id: del_01j9z3k8m2q4r6s8t0v2w4x6y8
                     external_id: order-1042
                     environment: test
@@ -135,6 +169,11 @@ paths:
                     personal_data_erased: false
                     created_at: '2026-10-22T14:00:00Z'
                     updated_at: '2026-10-22T14:00:00Z'
+                    ready_at: null
+                    tracking:
+                      url: https://track.example.invalid/t/Xk3m9QpL2vN7aB4cD8eF1g
+                      token: Xk3m9QpL2vN7aB4cD8eF1g
+                      expires_at: null
         '400': &id002
           $ref: '#/components/responses/ValidationFailed'
         '409':
@@ -185,7 +224,36 @@ paths:
                 default:
                   value:
                     data:
-                    - *id001
+                    - &id001
+                      id: del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                      external_id: order-1042
+                      environment: test
+                      delivery_model: direct
+                      status: confirmed
+                      pickup:
+                        location:
+                          lat: -23.5614
+                          lng: -46.6559
+                        name: Pizzaria Central
+                      dropoff:
+                        location:
+                          lat: -23.5505
+                          lng: -46.6333
+                        label: Apto 42
+                      customer:
+                        first_name: Ana
+                      items_summary: 2 pizzas
+                      item_count: 2
+                      notes: Ring twice
+                      metadata:
+                        table: '12'
+                      courier: null
+                      pickup_policy: any
+                      pickup_confirmations: []
+                      personal_data_erased: false
+                      created_at: '2026-10-22T14:00:00Z'
+                      updated_at: '2026-10-22T14:00:00Z'
+                      ready_at: null
                     has_more: false
         '400': *id002
         '401': *id003
@@ -229,8 +297,8 @@ paths:
     patch:
       operationId: updateDelivery
       summary: Update a delivery
-      description: 'Changes the dropoff location, dropoff label, notes or metadata. Send `null` to clear
-        `dropoff_label` or `notes` (the dropoff location cannot be cleared); a `metadata` value replaces
+      description: 'Changes the dropoff location, dropoff label, notes, metadata or ready time. Send `null` to clear
+        `dropoff_label`, `notes` or `ready_at` (the dropoff location cannot be cleared); a `metadata` value replaces
         the whole map and `null` clears it. Requires scope `deliveries:write`. Problem codes: `validation_failed`
         (400), `not_found` (404), `dropoff_locked` (409, the delivery is past pickup or final, so the dropoff
         location cannot change).'
@@ -252,6 +320,10 @@ paths:
                     location:
                       lat: -23.55
                       lng: -46.64
+              move_ready_at:
+                summary: The kitchen needs 10 more minutes
+                value:
+                  ready_at: '2026-10-22T14:25:00Z'
               clear_notes:
                 summary: Clear notes and label
                 value:
@@ -347,6 +419,7 @@ paths:
                     personal_data_erased: false
                     created_at: '2026-10-22T14:00:00Z'
                     updated_at: '2026-10-22T14:00:00Z'
+                    ready_at: null
         '400': *id002
         '404': *id006
         '413':
@@ -455,6 +528,7 @@ paths:
                       personal_data_erased: false
                       created_at: '2026-10-22T14:00:00Z'
                       updated_at: '2026-10-22T14:10:00Z'
+                      ready_at: null
         '400': *id002
         '404': *id006
         '413':
@@ -535,6 +609,7 @@ paths:
                     personal_data_erased: false
                     created_at: '2026-10-22T14:00:00Z'
                     updated_at: '2026-10-22T14:05:00Z'
+                    ready_at: null
         '400': *id002
         '404': *id006
         '413':
@@ -599,6 +674,7 @@ paths:
                     personal_data_erased: true
                     created_at: '2026-10-22T14:00:00Z'
                     updated_at: '2026-10-22T14:00:00Z'
+                    ready_at: null
         '404': *id006
         '409':
           description: '`delivery_active`: the delivery is not final yet.'
@@ -674,6 +750,581 @@ paths:
         '401': *id003
         '403': *id004
         '429': *id005
+  /deliveries/{id}/tracking-link/rotate:
+    parameters:
+    - *id007
+    post:
+      operationId: rotateTrackingLink
+      summary: Rotate the tracking link
+      description: 'Invalidates the delivery''s current tracking link at once and returns a new one. Viewers
+        already connected through the old link are disconnected within a second. When the delivery has no
+        link (for example because issuing it failed at creation) a link is issued. Requires scope `deliveries:write`.
+        Problem codes: `not_found` (404), `tracking_unavailable` (503: the link could not be rotated or the
+        revocation not published; retry with the same Idempotency-Key, which rotates again).'
+      tags:
+      - Tracking
+      security:
+      - SecretKey: []
+      parameters:
+      - *id008
+      responses:
+        '200':
+          description: The new tracking link. `expires_at` is `null` until the delivery is final, then 30 minutes
+            after it ended.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackingLink'
+              examples:
+                default:
+                  value:
+                    url: https://track.example.invalid/t/Zr7wT2nKd9sH4yJ6uB3xQa
+                    token: Zr7wT2nKd9sH4yJ6uB3xQa
+                    expires_at: null
+        '404': *id006
+        '503':
+          $ref: '#/components/responses/TrackingUnavailable'
+        '401': *id003
+        '403': *id004
+        '429': *id005
+  /deliveries/{id}/tracking:
+    parameters:
+    - *id007
+    get:
+      operationId: getDeliveryTracking
+      summary: Get the live tracking view
+      description: 'The live view of a delivery without the visibility filter the customer''s viewer applies:
+        the courier''s position, heading, speed and signal are always included once a courier is assigned,
+        whatever the delivery model and status. Available in every state; after a final state it returns
+        the last values. Requires scope `deliveries:read`. Problem codes: `not_found` (404), `tracking_unavailable`
+        (503).'
+      tags:
+      - Tracking
+      security:
+      - SecretKey: []
+      responses:
+        '200':
+          description: The live view.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerView'
+              examples:
+                default:
+                  value:
+                    delivery_id: del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                    delivery_model: direct
+                    status: picked_up
+                    courier:
+                      id: cou_01j9z3k8m2q4r6s8t0v2w4x6y8
+                      external_id: driver-77
+                      display_name: Carlos
+                      vehicle: e_bike
+                      photo_url: null
+                      position:
+                        lat: -23.5561
+                        lng: -46.6492
+                      heading_deg: 84
+                      speed_kmh: 17.5
+                      position_at: '2026-10-22T14:20:03Z'
+                      signal: live
+                    pickup:
+                      location:
+                        lat: -23.5614
+                        lng: -46.6559
+                      name: Pizzaria Central
+                    dropoff:
+                      location:
+                        lat: -23.5505
+                        lng: -46.6333
+                      label: Apto 42
+                    route:
+                      to_pickup: null
+                      to_dropoff:
+                      - [-23.5561, -46.6492]
+                      - [-23.5530, -46.6410]
+                      - [-23.5505, -46.6333]
+                    eta_seconds: 420
+                    eta_window: null
+                    eta_state: live
+                    eta_quality: osrm
+                    distance_remaining_m: 1350
+                    progress: 0.42
+                    timeline:
+                    - status: confirmed
+                      at: '2026-10-22T14:00:00Z'
+                    - status: picked_up
+                      at: '2026-10-22T14:15:00Z'
+                    updated_at: '2026-10-22T14:20:03.410Z'
+                    version: 37
+        '404': *id006
+        '503': &id010
+          $ref: '#/components/responses/TrackingUnavailable'
+        '401': *id003
+        '403': *id004
+        '429': *id005
+  /deliveries/{id}/trail:
+    parameters:
+    - *id007
+    get:
+      operationId: listDeliveryTrail
+      summary: List the courier trail
+      description: 'The courier''s accepted fixes for the delivery window (from assignment, or from creation
+        in the Direct model, until the delivery is final), oldest first. Raw fixes are kept for 30 days;
+        afterwards `raw_available` is `false`, `data` is empty and `simplified` holds the route. With `format=geojson`
+        the response is a GeoJSON FeatureCollection (`application/geo+json`) with one LineString and one
+        Point per fix. Every read is audited. Requires scope `deliveries:read`. Problem codes: `validation_failed`
+        (400), `not_found` (404), `tracking_unavailable` (503).'
+      tags:
+      - Tracking
+      security:
+      - SecretKey: []
+      parameters:
+      - name: format
+        in: query
+        description: Response format.
+        schema:
+          type: string
+          enum: [json, geojson]
+          default: json
+      - name: limit
+        in: query
+        description: Page size.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 500
+      - name: starting_after
+        in: query
+        description: The `next_cursor` of the previous page.
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 255
+      responses:
+        '200':
+          description: A page of the trail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrailPage'
+              examples:
+                default:
+                  value:
+                    data:
+                    - t: '2026-10-22T14:15:03Z'
+                      lat: -23.5612
+                      lng: -46.6557
+                      accuracy_m: 6.5
+                      speed_mps: 4.8
+                      heading_deg: 84
+                      source: relay
+                    - t: '2026-10-22T14:15:06Z'
+                      lat: -23.5611
+                      lng: -46.6551
+                      accuracy_m: 7
+                      speed_mps: null
+                      heading_deg: null
+                      source: relay
+                    has_more: false
+                    next_cursor: null
+                    raw_available: true
+                    simplified: null
+                simplified:
+                  summary: Raw fixes have been deleted
+                  value:
+                    data: []
+                    has_more: false
+                    next_cursor: null
+                    raw_available: false
+                    simplified:
+                    - [-23.5612, -46.6557]
+                    - [-23.5530, -46.6410]
+                    - [-23.5505, -46.6333]
+            application/geo+json:
+              schema:
+                $ref: '#/components/schemas/TrailGeoJson'
+              examples:
+                default:
+                  value:
+                    type: FeatureCollection
+                    features:
+                    - type: Feature
+                      geometry:
+                        type: LineString
+                        coordinates:
+                        - [-46.6557, -23.5612]
+                        - [-46.6551, -23.5611]
+                      properties:
+                        kind: trail
+                    - type: Feature
+                      geometry:
+                        type: Point
+                        coordinates: [-46.6557, -23.5612]
+                      properties:
+                        kind: fix
+                        t: '2026-10-22T14:15:03Z'
+                        accuracy_m: 6.5
+                        speed_mps: 4.8
+                        heading_deg: 84
+                        source: relay
+        '400': *id002
+        '404': *id006
+        '503': *id010
+        '401': *id003
+        '403': *id004
+        '429': *id005
+  /deliveries/{id}/proof-points:
+    parameters:
+    - *id007
+    get:
+      operationId: listDeliveryProofPoints
+      summary: List the proof points
+      description: 'One entry per reported status in which the courier''s position matters (`at_pickup`,
+        `pickup_confirmed`, `arriving`, `delivered`, `failed`), with the latest accepted fix from the 2 minutes
+        before it, or `position: null` when there was none. Every read is audited. Requires scope `deliveries:read`.
+        Problem codes: `not_found` (404), `tracking_unavailable` (503).'
+      tags:
+      - Tracking
+      security:
+      - SecretKey: []
+      responses:
+        '200':
+          description: The proof points, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProofPointList'
+              examples:
+                default:
+                  value:
+                    data:
+                    - status: at_pickup
+                      at: '2026-10-22T14:12:00Z'
+                      actor: courier
+                      position:
+                        lat: -23.5613
+                        lng: -46.6558
+                      position_at: '2026-10-22T14:11:57Z'
+                      accuracy_m: 5.5
+                    - status: delivered
+                      at: '2026-10-22T14:40:00Z'
+                      actor: courier
+                      position: null
+                      position_at: null
+                      accuracy_m: null
+        '404': *id006
+        '503': *id010
+        '401': *id003
+        '403': *id004
+        '429': *id005
+  /couriers/{id}/locations:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: The courier id (`cou_…`), as returned when you upserted the courier.
+      schema:
+        $ref: '#/components/schemas/CourierId'
+      example: cou_01j9z3k8m2q4r6s8t0v2w4x6y8
+    post:
+      operationId: reportCourierLocations
+      summary: Report courier locations
+      description: 'Relays GPS fixes your own courier app collects. A batch holds at most 50 fixes and 16 KB.
+        A fix is accepted only while the courier has an assigned delivery that is not final, and it applies
+        to each of those deliveries; others are counted as `dropped`, as are fixes that are implausible
+        (over 200 km/h, or a jump over 1 km in under 10 s) or dated more than 5 seconds in the future. Fixes
+        older than 2 minutes are stored but do not move the live position. Has its own rate limit (1 request/s
+        per courier, burst 5; 500 requests/s per tenant). Requires scope `couriers:write`. Problem codes:
+        `validation_failed` (400), `not_found` (404, no such courier), `payload_too_large` (413), `rate_limited`
+        (429), `tracking_unavailable` (503).'
+      tags:
+      - Couriers
+      security:
+      - SecretKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportCourierLocationsRequest'
+            examples:
+              default:
+                value:
+                  fixes:
+                  - t: '2026-10-22T14:15:03Z'
+                    lat: -23.5612
+                    lng: -46.6557
+                    accuracy_m: 6.5
+                    speed_mps: 4.8
+                    heading_deg: 84
+                  - t: '2026-10-22T14:15:06Z'
+                    lat: -23.5611
+                    lng: -46.6551
+                    accuracy_m: 7
+      responses:
+        '200':
+          description: How many fixes were accepted and dropped.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportCourierLocationsResult'
+              examples:
+                default:
+                  value:
+                    accepted: 2
+                    dropped: 0
+        '400': *id002
+        '404': *id006
+        '413':
+          description: The batch is larger than 16 KB (`payload_too_large`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503': *id010
+        '401': *id003
+        '403': *id004
+        '429': *id005
+  /test/deliveries/{id}/simulate:
+    parameters:
+    - *id007
+    post:
+      operationId: simulateDelivery
+      summary: Simulate a delivery
+      description: 'Sandbox only. Drives a virtual courier through the delivery: it emits location fixes
+        through the same path as the relay and reports the courier''s status events the delivery''s model
+        requires. If no courier is assigned, a test courier (`external_id` `dt-simulator`) is created and
+        assigned. Runs in the background; follow it with the tracking endpoints. Requires scope `deliveries:write`
+        and a test key; a live key gets `403 environment_not_allowed`. Problem codes: `validation_failed`
+        (400), `not_found` (404), `simulation_state` (409, the delivery is final or in a state the simulator
+        cannot drive), `tracking_unavailable` (503).'
+      tags:
+      - Sandbox
+      security:
+      - SecretKey: []
+      parameters:
+      - *id008
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SimulateDeliveryRequest'
+            examples:
+              default:
+                summary: Defaults
+                value: {}
+              signal_gap:
+                summary: Fast, with a 90 second signal gap
+                value:
+                  speed_factor: 10
+                  signal_gap:
+                    after_s: 30
+                    duration_s: 90
+      responses:
+        '202':
+          description: The simulation was started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimulationStarted'
+              examples:
+                default:
+                  value:
+                    simulation_id: sim_01j9z3k8m2q4r6s8t0v2w4x6y8
+        '400': *id002
+        '404': *id006
+        '409':
+          description: '`simulation_state`: the delivery is final or in a state the simulator cannot drive.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503': *id010
+        '401': *id003
+        '403': *id004
+        '429': *id005
+  /tracking/session:
+    post:
+      operationId: createTrackingSession
+      summary: Start a tracking session
+      description: 'Exchanges the tracking link token for a viewer token (valid 15 minutes) and returns the
+        current snapshot. No API key is involved; this is called from the customer''s browser or webview.
+        Any origin may call it. Rate limited to 10 requests/minute per IP and 30/minute per link. Problem
+        codes: `link_invalid` (401, the token is unknown, rotated or expired), `rate_limited` (429), `tracking_unavailable`
+        (503).'
+      tags:
+      - Tracking
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTrackingSessionRequest'
+            examples:
+              default:
+                value:
+                  token: Xk3m9QpL2vN7aB4cD8eF1g
+      responses:
+        '200':
+          description: The viewer token and the current snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackingSession'
+              examples:
+                default:
+                  value:
+                    viewer_token: eyJhbGciOiJFZERTQSIsImtpZCI6InYxIn0.eyJhdWQiOiJ2aWV3ZXIifQ.c2lnbmF0dXJl
+                    expires_at: '2026-10-22T14:35:00Z'
+                    snapshot: &id011
+                      delivery_id: del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                      delivery_model: direct
+                      status: picked_up
+                      courier:
+                        display_name: Carlos
+                        vehicle: e_bike
+                        photo_url: null
+                        position:
+                          lat: -23.5561
+                          lng: -46.6492
+                        heading_deg: 84
+                        speed_kmh: 17.5
+                        position_at: '2026-10-22T14:20:03Z'
+                        signal: live
+                      pickup:
+                        location:
+                          lat: -23.5614
+                          lng: -46.6559
+                        name: Pizzaria Central
+                      dropoff:
+                        location:
+                          lat: -23.5505
+                          lng: -46.6333
+                        label: Apto 42
+                      route:
+                        to_pickup: null
+                        to_dropoff:
+                        - [-23.5561, -46.6492]
+                        - [-23.5530, -46.6410]
+                        - [-23.5505, -46.6333]
+                      eta_seconds: 420
+                      eta_window: null
+                      eta_state: live
+                      eta_quality: osrm
+                      distance_remaining_m: 1350
+                      progress: 0.42
+                      timeline:
+                      - status: confirmed
+                        at: '2026-10-22T14:00:00Z'
+                      - status: picked_up
+                        at: '2026-10-22T14:15:00Z'
+                      updated_at: '2026-10-22T14:20:03.410Z'
+                      version: 37
+                    branding: null
+                preparing:
+                  summary: Before pickup in the Direct model (courier hidden, window shown)
+                  value:
+                    viewer_token: eyJhbGciOiJFZERTQSIsImtpZCI6InYxIn0.eyJhdWQiOiJ2aWV3ZXIifQ.c2lnbmF0dXJl
+                    expires_at: '2026-10-22T14:35:00Z'
+                    snapshot:
+                      delivery_id: del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                      delivery_model: direct
+                      status: confirmed
+                      courier: null
+                      pickup:
+                        location:
+                          lat: -23.5614
+                          lng: -46.6559
+                        name: Pizzaria Central
+                      dropoff:
+                        location:
+                          lat: -23.5505
+                          lng: -46.6333
+                        label: null
+                      route:
+                        to_pickup: null
+                        to_dropoff:
+                        - [-23.5614, -46.6559]
+                        - [-23.5505, -46.6333]
+                      eta_seconds: 1800
+                      eta_window:
+                        min_seconds: 1500
+                        max_seconds: 2100
+                      eta_state: estimated
+                      eta_quality: osrm
+                      distance_remaining_m: 2100
+                      progress: 0
+                      timeline:
+                      - status: confirmed
+                        at: '2026-10-22T14:00:00Z'
+                      updated_at: '2026-10-22T14:00:01.120Z'
+                      version: 3
+                    branding: null
+        '400': *id002
+        '401':
+          description: '`link_invalid`: the token is unknown, rotated or expired.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429': *id005
+        '503': *id010
+  /tracking/session/refresh:
+    post:
+      operationId: refreshTrackingSession
+      summary: Renew a viewer token
+      description: 'Takes a viewer token that is still valid and returns a new one, provided the tracking
+        link is still valid. The link token is not needed again. Rate limited with `/tracking/session`.
+        Problem codes: `viewer_token_invalid` (401, the viewer token is missing, expired, malformed or its
+        link was rotated or has expired), `rate_limited` (429), `tracking_unavailable` (503).'
+      tags:
+      - Tracking
+      security:
+      - ViewerToken: []
+      responses:
+        '200':
+          description: A new viewer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ViewerTokenRefresh'
+              examples:
+                default:
+                  value:
+                    viewer_token: eyJhbGciOiJFZERTQSIsImtpZCI6InYxIn0.eyJhdWQiOiJ2aWV3ZXIifQ.bmV3c2ln
+                    expires_at: '2026-10-22T14:50:00Z'
+        '401': &id012
+          $ref: '#/components/responses/ViewerTokenInvalid'
+        '429': *id005
+        '503': *id010
+  /tracking/snapshot:
+    get:
+      operationId: getTrackingSnapshot
+      summary: Get the current snapshot
+      description: 'The current snapshot, for clients that poll instead of streaming. At most 30 requests/minute
+        per viewer token. Problem codes: `viewer_token_invalid` (401), `rate_limited` (429), `tracking_unavailable`
+        (503).'
+      tags:
+      - Tracking
+      security:
+      - ViewerToken: []
+      responses:
+        '200':
+          description: The current snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackingSnapshot'
+              examples:
+                default:
+                  value: *id011
+        '401': *id012
+        '429': *id005
+        '503': *id010
 webhooks: {}
 components:
   securitySchemes:
@@ -681,6 +1332,11 @@ components:
       type: http
       scheme: bearer
       description: Partner secret API key (`dt_sk_test_…` / `dt_sk_live_…`). Server-to-server only.
+    ViewerToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived viewer token from `POST /tracking/session`. Safe to use in the customer's browser.
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
@@ -797,6 +1453,24 @@ components:
     NotFound:
       description: The resource does not exist for this tenant and environment (`not_found`). Resources of
         other tenants or environments are never revealed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ViewerTokenInvalid:
+      description: The viewer token is missing, malformed, expired, or its tracking link was rotated or has
+        expired (`viewer_token_invalid`). Start a new session with the link token.
+      headers:
+        WWW-Authenticate:
+          description: Always `Bearer`.
+          schema:
+            type: string
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    TrackingUnavailable:
+      description: The tracking service cannot be reached right now (`tracking_unavailable`). Retry shortly.
       content:
         application/problem+json:
           schema:
@@ -1034,9 +1708,14 @@ components:
           maxLength: 500
         metadata:
           $ref: '#/components/schemas/Metadata'
+        ready_at:
+          type: string
+          format: date-time
+          description: When the order will be ready for pickup. Between 1 hour before and 24 hours after
+            now. Drives the ETA before pickup; without it the tenant's default preparation time applies.
     UpdateDeliveryRequest:
       type: object
-      description: Only the fields sent change. `null` clears `dropoff_label`, `notes` and `metadata`; the
+      description: Only the fields sent change. `null` clears `dropoff_label`, `notes`, `metadata` and `ready_at`; the
         dropoff location cannot be cleared.
       additionalProperties: false
       minProperties: 1
@@ -1054,6 +1733,13 @@ components:
           - string
           - 'null'
           maxLength: 100
+        ready_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+          description: When the order will be ready for pickup (between 1 hour before and 24 hours after now);
+            `null` clears it. Changeable until pickup.
         notes:
           type:
           - string
@@ -1214,6 +1900,7 @@ components:
       - personal_data_erased
       - created_at
       - updated_at
+      - ready_at
       properties:
         id:
           $ref: '#/components/schemas/DeliveryId'
@@ -1290,6 +1977,12 @@ components:
         updated_at:
           type: string
           format: date-time
+        ready_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+          description: When the order is expected to be ready for pickup, if you gave one.
     DeliveryList:
       type: object
       required:
@@ -1312,3 +2005,551 @@ components:
           $ref: '#/components/schemas/DeliveryEventOutcome'
         delivery:
           $ref: '#/components/schemas/Delivery'
+    TrackingLink:
+      type: object
+      description: A customer-facing tracking link. Put `url` in an SMS, email or push notification.
+      required: [url, token, expires_at]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: The hosted tracking page for this delivery.
+        token:
+          type: string
+          pattern: ^[A-Za-z0-9_-]{22}$
+          description: The link token; the part of `url` after `/t/`. Treat it like a password for this delivery.
+        expires_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+          description: '`null` until the delivery is final; then 30 minutes after it ended.'
+    CreateDeliveryResponse:
+      description: The created delivery with its tracking link.
+      allOf:
+      - $ref: '#/components/schemas/Delivery'
+      - type: object
+        required: [tracking]
+        properties:
+          tracking:
+            description: '`null` when the link could not be issued; the delivery is still created. Call `rotateTrackingLink`
+              to issue one.'
+            oneOf:
+            - $ref: '#/components/schemas/TrackingLink'
+            - type: 'null'
+    CourierSignal:
+      type: string
+      description: >-
+        `pending`: the courier is visible but no fix has arrived yet. `live`:
+        the last fix is at most 30 seconds old. `stale`: older than 30 seconds.
+        `lost`: older than 5 minutes (or still `pending` after 5 minutes).
+      enum: [pending, live, stale, lost]
+    EtaState:
+      type: string
+      description: >-
+        `calculating`: the ready time is unknown, so there is no ETA yet.
+        `estimated`: before pickup, preparation plus drive, shown as `eta_window`.
+        `live`: after pickup, the drive time from the courier's position.
+      enum: [calculating, estimated, live]
+    EtaQuality:
+      type: string
+      description: '`osrm`: from the routing engine. `estimated`: a fallback (straight-line or last known route) because routing was unavailable or the courier signal is stale.'
+      enum: [osrm, estimated]
+    EtaWindow:
+      type:
+      - object
+      - 'null'
+      description: The expected arrival range in seconds from now. Set before pickup; `null` otherwise.
+      required: [min_seconds, max_seconds]
+      properties:
+        min_seconds:
+          type: integer
+          minimum: 0
+        max_seconds:
+          type: integer
+          minimum: 0
+    LatLngPair:
+      type: array
+      description: '`[lat, lng]`.'
+      minItems: 2
+      maxItems: 2
+      items:
+        type: number
+        format: double
+    TrackingRoute:
+      type: object
+      required: [to_pickup, to_dropoff]
+      properties:
+        to_pickup:
+          type:
+          - array
+          - 'null'
+          description: The courier's route to the pickup. `null` in the Direct model and once picked up.
+          items:
+            $ref: '#/components/schemas/LatLngPair'
+        to_dropoff:
+          type: array
+          items:
+            $ref: '#/components/schemas/LatLngPair'
+    TrackingTimelineEntry:
+      type: object
+      required: [status, at]
+      properties:
+        status:
+          $ref: '#/components/schemas/DeliveryStatus'
+        at:
+          type: string
+          format: date-time
+    TrackingCourier:
+      type: object
+      description: The courier as the customer sees them.
+      required: [display_name, vehicle, photo_url, position, heading_deg, speed_kmh, position_at, signal]
+      properties:
+        display_name:
+          type: string
+        vehicle:
+          $ref: '#/components/schemas/Vehicle'
+        photo_url:
+          type:
+          - string
+          - 'null'
+        position:
+          oneOf:
+          - $ref: '#/components/schemas/LatLng'
+          - type: 'null'
+          description: '`null` while `signal` is `pending`.'
+        heading_deg:
+          type:
+          - number
+          - 'null'
+        speed_kmh:
+          type:
+          - number
+          - 'null'
+        position_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        signal:
+          $ref: '#/components/schemas/CourierSignal'
+    PartnerCourier:
+      description: The assigned courier, always with their position and your own ids.
+      allOf:
+      - $ref: '#/components/schemas/TrackingCourier'
+      - type: object
+        required: [id, external_id]
+        properties:
+          id:
+            $ref: '#/components/schemas/CourierId'
+          external_id:
+            $ref: '#/components/schemas/ExternalId'
+    TrackingSnapshot:
+      type: object
+      description: >-
+        What the customer's tracking page shows. `courier` is `null` while the
+        courier is not visible (End-to-end: from assignment; Direct: from pickup)
+        and `route.to_pickup` is `null` in the Direct model. Clients ignore a
+        snapshot whose `version` is not greater than the last one applied.
+      required:
+      - delivery_id
+      - delivery_model
+      - status
+      - courier
+      - pickup
+      - dropoff
+      - route
+      - eta_seconds
+      - eta_window
+      - eta_state
+      - eta_quality
+      - distance_remaining_m
+      - progress
+      - timeline
+      - updated_at
+      - version
+      properties:
+        delivery_id:
+          $ref: '#/components/schemas/DeliveryId'
+        delivery_model:
+          $ref: '#/components/schemas/DeliveryModel'
+        status:
+          $ref: '#/components/schemas/DeliveryStatus'
+        courier:
+          oneOf:
+          - $ref: '#/components/schemas/TrackingCourier'
+          - type: 'null'
+        pickup:
+          type: object
+          required: [location, name]
+          properties:
+            location:
+              $ref: '#/components/schemas/LatLng'
+            name:
+              type: string
+        dropoff:
+          type: object
+          required: [location, label]
+          properties:
+            location:
+              $ref: '#/components/schemas/LatLng'
+            label:
+              type:
+              - string
+              - 'null'
+        route:
+          $ref: '#/components/schemas/TrackingRoute'
+        eta_seconds:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+          description: Seconds until arrival; the midpoint of `eta_window` before pickup. `null` while `eta_state` is `calculating`.
+        eta_window:
+          $ref: '#/components/schemas/EtaWindow'
+        eta_state:
+          $ref: '#/components/schemas/EtaState'
+        eta_quality:
+          $ref: '#/components/schemas/EtaQuality'
+        distance_remaining_m:
+          type:
+          - number
+          - 'null'
+          minimum: 0
+        progress:
+          type:
+          - number
+          - 'null'
+          minimum: 0
+          maximum: 1
+        timeline:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrackingTimelineEntry'
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+          description: Increases monotonically per delivery.
+    PartnerView:
+      type: object
+      description: >-
+        The live view for the partner. The same fields as `TrackingSnapshot`,
+        but `courier` is `null` only when none is assigned, and carries `id` and
+        `external_id`.
+      required:
+      - delivery_id
+      - delivery_model
+      - status
+      - courier
+      - pickup
+      - dropoff
+      - route
+      - eta_seconds
+      - eta_window
+      - eta_state
+      - eta_quality
+      - distance_remaining_m
+      - progress
+      - timeline
+      - updated_at
+      - version
+      properties:
+        delivery_id:
+          $ref: '#/components/schemas/DeliveryId'
+        delivery_model:
+          $ref: '#/components/schemas/DeliveryModel'
+        status:
+          $ref: '#/components/schemas/DeliveryStatus'
+        courier:
+          oneOf:
+          - $ref: '#/components/schemas/PartnerCourier'
+          - type: 'null'
+        pickup:
+          type: object
+          required: [location, name]
+          properties:
+            location:
+              $ref: '#/components/schemas/LatLng'
+            name:
+              type: string
+        dropoff:
+          type: object
+          required: [location, label]
+          properties:
+            location:
+              $ref: '#/components/schemas/LatLng'
+            label:
+              type:
+              - string
+              - 'null'
+        route:
+          $ref: '#/components/schemas/TrackingRoute'
+        eta_seconds:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+        eta_window:
+          $ref: '#/components/schemas/EtaWindow'
+        eta_state:
+          $ref: '#/components/schemas/EtaState'
+        eta_quality:
+          $ref: '#/components/schemas/EtaQuality'
+        distance_remaining_m:
+          type:
+          - number
+          - 'null'
+          minimum: 0
+        progress:
+          type:
+          - number
+          - 'null'
+          minimum: 0
+          maximum: 1
+        timeline:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrackingTimelineEntry'
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+    TrailFix:
+      type: object
+      required: [t, lat, lng, accuracy_m, speed_mps, heading_deg, source]
+      properties:
+        t:
+          type: string
+          format: date-time
+        lat:
+          type: number
+          format: double
+        lng:
+          type: number
+          format: double
+        accuracy_m:
+          type: number
+          minimum: 0
+        speed_mps:
+          type:
+          - number
+          - 'null'
+        heading_deg:
+          type:
+          - number
+          - 'null'
+        source:
+          type: string
+          description: Where the fix came from (`relay` or `simulator`).
+    TrailPage:
+      type: object
+      required: [data, has_more, next_cursor, raw_available, simplified]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrailFix'
+        has_more:
+          type: boolean
+        next_cursor:
+          type:
+          - string
+          - 'null'
+          description: Pass as `starting_after` for the next page; `null` on the last page.
+        raw_available:
+          type: boolean
+          description: '`false` once the raw fixes were deleted (after 30 days or on erasure).'
+        simplified:
+          type:
+          - array
+          - 'null'
+          description: The simplified route; set when `raw_available` is `false`.
+          items:
+            $ref: '#/components/schemas/LatLngPair'
+    TrailGeoJson:
+      type: object
+      description: A GeoJSON FeatureCollection (coordinates are `[lng, lat]`).
+      required: [type, features]
+      properties:
+        type:
+          type: string
+          enum: [FeatureCollection]
+        features:
+          type: array
+          items:
+            type: object
+            required: [type, geometry, properties]
+            properties:
+              type:
+                type: string
+                enum: [Feature]
+              geometry:
+                type: object
+                required: [type, coordinates]
+                properties:
+                  type:
+                    type: string
+                    enum: [LineString, Point]
+                  coordinates:
+                    type: array
+              properties:
+                type: object
+    ProofPoint:
+      type: object
+      required: [status, at, actor, position, position_at, accuracy_m]
+      properties:
+        status:
+          $ref: '#/components/schemas/DeliveryEventType'
+        at:
+          type: string
+          format: date-time
+        actor:
+          type: string
+          enum: [partner, courier, system]
+        position:
+          oneOf:
+          - $ref: '#/components/schemas/LatLng'
+          - type: 'null'
+          description: '`null` when no fix was received in the 2 minutes before `at`.'
+        position_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        accuracy_m:
+          type:
+          - number
+          - 'null'
+          minimum: 0
+    ProofPointList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProofPoint'
+    CourierFix:
+      type: object
+      additionalProperties: false
+      required: [t, lat, lng, accuracy_m]
+      properties:
+        t:
+          type: string
+          format: date-time
+          description: When the fix was taken. At most 5 seconds after receipt.
+        lat:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+        lng:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+        accuracy_m:
+          type: number
+          minimum: 0
+          maximum: 10000
+        speed_mps:
+          type: number
+          minimum: 0
+          maximum: 100
+        heading_deg:
+          type: number
+          minimum: 0
+          exclusiveMaximum: 360
+    ReportCourierLocationsRequest:
+      type: object
+      additionalProperties: false
+      required: [fixes]
+      properties:
+        fixes:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/CourierFix'
+    ReportCourierLocationsResult:
+      type: object
+      required: [accepted, dropped]
+      properties:
+        accepted:
+          type: integer
+          minimum: 0
+        dropped:
+          type: integer
+          minimum: 0
+    SimulateDeliveryRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        speed_factor:
+          type: number
+          minimum: 1
+          maximum: 20
+          default: 1
+          description: How many times faster than real time the courier drives.
+        signal_gap:
+          type: object
+          additionalProperties: false
+          description: Stop sending fixes for a while, to test the stale and lost states.
+          required: [after_s, duration_s]
+          properties:
+            after_s:
+              type: integer
+              minimum: 0
+              maximum: 3600
+              description: Seconds of simulated time after the start.
+            duration_s:
+              type: integer
+              minimum: 0
+              maximum: 3600
+              description: Seconds of real time without fixes, so the stale (30 s) and lost (5 min) states show
+                at any speed factor. The courier keeps driving at real-time speed meanwhile.
+    SimulationStarted:
+      type: object
+      required: [simulation_id]
+      properties:
+        simulation_id:
+          type: string
+          pattern: ^sim_[0-9a-z]{26}$
+    CreateTrackingSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token:
+          type: string
+          pattern: ^[A-Za-z0-9_-]{22}$
+          description: The tracking link token.
+    TrackingSession:
+      type: object
+      required: [viewer_token, expires_at, snapshot, branding]
+      properties:
+        viewer_token:
+          type: string
+          description: A short-lived bearer token for the snapshot and stream endpoints.
+        expires_at:
+          type: string
+          format: date-time
+        snapshot:
+          $ref: '#/components/schemas/TrackingSnapshot'
+        branding:
+          type: 'null'
+          description: Always `null` for now.
+    ViewerTokenRefresh:
+      type: object
+      required: [viewer_token, expires_at]
+      properties:
+        viewer_token:
+          type: string
+        expires_at:
+          type: string
+          format: date-time

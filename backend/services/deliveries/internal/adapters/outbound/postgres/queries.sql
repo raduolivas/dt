@@ -18,12 +18,12 @@ WHERE tenant_settings.updated_at <= EXCLUDED.updated_at;
 -- name: InsertDelivery :exec
 INSERT INTO deliveries (id, tenant_id, environment, external_id, model, status, pickup_policy,
   pickup, pickup_name, dropoff, dropoff_label_sealed, customer_first_name_sealed, notes_sealed,
-  metadata_sealed, items_summary, item_count, courier_id, erased_at, dropped_reports, version, created_at, updated_at)
+  metadata_sealed, items_summary, item_count, ready_at, courier_id, erased_at, dropped_reports, version, created_at, updated_at)
 VALUES (@id, @tenant_id, @environment, @external_id, @model, @status, @pickup_policy,
   ST_SetSRID(ST_MakePoint(@pickup_lng::float8, @pickup_lat::float8), 4326)::geography, @pickup_name,
   ST_SetSRID(ST_MakePoint(@dropoff_lng::float8, @dropoff_lat::float8), 4326)::geography,
   @dropoff_label_sealed, @customer_first_name_sealed, @notes_sealed, @metadata_sealed,
-  @items_summary, @item_count, @courier_id, @erased_at, @dropped_reports, @version, @created_at, @updated_at);
+  @items_summary, @item_count, @ready_at, @courier_id, @erased_at, @dropped_reports, @version, @created_at, @updated_at);
 
 -- name: LockDelivery :one
 SELECT id FROM deliveries WHERE id = $1 FOR UPDATE;
@@ -33,7 +33,7 @@ SELECT d.id, d.tenant_id, d.environment, d.external_id, d.model, d.status, d.pic
   ST_Y(d.pickup::geometry)::float8 AS pickup_lat, ST_X(d.pickup::geometry)::float8 AS pickup_lng, d.pickup_name,
   ST_Y(d.dropoff::geometry)::float8 AS dropoff_lat, ST_X(d.dropoff::geometry)::float8 AS dropoff_lng,
   d.dropoff_label_sealed, d.customer_first_name_sealed, d.notes_sealed, d.metadata_sealed,
-  d.items_summary, d.item_count, d.courier_id, c.external_id AS courier_external_id,
+  d.items_summary, d.item_count, d.ready_at, d.courier_id, c.external_id AS courier_external_id,
   c.display_name AS courier_display_name, c.vehicle AS courier_vehicle,
   d.erased_at, d.dropped_reports, d.version, d.created_at, d.updated_at
 FROM deliveries d LEFT JOIN couriers c ON c.id = d.courier_id
@@ -46,7 +46,7 @@ SELECT d.id, d.tenant_id, d.environment, d.external_id, d.model, d.status, d.pic
   ST_Y(d.pickup::geometry)::float8 AS pickup_lat, ST_X(d.pickup::geometry)::float8 AS pickup_lng, d.pickup_name,
   ST_Y(d.dropoff::geometry)::float8 AS dropoff_lat, ST_X(d.dropoff::geometry)::float8 AS dropoff_lng,
   d.dropoff_label_sealed, d.customer_first_name_sealed, d.notes_sealed, d.metadata_sealed,
-  d.items_summary, d.item_count, d.courier_id, c.external_id AS courier_external_id,
+  d.items_summary, d.item_count, d.ready_at, d.courier_id, c.external_id AS courier_external_id,
   c.display_name AS courier_display_name, c.vehicle AS courier_vehicle,
   d.erased_at, d.dropped_reports, d.version, d.created_at, d.updated_at
 FROM deliveries d LEFT JOIN couriers c ON c.id = d.courier_id
@@ -65,7 +65,7 @@ SET status = @status,
     dropoff = ST_SetSRID(ST_MakePoint(@dropoff_lng::float8, @dropoff_lat::float8), 4326)::geography,
     dropoff_label_sealed = @dropoff_label_sealed, customer_first_name_sealed = @customer_first_name_sealed,
     notes_sealed = @notes_sealed, metadata_sealed = @metadata_sealed,
-    courier_id = @courier_id, erased_at = @erased_at, dropped_reports = @dropped_reports,
+    ready_at = @ready_at, courier_id = @courier_id, erased_at = @erased_at, dropped_reports = @dropped_reports,
     version = @version, updated_at = @updated_at
 WHERE id = @id;
 
@@ -120,3 +120,26 @@ SELECT * FROM pickup_watch WHERE delivery_id = $1 FOR UPDATE;
 
 -- name: MarkPickupWatchWarned :exec
 UPDATE pickup_watch SET warned_at = $2 WHERE delivery_id = $1;
+
+-- name: RetentionScopes :many
+-- Read across tenants: retention_scopes holds no personal data.
+SELECT tenant_id, environment FROM retention_scopes ORDER BY tenant_id, environment;
+
+-- name: FinalDeliveriesBefore :many
+-- Deliveries whose transition to their final status occurred before @before.
+SELECT d.id FROM deliveries d
+WHERE d.status IN ('delivered', 'cancelled', 'failed')
+  AND EXISTS (SELECT 1 FROM delivery_history h
+              WHERE h.delivery_id = d.id AND h.outcome = 'applied' AND h.to_status = d.status
+                AND h.occurred_at < @before)
+ORDER BY d.id
+LIMIT @row_limit;
+
+-- name: DeletePickupWatches :exec
+DELETE FROM pickup_watch WHERE delivery_id = ANY(@delivery_ids::text[]);
+
+-- name: DeleteHistories :exec
+DELETE FROM delivery_history WHERE delivery_id = ANY(@delivery_ids::text[]);
+
+-- name: DeleteDeliveries :execrows
+DELETE FROM deliveries WHERE id = ANY(@delivery_ids::text[]);

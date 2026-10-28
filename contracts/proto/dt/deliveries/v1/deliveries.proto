@@ -96,6 +96,7 @@ message Delivery {
   bool personal_data_erased = 16;
   google.protobuf.Timestamp created_at = 17;
   google.protobuf.Timestamp updated_at = 18;
+  google.protobuf.Timestamp ready_at = 19; // unset = none
 }
 
 message CreateDeliveryRequest {
@@ -109,6 +110,7 @@ message CreateDeliveryRequest {
   optional int32 item_count = 8;
   optional string notes = 9;
   map<string, string> metadata = 10;
+  google.protobuf.Timestamp ready_at = 11; // unset = none
 }
 
 message CreateDeliveryResponse {
@@ -142,7 +144,7 @@ message ListDeliveriesResponse {
 
 // UpdateDeliveryRequest patches a delivery. Only fields named in update_mask
 // change; a masked field that is unset means "clear" (PATCH null). Mask paths:
-// dropoff, dropoff_label, notes, metadata. dropoff cannot be cleared.
+// dropoff, dropoff_label, notes, metadata, ready_at. dropoff cannot be cleared.
 message UpdateDeliveryRequest {
   Scope scope = 1;
   string id = 2;
@@ -151,6 +153,7 @@ message UpdateDeliveryRequest {
   optional string dropoff_label = 5;
   optional string notes = 6;
   map<string, string> metadata = 7;
+  google.protobuf.Timestamp ready_at = 8; // masked; unset = clear
 }
 
 message UpdateDeliveryResponse {
@@ -175,6 +178,7 @@ message ReportEventRequest {
   google.protobuf.Timestamp occurred_at = 5; // unset = receipt time
   string by = 6; // "partner" | "store"; only for pickup_confirmed
   string reason = 7;
+  string actor = 8; // "" or "partner" | "courier"; the gateway never sets it
 }
 
 message ReportEventResponse {

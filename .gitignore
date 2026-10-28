@@ -10,3 +10,16 @@ backend/**/bin/
 # executor scratch (plan ledgers, review packages)
 .superpowers/
 backend/tools/dtctl/dtctl
+# dev mTLS material (scripts/dev-certs.sh)
+infra/compose/certs/
+# OSRM routing data (scripts/osrm-prepare.sh)
+infra/compose/osrm/
+# OpenTofu
+infra/aws/**/.terraform/
+infra/aws/**/terraform.tfvars
+infra/aws/**/*.auto.tfvars
+infra/aws/**/backend_override.tf
+infra/aws/**/imports_generated.tf
+infra/aws/**/*.tfstate
+infra/aws/**/*.tfstate.*
+infra/aws/**/*.tfplan

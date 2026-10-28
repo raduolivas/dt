@@ -43,6 +43,7 @@ type Delivery struct {
 	UpdatedAt               time.Time
 	DroppedReports          int32
 	Version                 int64
+	ReadyAt                 *time.Time
 }
 
 type DeliveryHistory struct {
@@ -68,6 +69,12 @@ type Inbox struct {
 	ProcessedAt time.Time
 }
 
+type JobLease struct {
+	Name      string
+	Holder    string
+	ExpiresAt time.Time
+}
+
 type Outbox struct {
 	EventID     string
 	Subject     string
@@ -84,6 +91,11 @@ type PickupWatch struct {
 	Since       time.Time
 	DueAt       time.Time
 	WarnedAt    *time.Time
+}
+
+type RetentionScope struct {
+	TenantID    string
+	Environment string
 }
 
 type TenantSetting struct {

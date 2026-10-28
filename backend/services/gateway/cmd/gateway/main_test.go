@@ -30,6 +30,17 @@ var testPepper = []byte("test-only-pepper-0123456789abcdef")
 // testDataKeys is a test-only DATA_KEYS value (id "t1").
 var testDataKeys = "t1:" + base64.StdEncoding.EncodeToString([]byte("test-only-gateway-data-key-01234"))
 
+// testViewerKeys is a test-only VIEWER_SIGNING_KEYS value (id "v1").
+var testViewerKeys = "v1:" + base64.StdEncoding.EncodeToString([]byte("test-only-viewer-signing-seed-01"))
+
+func setViewerEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("VIEWER_SIGNING_KEYS", testViewerKeys)
+	t.Setenv("VIEWER_SIGNING_KEY_CURRENT", "v1")
+	t.Setenv("TRACKING_URL_BASE", "http://localhost:8080")
+	t.Setenv("TRACKING_RPC_URL", "http://127.0.0.1:1")
+}
+
 func TestRunRefusesBadConfigBeforeIO(t *testing.T) {
 	// No DATABASE_URL etc.: a config error must come first and never echo
 	// the value.
@@ -41,13 +52,26 @@ func TestRunRefusesBadConfigBeforeIO(t *testing.T) {
 		{"short rpc token", base64.StdEncoding.EncodeToString(testPepper), "", "INTERNAL_RPC_TOKEN"},
 		{"missing data keys", base64.StdEncoding.EncodeToString(testPepper), "", "DATA_KEYS"},
 		{"unknown current data key", base64.StdEncoding.EncodeToString(testPepper), "", "DATA_KEY_CURRENT"},
+		{"missing viewer keys", base64.StdEncoding.EncodeToString(testPepper), "", "VIEWER_SIGNING_KEYS"},
+		{"unknown current viewer key", base64.StdEncoding.EncodeToString(testPepper), "", "VIEWER_SIGNING_KEY_CURRENT"},
+		{"bad tracking url base", base64.StdEncoding.EncodeToString(testPepper), "", "TRACKING_URL_BASE"},
+		{"missing tracking rpc url", base64.StdEncoding.EncodeToString(testPepper), "", "TRACKING_RPC_URL"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("DELIVERIES_RPC_URL", "http://deliveries:8081")
 			t.Setenv("INTERNAL_RPC_TOKEN", testRPCToken)
 			t.Setenv("DATA_KEYS", testDataKeys)
 			t.Setenv("DATA_KEY_CURRENT", "t1")
+			setViewerEnv(t)
 			switch tc.name {
+			case "missing viewer keys":
+				t.Setenv("VIEWER_SIGNING_KEYS", "")
+			case "unknown current viewer key":
+				t.Setenv("VIEWER_SIGNING_KEY_CURRENT", "v9")
+			case "bad tracking url base":
+				t.Setenv("TRACKING_URL_BASE", "ftp://track")
+			case "missing tracking rpc url":
+				t.Setenv("TRACKING_RPC_URL", "")
 			case "missing rpc url":
 				t.Setenv("DELIVERIES_RPC_URL", "")
 			case "short rpc token":
@@ -67,7 +91,7 @@ func TestRunRefusesBadConfigBeforeIO(t *testing.T) {
 			if tc.pepper != "" && strings.Contains(err.Error(), tc.pepper) {
 				t.Fatalf("error echoes the pepper: %v", err)
 			}
-			if strings.Contains(err.Error(), testDataKeys[3:]) {
+			if strings.Contains(err.Error(), testDataKeys[3:]) || strings.Contains(err.Error(), testViewerKeys[3:]) {
 				t.Fatalf("error echoes a data key: %v", err)
 			}
 		})
@@ -94,6 +118,7 @@ func startGateway(t *testing.T, redisURL string) (string, string, context.Contex
 	t.Setenv("INTERNAL_RPC_TOKEN", testRPCToken)
 	t.Setenv("DATA_KEYS", testDataKeys)
 	t.Setenv("DATA_KEY_CURRENT", "t1")
+	setViewerEnv(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	// Play accounts' side: it owns ACCOUNTS and creates it before the

@@ -291,9 +291,10 @@ func TestSettingsPersistAndEnqueue(t *testing.T) {
 	pool, r := setup(t)
 	mustTx(t, r, func(ctx context.Context, tx app.Tx) error { return tx.InsertTenant(ctx, tenant("ten_1")) })
 
+	prep := 20
 	want := domain.TenantSettings{
 		AllowedModels: []string{"end_to_end"}, DefaultModel: "end_to_end",
-		PickupConfirmation: "courier_and_store", UpdatedAt: t0.Add(time.Hour),
+		PickupConfirmation: "courier_and_store", DefaultPrepMinutes: &prep, UpdatedAt: t0.Add(time.Hour),
 	}
 	payload := &eventsv1.TenantSettingsSet{TenantId: "ten_1", AllowedModels: want.AllowedModels,
 		DefaultModel: want.DefaultModel, PickupConfirmation: want.PickupConfirmation}
