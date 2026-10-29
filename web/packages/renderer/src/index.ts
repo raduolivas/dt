@@ -41,7 +41,7 @@ export interface Renderer {
  */
 export function createRenderer(container: HTMLElement, o: RendererOptions = {}): Renderer {
   const clock = o.clock ?? (() => performance.now());
-  const scene = new CityScene(container, { accent: o.accent, tiles: o.tiles, theme: o.theme, onTiles: o.onTiles });
+  const scene = new CityScene(container, { accent: o.accent, tiles: o.tiles, theme: o.theme, onTiles: o.onTiles, clock: o.clock });
   const gate = new SnapshotGate();
   // `mode` and `reducedMotion` are accepted now and used by the 2D and motion tasks.
   const state = { mode: o.mode ?? '3d', theme: o.theme ?? 'light', reducedMotion: o.reducedMotion ?? false };

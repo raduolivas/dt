@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { TrackingSnapshot } from '@dt/contract';
 import { GeoProjection, type Vec2 } from '../engine/geo';
 import { BLOCK, GRID, ROAD_W, placeNear, projection as gridProjection, type Place } from './grid';
-import { isFinal } from '../snapshot';
+import { viewKind } from '../snapshot';
 import { GROUND_Y, ROAD_TOP_Y } from '../tiles/build/common';
 import type { TileTheme } from '../tiles/build/decode';
 import { openTileSource, type TileSource, type TileSourceSpec } from '../tiles/source';
@@ -26,7 +26,8 @@ import {
   mulberry32,
   type HouseModel,
 } from './models';
-import { buildRibbon, ribbonWidth, routeLegs } from './ribbon';
+import { CourierMotion } from './motion';
+import { fillRibbon, ribbonWidth, routeLegs, trimLegFrom } from './ribbon';
 
 /** The dropoff is private to the customer's own view; the label is never the address from the snapshot. */
 const HOME_LABEL = 'Your address';
@@ -49,9 +50,10 @@ const XRAY_LAYER = 1;
 /** The route's see-through copies (own colors, so the next leg stays light and the active one accent). */
 const XRAY_ROUTE_LAYER = 2;
 
-function angleDiff(target: number, current: number) {
-  return ((((target - current + Math.PI) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) - Math.PI;
-}
+/** A stale or lost courier is drawn faded and still; the customer sees no alarm. */
+const FADED_OPACITY = 0.4;
+/** The active ribbon is rebuilt when the courier has moved this far (m) since it was last cut. */
+const TRIM_STEP_M = 0.5;
 
 /** Store or home as the scene sees it, in either city. */
 interface SiteInfo {
@@ -71,6 +73,8 @@ export interface CitySceneOptions {
   /** Injected tile builder (tests); default: the inline worker pool. */
   builder?: TileBuilder;
   onTiles?: (s: { bytes: number; ms: number; tiles: number }) => void;
+  /** Milliseconds; the courier's glide and dead reckoning run on it. */
+  clock?: () => number;
 }
 
 export class CityScene {
@@ -90,7 +94,7 @@ export class CityScene {
   private readonly routeActive: THREE.Mesh;
   private readonly routeNext: THREE.Mesh;
   private readonly routeActiveXray: THREE.Mesh;
-  private readonly routeNextXray: THREE.Mesh;
+  private readonly xrayRibbonMats: THREE.Material[] = [];
 
   private readonly storeAccent = new THREE.MeshStandardMaterial({ color: COLORS.blue, roughness: 0.8, metalness: 0.02 });
   private storePinMat: THREE.MeshStandardMaterial | null = null;
@@ -129,8 +133,12 @@ export class CityScene {
   private readonly curPos = new THREE.Vector3();
   private readonly targetPos = new THREE.Vector3();
   private curYaw = 0;
-  private targetYaw = 0;
   private speedMs = 0;
+  private readonly motion: CourierMotion;
+  private readonly clock: () => number;
+  private courierMats: THREE.Material[] = [];
+  private faded = false;
+  private trimAt: Vec2 | null = null;
   /** The first view frames store, home and courier; follow starts when asked for. */
   private follow = false;
   private goal: { target: THREE.Vector3; zoom: number } | null = null;
@@ -225,6 +233,15 @@ export class CityScene {
     this.halo.position.y = 0.1;
     this.courierRoot.add(this.halo);
     this.scene.add(this.courierRoot);
+    // the courier's materials are shared with the other bicycles: own copies, so this one can fade
+    this.courierRoot.traverse((o) => {
+      if (o instanceof THREE.Mesh && !Array.isArray(o.material) && o !== this.halo) {
+        o.material = o.material.clone();
+        this.courierMats.push(o.material);
+      }
+    });
+    this.motion = new CourierMotion((p) => this.projection.toLocal(p));
+    this.clock = opts.clock ?? (() => performance.now());
 
     // route ribbons
     const ribbonMat = (color: number, opacity: number) =>
@@ -243,6 +260,9 @@ export class CityScene {
     this.routeNext.renderOrder = 1;
     this.routeActive.renderOrder = 2;
     this.scene.add(this.routeNext, this.routeActive);
+    // the ribbons' buffers are refilled in place (the bounding sphere would go stale)
+    this.routeNext.frustumCulled = false;
+    this.routeActive.frustumCulled = false;
     // Game trick: where a building hides the courier or its route, a soft silhouette shows through.
     this.courierRoot.traverse((o) => o.layers.enable(XRAY_LAYER));
     // The route reads in every view: where buildings hide it, a see-through copy of each ribbon shows through.
@@ -253,11 +273,13 @@ export class CityScene {
       m.depthFunc = THREE.GreaterDepth;
       const copy = new THREE.Mesh(src.geometry, m);
       copy.layers.set(XRAY_ROUTE_LAYER);
+      copy.frustumCulled = false;
       copy.renderOrder = src.renderOrder;
       this.scene.add(copy);
+      this.xrayRibbonMats.push(m);
       return copy;
     };
-    this.routeNextXray = xrayRibbon(this.routeNext, 0.35);
+    xrayRibbon(this.routeNext, 0.35);
     this.routeActiveXray = xrayRibbon(this.routeActive, 0.7);
     this.renderer.info.autoReset = false;
 
@@ -331,6 +353,7 @@ export class CityScene {
         this.startTileDelivery(s);
       }
       this.hasPos = false; // snap courier on this snapshot
+      this.motion.reset();
     } else if (this.tileCity) {
       const rk = routeKey(s);
       if (rk !== this.routeKey) {
@@ -341,10 +364,12 @@ export class CityScene {
     this.labels.store.textContent = s.pickup.name;
 
     // The server decides who is visible: no courier (or no position yet) means nothing is drawn.
-    const c = s.courier;
-    const pos = !isFinal(s.status) && c?.position ? this.projection.toLocal(c.position) : null;
+    const wasShown = this.courierRoot.visible;
+    this.motion.onSnapshot(s, this.clock());
+    const pos = this.motion.fix;
     this.courierRoot.visible = pos !== null;
     this.labels.courier.style.display = pos !== null ? '' : 'none';
+    if (pos === null) this.setFaded(false);
     // No courier drawn: the camera's follow point rests where the order is (store before pickup, home after).
     const atHome = s.status === 'picked_up' || s.status === 'arriving' || s.status === 'delivered';
     const rest = atHome
@@ -352,15 +377,21 @@ export class CityScene {
       : (this.store?.stop ?? this.projection.toLocal(s.pickup.location));
     const at = pos ?? rest;
     this.targetPos.set(at.x, 0, at.z);
-    if (c?.position && c.heading_deg !== null) this.targetYaw = Math.PI - (c.heading_deg * Math.PI) / 180;
-    this.speedMs = (c?.speed_kmh ?? 0) / 3.6;
+    const c = s.courier;
+    this.speedMs = pos !== null && c?.signal === 'live' ? (c.speed_kmh ?? 0) / 3.6 : 0;
 
-    if (!this.hasPos || this.curPos.distanceTo(this.targetPos) > 60) {
+    if (!this.hasPos) {
       this.curPos.copy(this.targetPos);
-      this.curYaw = this.targetYaw;
-      if (!this.hasPos) this.frameAll(true);
+      this.frameAll(true);
       this.hasPos = true;
       if (this.follow) this.snapCameraTo(this.curPos);
+    } else if (pos === null) {
+      // the courier left the scene: the resting point (store or home) takes over
+      this.curPos.copy(this.targetPos);
+    } else if (!wasShown) {
+      // the courier appears (preparing -> live): start at its fix and show it with the store and home
+      this.curPos.copy(this.targetPos);
+      if (!this.follow) this.frameAll(false);
     }
 
     // parcel on the bike / at the door
@@ -379,16 +410,21 @@ export class CityScene {
     this.time += dt;
 
     // courier smoothing (also makes sparse real-world GPS fixes look fluid)
-    const k = 1 - Math.exp(-14 * dt);
-    this.curPos.lerp(this.targetPos, k);
-    this.curYaw += angleDiff(this.targetYaw, this.curYaw) * (1 - Math.exp(-9 * dt));
+    const m = this.motion.frame(dt * 1000, this.clock());
+    if (m.visible) {
+      this.curPos.set(m.p.x, 0, m.p.z);
+      this.curYaw = m.yaw;
+      this.setFaded(m.faded);
+    } else {
+      this.curPos.lerp(this.targetPos, 1 - Math.exp(-14 * dt)); // the resting point, for the camera to follow
+    }
     const bob = Math.sin(this.time * 14) * 0.02 * Math.min(1, this.speedMs / 3);
     this.courierRoot.position.set(this.curPos.x, this.roadTop + bob, this.curPos.z);
     this.courierRoot.rotation.y = this.curYaw;
     this.bicycle.animate(dt, this.speedMs, BIKE_SCALE);
-    const pulse = 1 + Math.sin(this.time * 4) * 0.12;
+    const pulse = this.faded ? 1 : 1 + Math.sin(this.time * 4) * 0.12;
     this.halo.scale.setScalar(pulse);
-    (this.halo.material as THREE.MeshBasicMaterial).opacity = 0.4 + Math.sin(this.time * 4) * 0.15;
+    (this.halo.material as THREE.MeshBasicMaterial).opacity = this.faded ? 0 : 0.4 + Math.sin(this.time * 4) * 0.15;
 
     // pins + rings
     const bobY = Math.sin(this.time * 2.4) * 1.2;
@@ -399,6 +435,8 @@ export class CityScene {
       r.scale.setScalar(1 + t * 0.9);
       (r.material as THREE.MeshBasicMaterial).opacity = 0.65 * (1 - t);
     });
+
+    this.animatePreparing();
 
     // parcel drop animation at the door
     if (this.house && this.parcelDrop >= 0) {
@@ -427,7 +465,7 @@ export class CityScene {
       this.camera.position.add(delta);
     }
     this.controls.update();
-    this.rebuildRibbons();
+    this.rebuildRibbons(false);
 
     if (this.billboard) {
       const d = this.tmp.copy(this.camera.position).sub(this.controls.target);
@@ -494,6 +532,8 @@ export class CityScene {
       if (o instanceof THREE.Mesh) o.geometry.dispose();
     });
     this.xray.dispose();
+    this.xrayRibbonMats.forEach((m) => m.dispose());
+    this.courierMats.forEach((m) => m.dispose());
     this.storeAccent.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
@@ -548,10 +588,8 @@ export class CityScene {
   }
 
   private updateRoutes(s: TrackingSnapshot) {
-    const courier = this.courierRoot.visible ? { x: this.targetPos.x, z: this.targetPos.z } : null;
-    this.legs = routeLegs(s, (p) => this.projection.toLocal(p), courier);
-    this.ribbonWidthM = -1; // rebuild now
-    this.rebuildRibbons();
+    this.legs = routeLegs(s, (p) => this.projection.toLocal(p), null); // whole legs; the active one is cut per frame
+    this.rebuildRibbons(true);
   }
 
   /** Metres per screen pixel at the current zoom. */
@@ -559,18 +597,46 @@ export class CityScene {
     return (this.camera.right - this.camera.left) / this.camera.zoom / Math.max(1, this.width);
   }
 
-  /** (Re)builds the ribbons when the route changed or the zoom moved their on-screen minimum width by > 10 %. */
-  private rebuildRibbons() {
+  /**
+   * Refills the ribbons in place. The active one starts at the courier (snapped onto the leg), so it is cut again
+   * when the courier moved `TRIM_STEP_M`; both are refilled when the route changed or the zoom moved their on-screen
+   * minimum width by > 10 %.
+   */
+  private rebuildRibbons(force: boolean) {
     const mpp = this.metresPerPx();
     const w = ribbonWidth(ACTIVE_RIBBON_M, ACTIVE_RIBBON_MIN_PX, mpp);
-    if (this.ribbonWidthM > 0 && Math.abs(w - this.ribbonWidthM) / this.ribbonWidthM < 0.1) return;
-    this.ribbonWidthM = w;
-    this.routeActive.geometry.dispose();
-    this.routeActive.geometry = buildRibbon(this.legs.active, w, this.ribbonY + 0.05);
-    this.routeNext.geometry.dispose();
-    this.routeNext.geometry = buildRibbon(this.legs.next, ribbonWidth(NEXT_RIBBON_M, NEXT_RIBBON_MIN_PX, mpp), this.ribbonY);
-    this.routeActiveXray.geometry = this.routeActive.geometry;
-    this.routeNextXray.geometry = this.routeNext.geometry;
+    const widthChanged = force || this.ribbonWidthM <= 0 || Math.abs(w - this.ribbonWidthM) / this.ribbonWidthM >= 0.1;
+    const at: Vec2 | null = this.courierRoot.visible ? { x: this.curPos.x, z: this.curPos.z } : null;
+    const moved =
+      (at === null) !== (this.trimAt === null) ||
+      (at !== null && this.trimAt !== null && Math.hypot(at.x - this.trimAt.x, at.z - this.trimAt.z) >= TRIM_STEP_M);
+    if (!widthChanged && !moved) return;
+    if (widthChanged) this.ribbonWidthM = w;
+    const activeW = this.ribbonWidthM;
+    this.trimAt = at;
+    fillRibbon(this.routeActive.geometry, at ? trimLegFrom(this.legs.active, at) : this.legs.active, activeW, this.ribbonY + 0.05);
+    if (widthChanged) {
+      fillRibbon(this.routeNext.geometry, this.legs.next, ribbonWidth(NEXT_RIBBON_M, NEXT_RIBBON_MIN_PX, mpp), this.ribbonY);
+    }
+  }
+
+  private setFaded(on: boolean) {
+    if (on === this.faded) return;
+    this.faded = on;
+    for (const m of this.courierMats) {
+      m.transparent = on;
+      m.opacity = on ? FADED_OPACITY : 1;
+      m.needsUpdate = true;
+    }
+  }
+
+  /**
+   * PLACEHOLDER until the preparing animation (Task 8): the store pin pulses gently while no courier is drawn.
+   */
+  private animatePreparing() {
+    if (!this.storePin) return;
+    const on = this.snap !== null && viewKind(this.snap) === 'preparing';
+    this.storePin.scale.setScalar(on ? 1 + Math.sin(this.time * 3) * 0.08 : 1);
   }
 
   private setLabelsVisible(on: boolean) {
