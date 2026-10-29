@@ -26,7 +26,7 @@ env:
 jobs:
   deploy:
     # Skipped until the owner has applied staging and set the variable
-    # AWS_DEPLOY_ROLE_ARN (docs/runbooks/staging.md, step 3).
+    # repository variable AWS_DEPLOY_ROLE_ARN (docs/runbooks/staging.md, step 3).
     if: >-
       vars.AWS_DEPLOY_ROLE_ARN != '' &&
       ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||

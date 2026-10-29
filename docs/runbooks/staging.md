@@ -25,7 +25,7 @@ Set `staging_account_id` and `alert_email`. Leave `osrm_data_version` empty for 
 
 ### 3. GitHub settings
 
-In the `staging` environment (aws-account-setup step 5): add the **variable** `AWS_DEPLOY_ROLE_ARN` = `deploy_role_arn_staging` (until it is set, the `deploy-staging` job is skipped, so a merge to `main` before the apply does not fail; setting it enables deploys), and under Deployment branches allow only `main`. The repository **secret** `STAGING_TEST_KEY` comes in step 10.
+Add the **repository variable** `AWS_DEPLOY_ROLE_ARN` = `deploy_role_arn_staging` (Settings, Secrets and variables, Actions, Variables, Repository variables). It must be a repository variable, not an environment variable: the job-level `if` that reads it runs before the job enters the `staging` environment, so an environment variable reads as empty and the deploy is always skipped. Until it is set, the `deploy-staging` job is skipped, so a merge to `main` before the apply does not fail; setting it enables deploys. In the `staging` environment (aws-account-setup step 5), under Deployment branches, allow only `main`. The repository **secret** `STAGING_TEST_KEY` comes in step 10.
 
 ### 4. First `make staging-up`: the hosted zone
 
