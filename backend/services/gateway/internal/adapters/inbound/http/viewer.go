@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -31,6 +32,9 @@ type ViewerDeps struct {
 	TrustedProxies []netip.Prefix
 	// Spec is the OpenAPI document; nil means the embedded contract.
 	Spec *openapi3.T
+	// TrackingURLBase is the tracking host's base URL; logo URLs are
+	// <base>/logos/<tenant>/<sha256>.
+	TrackingURLBase string
 	// Clock is the time tokens are checked and issued at; nil means now.
 	Clock app.Clock
 	// Log receives server-side failures (never tokens). Nil means
@@ -71,7 +75,7 @@ func MountViewer(mux *http.ServeMux, d ViewerDeps) {
 		}
 	}
 	validate := Validate(spec, log)
-	v := &viewerAPI{v: d.Viewer, clock: clock, log: log}
+	v := &viewerAPI{v: d.Viewer, clock: clock, log: log, trackingBase: strings.TrimRight(d.TrackingURLBase, "/")}
 	chain := func(h http.HandlerFunc) http.Handler {
 		out := validate(h)
 		out = viewerIPLimit(d.Limiter, log)(out)
@@ -115,9 +119,10 @@ func viewerIPLimit(l app.Limiter, log *slog.Logger) func(http.Handler) http.Hand
 }
 
 type viewerAPI struct {
-	v     *app.Viewer
-	clock app.Clock
-	log   *slog.Logger
+	v            *app.Viewer
+	clock        app.Clock
+	log          *slog.Logger
+	trackingBase string
 }
 
 func (a *viewerAPI) session(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +132,7 @@ func (a *viewerAPI) session(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	jwt, exp, snap, err := a.v.Start(r.Context(), in.Token, a.clock.Now())
+	sess, err := a.v.Start(r.Context(), in.Token, a.clock.Now())
 	if err != nil {
 		a.fail(w, r, err, "link_invalid")
 		return
@@ -137,8 +142,34 @@ func (a *viewerAPI) session(w http.ResponseWriter, r *http.Request) {
 		ViewerToken string          `json:"viewer_token"`
 		ExpiresAt   time.Time       `json:"expires_at"`
 		Snapshot    json.RawMessage `json:"snapshot"`
-		Branding    *struct{}       `json:"branding"`
-	}{ViewerToken: jwt, ExpiresAt: exp.UTC(), Snapshot: snap})
+		Branding    *api.Branding   `json:"branding"`
+	}{ViewerToken: sess.ViewerToken, ExpiresAt: sess.ExpiresAt.UTC(), Snapshot: sess.Snapshot,
+		Branding: a.branding(sess)})
+}
+
+// branding is the session's Branding object; the logo is served by this
+// gateway on the tracking host.
+func (a *viewerAPI) branding(s app.Session) *api.Branding {
+	b := s.Branding
+	if b == nil {
+		return nil
+	}
+	out := &api.Branding{Theme: api.Auto}
+	if b.DisplayName != "" {
+		out.DisplayName = &b.DisplayName
+	}
+	if b.PrimaryColor != "" {
+		out.PrimaryColor = &b.PrimaryColor
+	}
+	switch t := api.BrandingTheme(b.Theme); t {
+	case api.Light, api.Dark:
+		out.Theme = t
+	}
+	if b.LogoSHA256 != "" {
+		u := a.trackingBase + "/logos/" + s.TenantID + "/" + b.LogoSHA256
+		out.LogoUrl = &u
+	}
+	return out
 }
 
 func (a *viewerAPI) refresh(w http.ResponseWriter, r *http.Request) {

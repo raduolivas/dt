@@ -74,6 +74,8 @@ type viewerEdge struct {
 	signer *viewerjwt.Signer
 	seed   []byte // the signer's key
 	logs   *bytes.Buffer
+	// settings is the viewer settings store the session and the page read.
+	settings *apptest.MemSettings
 }
 
 func testSigner(t *testing.T) *viewerjwt.Signer {
@@ -103,17 +105,24 @@ func newViewerEdge(t *testing.T, lim app.Limiter) *viewerEdge {
 	s, seed := testSignerSeed(t)
 	snaps := &fakeSnapshots{}
 	logs := &bytes.Buffer{}
+	settings := apptest.NewMemSettings()
 	log := logx.New(logs, slog.LevelDebug, "gateway")
 	mux := http.NewServeMux()
 	httpapi.Mount(mux, httpapi.Routes(httpapi.Deps{}), httpapi.Middleware{
 		Auth: &app.Authenticator{Keys: &store{byLookup: map[string]domain.KeyRecord{}}, Hasher: hasher{}, Clock: fixedClock{}}, Log: log,
 	})
 	httpapi.MountViewer(mux, httpapi.ViewerDeps{
-		Viewer:  &app.Viewer{Links: links, Tokens: app.SignerTokens{Signer: s, Verifier: s.Verifier()}, Snapshots: snaps, Limiter: lim},
-		Limiter: lim, JWKS: s.JWKS(), Clock: fixedClock{}, Log: log,
+		Viewer:  &app.Viewer{Links: links, Tokens: app.SignerTokens{Signer: s, Verifier: s.Verifier()}, Snapshots: snaps, Limiter: lim, Settings: settings},
+		Limiter: lim, JWKS: s.JWKS(), Clock: fixedClock{}, Log: log, TrackingURLBase: "https://t.example/",
+	})
+	httpapi.MountTrackPage(mux, httpapi.TrackPageDeps{
+		Page:    &app.TrackPage{Links: links, Settings: settings},
+		Limiter: lim, Log: log,
+		Config: httpapi.TrackPageConfig{Base: "https://cdn.example/page/", API: "https://api.example/v1",
+			Tiles: "https://cdn.example/t.pmtiles", CDN: "https://cdn.example", Extra: []string{"https://tiles.openfreemap.org"}},
 	})
 	h := httpx.RequestID(httpx.AccessLog(log)(httpx.Recover(log)(mux)))
-	return &viewerEdge{t: t, h: h, links: links, snaps: snaps, signer: s, seed: seed, logs: logs}
+	return &viewerEdge{t: t, h: h, links: links, snaps: snaps, signer: s, seed: seed, logs: logs, settings: settings}
 }
 
 func (v *viewerEdge) do(r *http.Request) *httptest.ResponseRecorder {
@@ -207,7 +216,11 @@ func TestSessionErrors(t *testing.T) {
 	wantProblem(t, v.do(big), http.StatusRequestEntityTooLarge, "payload_too_large")
 
 	v.snaps.err = errors.New("tracking down")
-	wantProblem(t, v.do(sessionReq(tok)), http.StatusServiceUnavailable, "tracking_unavailable")
+	rec = v.do(sessionReq(tok))
+	wantProblem(t, rec, http.StatusServiceUnavailable, "tracking_unavailable")
+	if rec.Header().Get("Retry-After") != "1" {
+		t.Fatalf("Retry-After = %q", rec.Header().Get("Retry-After"))
+	}
 	v.snaps.err = nil
 
 	// A secret key authenticates nothing on viewer routes.

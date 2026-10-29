@@ -75,6 +75,18 @@ type Outbox struct {
 	PublishedAt *time.Time
 }
 
+type TenantViewerSetting struct {
+	TenantID        string
+	EmbedOrigins    []string
+	DisplayName     pgtype.Text
+	PrimaryColor    pgtype.Text
+	Theme           pgtype.Text
+	Logo            []byte
+	LogoContentType pgtype.Text
+	LogoSha256      pgtype.Text
+	UpdatedAt       time.Time
+}
+
 type TrackingLink struct {
 	ID          string
 	TenantID    string

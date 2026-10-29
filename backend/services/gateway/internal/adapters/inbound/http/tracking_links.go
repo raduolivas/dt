@@ -100,7 +100,9 @@ func (a *deliveriesAPI) rotateTrackingLink(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, a.linkJSON(l, tok))
 }
 
+// trackingUnavailable answers 503 tracking_unavailable with Retry-After: 1.
 func trackingUnavailable(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Retry-After", "1")
 	httpx.WriteProblem(w, r, httpx.Problem{Status: http.StatusServiceUnavailable, Code: "tracking_unavailable",
 		Detail: "Tracking is temporarily unavailable. Retry shortly."})
 }

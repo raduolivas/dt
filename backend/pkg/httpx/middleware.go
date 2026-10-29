@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -51,20 +52,33 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
+type logPathKey struct{}
+
+// SetLogPath makes AccessLog record path instead of the request's real one.
+// A handler whose URL path carries a bearer credential (a tracking link
+// token) calls it with the route pattern. It is a no-op outside AccessLog.
+func SetLogPath(r *http.Request, path string) {
+	if p, ok := r.Context().Value(logPathKey{}).(*string); ok {
+		*p = path
+	}
+}
+
 // AccessLog logs one line per request. It logs the path only, never the
-// query string, which may carry tokens.
+// query string, which may carry tokens; a handler can replace the path with
+// SetLogPath.
 func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			rec := &statusRecorder{ResponseWriter: w}
-			next.ServeHTTP(rec, r)
+			path := r.URL.Path
+			next.ServeHTTP(rec, r.WithContext(context.WithValue(r.Context(), logPathKey{}, &path)))
 			if rec.status == 0 {
 				rec.status = http.StatusOK
 			}
 			log.InfoContext(r.Context(), "http_request",
 				"method", r.Method,
-				"path", r.URL.Path,
+				"path", path,
 				"status", rec.status,
 				"duration_ms", time.Since(start).Milliseconds(),
 				"request_id", RequestIDFrom(r.Context()))

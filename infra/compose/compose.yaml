@@ -106,8 +106,15 @@ services:
       # The public half is served at /.well-known/jwks.json.
       VIEWER_SIGNING_KEYS: "vw1:ZGV2LW9ubHktbm90LWEtc2VjcmV0LXZpZXdlci1rMDA=" # gitleaks:allow (dev-only placeholder)
       VIEWER_SIGNING_KEY_CURRENT: "vw1"
-      # Tracking links are <base>/t/<token>; the hosted page arrives in M4.
+      # Tracking links are <base>/t/<token>.
       TRACKING_URL_BASE: "http://localhost:8080"
+      # The hosted page's assets and map (served by the cdn service, Task 14),
+      # for local use.
+      TRACKING_PAGE_BASE: "http://localhost:8090/page/dev/"
+      TRACKING_PAGE_CDN: "http://localhost:8090"
+      TRACKING_PAGE_TILES: "http://localhost:8090/tiles/amsterdam-z14.pmtiles"
+      TRACKING_PAGE_API: "http://localhost:8080/v1"
+      TRACKING_PAGE_CONNECT_EXTRA: "https://tiles.openfreemap.org"
       # Tracking's internal RPC (mTLS port); the gateway reads viewer
       # snapshots from it. delivery.status_changed arrives over NATS
       # (consumer gateway-deliveries, waits for the DELIVERIES stream).

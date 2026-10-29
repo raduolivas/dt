@@ -124,5 +124,8 @@ func writeRPCError(w http.ResponseWriter, r *http.Request, log *slog.Logger, err
 		log.ErrorContext(r.Context(), "deliveries_rpc_failed",
 			"error", err.Error(), "path", r.URL.Path, "request_id", httpx.RequestIDFrom(r.Context()))
 	}
+	if p.Code == "tracking_unavailable" {
+		w.Header().Set("Retry-After", "1")
+	}
 	httpx.WriteProblem(w, r, p)
 }

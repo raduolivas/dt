@@ -62,3 +62,18 @@ func TestAccessLogOmitsQuery(t *testing.T) {
 		t.Fatalf("query leaked: %s", out)
 	}
 }
+
+func TestAccessLogSetLogPath(t *testing.T) {
+	var logs bytes.Buffer
+	log := logx.New(&logs, slog.LevelDebug, "test")
+	h := httpx.AccessLog(log)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Even behind a middleware that copies the request.
+		httpx.SetLogPath(r.WithContext(r.Context()), "GET /t/{token}")
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/t/secretsecret", nil))
+	out := logs.String()
+	if strings.Contains(out, "secretsecret") || !strings.Contains(out, `"path":"GET /t/{token}"`) {
+		t.Fatalf("log = %s", out)
+	}
+	httpx.SetLogPath(httptest.NewRequest(http.MethodGet, "/x", nil), "ignored") // outside AccessLog: no-op
+}

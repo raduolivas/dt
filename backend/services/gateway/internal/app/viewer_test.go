@@ -78,7 +78,8 @@ func TestViewerStartBindsTokenToLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	jwt, exp, snap, err := f.v.Start(ctx, tok, t0)
+	sess, err := f.v.Start(ctx, tok, t0)
+	jwt, exp, snap := sess.ViewerToken, sess.ExpiresAt, sess.Snapshot
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,18 +107,18 @@ func TestViewerStartErrors(t *testing.T) {
 	f := newViewer(t)
 	_, tok, _ := f.links.Issue(ctx, principal, delA)
 
-	if _, _, _, err := f.v.Start(ctx, "Xk3m9QpL2vN7aB4cD8eF1g", t0); !errors.Is(err, app.ErrLinkInvalid) {
+	if _, err := f.v.Start(ctx, "Xk3m9QpL2vN7aB4cD8eF1g", t0); !errors.Is(err, app.ErrLinkInvalid) {
 		t.Fatalf("unknown token: %v", err)
 	}
 	f.snaps.err = errors.New("tracking down")
-	if _, _, _, err := f.v.Start(ctx, tok, t0); !errors.Is(err, app.ErrTrackingUnavailable) {
+	if _, err := f.v.Start(ctx, tok, t0); !errors.Is(err, app.ErrTrackingUnavailable) {
 		t.Fatalf("tracking down: %v", err)
 	}
 	f.snaps.err = nil
 	// 30 per link per minute (the two calls above count too).
 	var rl *app.RateLimitedError
 	for i := range 40 {
-		_, _, _, err := f.v.Start(ctx, tok, t0)
+		_, err := f.v.Start(ctx, tok, t0)
 		if errors.As(err, &rl) {
 			if i+2 != app.ViewerLink.Burst+1 {
 				t.Fatalf("limited at call %d", i+2)
@@ -139,7 +140,8 @@ func TestRefreshKeepsLinkAndFailsAfterRotationOrExpiry(t *testing.T) {
 	ctx := context.Background()
 	f := newViewer(t)
 	l, tok, _ := f.links.Issue(ctx, principal, delA)
-	jwt, _, _, err := f.v.Start(ctx, tok, t0)
+	s, err := f.v.Start(ctx, tok, t0)
+	jwt := s.ViewerToken
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +179,8 @@ func TestRefreshKeepsLinkAndFailsAfterRotationOrExpiry(t *testing.T) {
 	// Expiry too.
 	f2 := newViewer(t)
 	_, tok3, _ := f2.links.Issue(ctx, principal, delA)
-	jwt3, _, _, _ := f2.v.Start(ctx, tok3, t0)
+	s3, _ := f2.v.Start(ctx, tok3, t0)
+	jwt3 := s3.ViewerToken
 	if err := f2.links.ExpireOnFinal(ctx, delA, t0.Add(-30*time.Minute)); err != nil {
 		t.Fatal(err)
 	}

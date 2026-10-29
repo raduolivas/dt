@@ -165,6 +165,24 @@ func (t *TrackingLinks) Resolve(ctx context.Context, token string, now time.Time
 	return l, nil
 }
 
+// TenantOf returns the tenant of the link token belongs to, whether the link
+// is usable, expired or revoked; false for an unknown or malformed token. It
+// is for answers that must not tell those cases apart (the hosted page's
+// frame-ancestors); anything that grants access uses Resolve.
+func (t *TrackingLinks) TenantOf(ctx context.Context, token string) (string, bool, error) {
+	if !domain.ValidLinkToken(token) {
+		return "", false, nil
+	}
+	l, err := t.Store.FindByHash(ctx, t.Hasher.Hash(token))
+	if errors.Is(err, ErrNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("find tracking link: %w", err)
+	}
+	return l.TenantID, true, nil
+}
+
 // Active returns link id if it is usable at now, else ErrLinkInvalid.
 func (t *TrackingLinks) Active(ctx context.Context, id string, now time.Time) (domain.TrackingLink, error) {
 	l, err := t.Store.Get(ctx, id)
