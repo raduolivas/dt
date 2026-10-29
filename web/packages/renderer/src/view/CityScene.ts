@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { TrackingSnapshot } from '@dt/contract';
 import { GeoProjection, type Vec2 } from '../engine/geo';
 import { BLOCK, GRID, ROAD_W, placeNear, projection as gridProjection, type Place } from './grid';
-import { activeLeg, activeLegKind, isFinal, toLatLng } from '../snapshot';
+import { isFinal } from '../snapshot';
 import { GROUND_Y, ROAD_TOP_Y } from '../tiles/build/common';
 import type { TileTheme } from '../tiles/build/decode';
 import { openTileSource, type TileSource, type TileSourceSpec } from '../tiles/source';
@@ -11,7 +11,7 @@ import { createWorkerBuilder, type TileBuilder } from '../tiles/workerPool';
 import './scene.css';
 import { TileCity, placeSites } from './city';
 import { CITY_DAY, CITY_NIGHT } from './colors';
-import { CAM_OFFSET, FOLLOW_ZOOM, MAX_ZOOM, MIN_ZOOM, computeFrame, followZoom, setFrustum } from './framing';
+import { CAM_OFFSET, FOLLOW_ZOOM, MAX_ZOOM, MIN_ZOOM, applyFrame, computeFrame, followZoom, setFrustum, type Insets } from './framing';
 import {
   Bicycle,
   COLORS,
@@ -26,7 +26,7 @@ import {
   mulberry32,
   type HouseModel,
 } from './models';
-import { buildRibbon, trimRouteFrom } from './ribbon';
+import { buildRibbon, ribbonWidth, routeLegs } from './ribbon';
 
 /** The dropoff is private to the customer's own view; the label is never the address from the snapshot. */
 const HOME_LABEL = 'Your address';
@@ -39,8 +39,15 @@ const GRID_BLOCK_TOP = 0.8;
 const TILE_COURIER_Y = GROUND_Y + 0.35;
 const LAZY_EVERY_S = 0.5;
 const LAZY_MAX_RADIUS_M = 1200;
+/** Route ribbons: the prototype's widths up close, a minimum on-screen width when zoomed out (overview). */
+const ACTIVE_RIBBON_M = 4.6;
+const ACTIVE_RIBBON_MIN_PX = 7;
+const NEXT_RIBBON_M = 3.2;
+const NEXT_RIBBON_MIN_PX = 5;
 /** Objects drawn again as a see-through silhouette where buildings hide them (the courier, the active route). */
 const XRAY_LAYER = 1;
+/** The route's see-through copies (own colors, so the next leg stays light and the active one accent). */
+const XRAY_ROUTE_LAYER = 2;
 
 function angleDiff(target: number, current: number) {
   return ((((target - current + Math.PI) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) - Math.PI;
@@ -82,6 +89,8 @@ export class CityScene {
   private readonly halo: THREE.Mesh;
   private readonly routeActive: THREE.Mesh;
   private readonly routeNext: THREE.Mesh;
+  private readonly routeActiveXray: THREE.Mesh;
+  private readonly routeNextXray: THREE.Mesh;
 
   private readonly storeAccent = new THREE.MeshStandardMaterial({ color: COLORS.blue, roughness: 0.8, metalness: 0.02 });
   private storePinMat: THREE.MeshStandardMaterial | null = null;
@@ -130,6 +139,9 @@ export class CityScene {
   private width = 1;
   private height = 1;
   private readonly tmp = new THREE.Vector3();
+  private legs: { active: Vec2[]; next: Vec2[] } = { active: [], next: [] };
+  private ribbonWidthM = -1;
+  private insets: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
   private readonly xray = new THREE.MeshBasicMaterial({
     color: COLORS.blue,
     transparent: true,
@@ -198,7 +210,7 @@ export class CityScene {
     this.controls.minZoom = MIN_ZOOM;
     this.controls.maxZoom = MAX_ZOOM;
     this.controls.rotateSpeed = 0.6;
-    this.controls.enablePan = true;
+    this.controls.enablePan = !this.follow; // the prototype: no pan while following
     this.controls.addEventListener('start', () => (this.goal = null));
 
     // courier
@@ -225,14 +237,28 @@ export class CityScene {
         polygonOffsetFactor: -2,
         polygonOffsetUnits: -2,
       });
-    this.routeNext = new THREE.Mesh(new THREE.BufferGeometry(), ribbonMat(COLORS.blueLight, 0.75));
+    // The next leg: the route blue, half transparent (blueLight alone vanished against the real canals).
+    this.routeNext = new THREE.Mesh(new THREE.BufferGeometry(), ribbonMat(COLORS.blue, 0.5));
     this.routeActive = new THREE.Mesh(new THREE.BufferGeometry(), ribbonMat(this.accent ?? ROUTE_ACTIVE, 0.95));
     this.routeNext.renderOrder = 1;
     this.routeActive.renderOrder = 2;
     this.scene.add(this.routeNext, this.routeActive);
     // Game trick: where a building hides the courier or its route, a soft silhouette shows through.
-    this.routeActive.layers.enable(XRAY_LAYER);
     this.courierRoot.traverse((o) => o.layers.enable(XRAY_LAYER));
+    // The route reads in every view: where buildings hide it, a see-through copy of each ribbon shows through.
+    const xrayRibbon = (src: THREE.Mesh, opacity: number) => {
+      const m = (src.material as THREE.MeshBasicMaterial).clone();
+      m.opacity = opacity;
+      m.depthWrite = false;
+      m.depthFunc = THREE.GreaterDepth;
+      const copy = new THREE.Mesh(src.geometry, m);
+      copy.layers.set(XRAY_ROUTE_LAYER);
+      copy.renderOrder = src.renderOrder;
+      this.scene.add(copy);
+      return copy;
+    };
+    this.routeNextXray = xrayRibbon(this.routeNext, 0.35);
+    this.routeActiveXray = xrayRibbon(this.routeActive, 0.7);
     this.renderer.info.autoReset = false;
 
     // HTML labels
@@ -264,6 +290,7 @@ export class CityScene {
 
   setFollow(on: boolean): void {
     this.follow = on;
+    this.controls.enablePan = !on;
     if (on) this.goal = { target: this.curPos.clone(), zoom: followZoom(this.camera, this.width) };
   }
 
@@ -274,7 +301,13 @@ export class CityScene {
   /** Frames store, home and courier. */
   overview(): void {
     this.follow = false;
+    this.controls.enablePan = true;
     this.frameAll(false);
+  }
+
+  /** Screen space the page's cards cover (CSS px): framing keeps store, home and courier out from under them. */
+  setInsets(i: Insets): void {
+    this.insets = { ...i };
   }
 
   setTheme(t: TileTheme): void {
@@ -394,6 +427,7 @@ export class CityScene {
       this.camera.position.add(delta);
     }
     this.controls.update();
+    this.rebuildRibbons();
 
     if (this.billboard) {
       const d = this.tmp.copy(this.camera.position).sub(this.controls.target);
@@ -436,10 +470,13 @@ export class CityScene {
     r.autoClear = false;
     r.shadowMap.autoUpdate = false;
     r.render(this.scene, this.camera);
+    // Third pass: the route's own see-through copies (no override, they keep their colors).
+    this.scene.overrideMaterial = null;
+    this.camera.layers.set(XRAY_ROUTE_LAYER);
+    r.render(this.scene, this.camera);
     r.shadowMap.autoUpdate = true;
     r.autoClear = true;
     this.camera.layers.set(0);
-    this.scene.overrideMaterial = null;
     this.scene.background = bg;
   }
 
@@ -479,20 +516,22 @@ export class CityScene {
     if (!s) return;
     const pts = [this.store?.center ?? this.projection.toLocal(s.pickup.location), this.home?.center ?? this.projection.toLocal(s.dropoff.location)];
     if (this.courierRoot.visible) pts.push({ x: this.targetPos.x, z: this.targetPos.z });
+    // Built for the current orbit direction, so it still frames after the user rotated the view.
+    const back = this.camera.position.clone().sub(this.controls.target);
     const f = computeFrame(
       this.camera,
       pts.map((p) => new THREE.Vector3(p.x, 0, p.z)),
+      { back, insets: this.insets, viewport: [this.width, this.height] },
     );
     this.controls.minZoom = Math.min(MIN_ZOOM, f.zoom * 0.8);
-    this.camera.far = f.far;
     if (snap) {
-      const off = this.camera.position.clone().sub(this.controls.target).normalize().multiplyScalar(f.distance);
+      applyFrame(this.camera, f); // the tested framing path
       this.controls.target.copy(f.target);
-      this.camera.position.copy(f.target).add(off);
-      this.camera.zoom = f.zoom;
-      this.camera.updateProjectionMatrix();
       this.goal = null;
     } else {
+      // Glide: same frame, reached by moving target and camera together along the current orbit direction.
+      this.camera.position.copy(f.back).multiplyScalar(f.distance).add(this.controls.target);
+      this.camera.far = f.far;
       this.camera.updateProjectionMatrix();
       this.goal = { target: f.target, zoom: f.zoom };
     }
@@ -509,22 +548,29 @@ export class CityScene {
   }
 
   private updateRoutes(s: TrackingSnapshot) {
-    const local = (p: { lat: number; lng: number }) => this.projection.toLocal(p);
-    const toDropoff = s.route.to_dropoff.map((p) => local(toLatLng(p)));
-    const leg = activeLeg(s).map(local);
-    const onPickupLeg = activeLegKind(s) === 'to_pickup';
-    const here: Vec2 = { x: this.targetPos.x, z: this.targetPos.z };
-    let active: Vec2[] = [];
-    let next: Vec2[] = [];
-    if (!isFinal(s.status)) {
-      // The leg the courier is on (from the courier when shown), then the delivery leg when that one is next.
-      active = this.courierRoot.visible ? trimRouteFrom(leg, here) : leg;
-      next = onPickupLeg ? toDropoff : [];
-    }
+    const courier = this.courierRoot.visible ? { x: this.targetPos.x, z: this.targetPos.z } : null;
+    this.legs = routeLegs(s, (p) => this.projection.toLocal(p), courier);
+    this.ribbonWidthM = -1; // rebuild now
+    this.rebuildRibbons();
+  }
+
+  /** Metres per screen pixel at the current zoom. */
+  private metresPerPx(): number {
+    return (this.camera.right - this.camera.left) / this.camera.zoom / Math.max(1, this.width);
+  }
+
+  /** (Re)builds the ribbons when the route changed or the zoom moved their on-screen minimum width by > 10 %. */
+  private rebuildRibbons() {
+    const mpp = this.metresPerPx();
+    const w = ribbonWidth(ACTIVE_RIBBON_M, ACTIVE_RIBBON_MIN_PX, mpp);
+    if (this.ribbonWidthM > 0 && Math.abs(w - this.ribbonWidthM) / this.ribbonWidthM < 0.1) return;
+    this.ribbonWidthM = w;
     this.routeActive.geometry.dispose();
-    this.routeActive.geometry = buildRibbon(active, 4.6, this.ribbonY + 0.05);
+    this.routeActive.geometry = buildRibbon(this.legs.active, w, this.ribbonY + 0.05);
     this.routeNext.geometry.dispose();
-    this.routeNext.geometry = buildRibbon(next, 3.2, this.ribbonY);
+    this.routeNext.geometry = buildRibbon(this.legs.next, ribbonWidth(NEXT_RIBBON_M, NEXT_RIBBON_MIN_PX, mpp), this.ribbonY);
+    this.routeActiveXray.geometry = this.routeActive.geometry;
+    this.routeNextXray.geometry = this.routeNext.geometry;
   }
 
   private setLabelsVisible(on: boolean) {
@@ -534,6 +580,7 @@ export class CityScene {
 
   private applyAccent() {
     (this.routeActive.material as THREE.MeshBasicMaterial).color.setHex(this.accent ?? ROUTE_ACTIVE);
+    (this.routeActiveXray.material as THREE.MeshBasicMaterial).color.setHex(this.accent ?? ROUTE_ACTIVE);
     this.xray.color.setHex(this.accent ?? COLORS.blue);
     this.storeAccent.color.setHex(this.accent ?? COLORS.blue);
     this.storePinMat?.color.setHex(this.accent ?? COLORS.blue);

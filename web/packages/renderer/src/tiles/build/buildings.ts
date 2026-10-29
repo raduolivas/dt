@@ -45,7 +45,7 @@ export function toyHeight(h: number): number {
 const WINDOW_M = 6.5; // one window cell of the texture, like the prototype's 7 m repeat
 const RIM_HALF_M = 0.45; // the lighter roof edge, half inside and half overhanging
 const UNIT_MIN_AREA = 120; // m², buildings big enough for a rooftop unit
-const ACCENT_SHARE = 0.08; // blue roofs, as the prototype's accent buildings
+const ACCENT_SHARE = 0.14; // soft periwinkle roofs for variety (strong blue is kept for the route and the store)
 // A UV inside the texture's white frame: roofs and the rim stay plain.
 const PLAIN_U = 0.04;
 const PLAIN_V = 0.04;
@@ -73,7 +73,7 @@ class UvMesh extends MeshBuilder {
 /**
  * Extrudes footprints from `render_min_height` to `render_height` (default 9 m, soft capped). Walls carry UVs for
  * the prototype's window texture (whole windows per wall), flat roofs get a small lighter rim, some roofs are the
- * accent blue and bigger roofs get a seeded rooftop unit.
+ * soft periwinkle and bigger roofs get a seeded rooftop unit.
  */
 export function buildBuildings(
   features: Feature[],

@@ -120,6 +120,32 @@ describe('buildings', () => {
     expect(b.uvs.length).toBe((b.positions.length / 3) * 2);
   });
 
+  it('keeps every building in its own vertex range, so hiding one hides only it', () => {
+    const shifted = square.map((r) => r.map((p) => ({ x: p.x + 300, y: p.y })));
+    const b = buildBuildings(
+      [
+        { id: 1, props: {}, rings: square },
+        { id: 2, props: { render_height: 30 }, rings: shifted },
+      ],
+      proj,
+      palette,
+    );
+    const info = b.footprints.info;
+    expect(info.length).toBe(8);
+    const ranges = [0, 1].map((k) => [info[k * 4 + 2]!, info[k * 4 + 2]! + info[k * 4 + 3]!] as const);
+    expect(ranges[0]![0]).toBe(0);
+    expect(ranges[0]![1]).toBe(ranges[1]![0]); // contiguous, back to back
+    expect(ranges[1]![1]).toBe(b.positions.length / 3); // nothing emitted outside a building's range
+    const owner = (v: number) => (v < ranges[0]![1] ? 0 : 1);
+    for (let t = 0; t < b.indices.length; t += 3) {
+      const o = owner(b.indices[t]!);
+      expect(owner(b.indices[t + 1]!)).toBe(o);
+      expect(owner(b.indices[t + 2]!)).toBe(o); // no triangle spans two buildings
+    }
+    // Every vertex of building 1 lies on its own footprint's side of the tile (x ≥ 300 units * 0.37).
+    for (let v = ranges[1]![0]; v < ranges[1]![1]; v++) expect(b.positions[v * 3]!).toBeGreaterThan(300 * 0.37 - 1);
+  });
+
   it('gives the same building the same tint in two runs', () => {
     const f = { id: 42, props: {}, rings: square };
     const a = buildBuildings([f], proj, palette);

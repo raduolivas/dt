@@ -8,7 +8,9 @@ import { FIXTURE_PATH, FileSource } from '../tiles/fixture';
 import { openPmtiles } from '../tiles/pmtiles';
 import type { TileSource } from '../tiles/source';
 import { TILE_LAYERS, TileCity, placeSites, type TileBuilder } from './city';
-import { frameCamera } from './framing';
+import { computeFrame, frameCamera, setFrustum } from './framing';
+import { ribbonWidth, routeLegs } from './ribbon';
+import { activeLeg, activeLegKind, toLatLng } from '../snapshot';
 
 // Headless: geometry only. The worker is replaced by a builder that calls `decodeTile` directly.
 const builder: TileBuilder = { build: async (req) => decodeTile(req).layers };
@@ -125,6 +127,60 @@ describe('TileCity', { timeout: 30_000 }, () => {
     city.dispose();
   });
 
+  it('makes no lazy tile request before the first load resolves', async () => {
+    const s = devSnap('far');
+    const inner = await fixture();
+    const requested: string[] = [];
+    const source: TileSource = { zoom: inner.zoom, get: (z, x, y, sig) => (requested.push(`${z}/${x}/${y}`), inner.get(z, x, y, sig)) };
+    const city = new TileCity(new THREE.Group(), source, new GeoProjection(s.pickup.location), 'light', { builder });
+    const first = city.loadFirst(s);
+    // The camera is already pulled back over the whole route while the first tiles load.
+    city.loadMore(new THREE.Vector3(0, 0, 0), 10_000);
+    const firstCount = requested.length;
+    const { bytes } = await first;
+    expect(requested.length).toBe(firstCount); // nothing lazy started during the first load
+    expect(city.loadedTiles).toBe(firstCount);
+    const firstKeys = requested.slice();
+    let sum = 0;
+    for (const k of firstKeys) {
+      const [z, x, y] = k.split('/').map(Number);
+      sum += (await inner.get(z!, x!, y!))?.byteLength ?? 0;
+    }
+    expect(bytes).toBe(sum);
+    // The remembered focus runs once the first load is done.
+    await city.idle();
+    expect(requested.length).toBeGreaterThan(firstCount);
+    expect(city.pendingTiles).toBe(0);
+    city.dispose();
+  });
+
+  it('forgets a tile whose build fails so a later loadMore retries it', async () => {
+    const s = devSnap('medium');
+    let failOnce = true;
+    const flaky: TileBuilder = {
+      build: async (req) => {
+        if (failOnce) {
+          failOnce = false;
+          throw new Error('boom');
+        }
+        return decodeTile(req).layers;
+      },
+    };
+    const group = new THREE.Group();
+    const city = new TileCity(group, await fixture(), new GeoProjection(s.pickup.location), 'light', { builder: flaky });
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      await city.loadFirst(s);
+    } finally {
+      console.warn = warn;
+    }
+    const built = group.children.filter((c) => c.userData.tile && c.children.length > 0).length;
+    expect(city.loadedTiles).toBe(built); // the failed tile is not kept as an empty tile
+    expect(group.children.filter((c) => c.userData.tile && c.children.length === 0)).toHaveLength(0);
+    city.dispose();
+  });
+
   it('draws at most one draw call per layer per tile', async () => {
     const { group, city } = await cityFor(devSnap('medium'));
     const tiles = group.children.filter((c) => c.userData.tile);
@@ -176,11 +232,112 @@ describe('frameCamera', () => {
     ]);
   });
 
+  it('frames correctly after the user orbited the camera', () => {
+    const proj = new GeoProjection({ lat: 52.37, lng: 4.89 });
+    const world = [{ lat: 52.37, lng: 4.89 }, { lat: 52.36, lng: 4.91 }].map((p) => {
+      const l = proj.toLocal(p);
+      return new THREE.Vector3(l.x, 0, l.z);
+    });
+    const back = new THREE.Vector3(-250, 300, 120); // rotated away from CAM_OFFSET
+    const cam = new THREE.OrthographicCamera();
+    const f = frameCamera(cam, world, 390, 844, back);
+    expect(f.back.clone().sub(back.clone().normalize()).length()).toBeLessThan(1e-9);
+    cam.updateMatrixWorld();
+    for (const p of world) {
+      const v = p.clone().project(cam);
+      expect(Math.abs(v.x)).toBeLessThan(1);
+      expect(Math.abs(v.y)).toBeLessThan(1);
+    }
+    // Same frame as computeFrame (the scene's glide path uses its target, zoom and direction).
+    const cam2 = new THREE.OrthographicCamera();
+    setFrustum(cam2, 390, 844);
+    const g = computeFrame(cam2, world, { back });
+    expect(g.target.distanceTo(f.target)).toBeLessThan(1e-6);
+    expect(g.zoom).toBeCloseTo(f.zoom);
+  });
+
+  it('keeps the points out from under the cards (insets)', () => {
+    const proj = new GeoProjection({ lat: 52.37, lng: 4.89 });
+    const world = [{ lat: 52.377, lng: 4.883 }, { lat: 52.364, lng: 4.886 }, { lat: 52.374, lng: 4.888 }].map((p) => {
+      const l = proj.toLocal(p);
+      return new THREE.Vector3(l.x, 0, l.z);
+    });
+    const cases: [number, number, { top: number; right: number; bottom: number; left: number }][] = [
+      [1440, 900, { top: 140, right: 310, bottom: 160, left: 0 }], // desktop side panel
+      [390, 844, { top: 250, right: 0, bottom: 460, left: 0 }], // phone bottom sheet
+    ];
+    for (const [w, h, ins] of cases) {
+      const cam = new THREE.OrthographicCamera();
+      frameCamera(cam, world, w, h, undefined, ins);
+      cam.updateMatrixWorld();
+      for (const p of world) {
+        const v = p.clone().project(cam);
+        const x = ((v.x + 1) / 2) * w;
+        const y = ((1 - v.y) / 2) * h;
+        expect(x, `${w}x${h} x`).toBeGreaterThan(ins.left);
+        expect(x, `${w}x${h} x`).toBeLessThan(w - ins.right);
+        expect(y, `${w}x${h} y`).toBeGreaterThan(ins.top);
+        expect(y, `${w}x${h} y`).toBeLessThan(h - ins.bottom);
+      }
+    }
+  });
+
   it('frames a 12 km route', () => {
     expectInFrustum([
       { lat: 52.37, lng: 4.89 },
       { lat: 52.3, lng: 5.03 },
       { lat: 52.33, lng: 4.95 }, // the courier
     ]);
+  });
+});
+
+describe('routeLegs', () => {
+  const toLocal = (p: LatLng) => ({ x: p.lng, z: p.lat });
+  const PICK = [
+    [52.0, 4.0],
+    [52.001, 4.001],
+  ];
+  const DROP = [
+    [52.001, 4.001],
+    [52.002, 4.002],
+  ];
+  const STATUSES: TrackingSnapshot['status'][] = [
+    'confirmed',
+    'courier_assigned',
+    'at_pickup',
+    'picked_up',
+    'arriving',
+    'delivered',
+    'cancelled',
+    'failed',
+  ];
+
+  it('draws activeLeg() as the active ribbon for every status, in both models', () => {
+    for (const model of ['end_to_end', 'direct'] as const) {
+      for (const status of STATUSES) {
+        const s = snap({ lat: 52, lng: 4 }, { lat: 52.002, lng: 4.002 }, {
+          status,
+          delivery_model: model,
+          route: { to_pickup: model === 'direct' ? null : PICK, to_dropoff: DROP },
+        });
+        const { active, next } = routeLegs(s, toLocal, null);
+        const final = status === 'delivered' || status === 'cancelled' || status === 'failed';
+        expect(active, `${model} ${status}`).toEqual(final ? [] : activeLeg(s).map(toLocal));
+        const onPickupLeg = !final && activeLegKind(s) === 'to_pickup';
+        expect(next, `${model} ${status} next`).toEqual(onPickupLeg ? DROP.map((p) => toLocal(toLatLng(p))) : []);
+      }
+    }
+  });
+
+  it('at_pickup draws to_pickup as active (to_dropoff next)', () => {
+    const s = snap({ lat: 52, lng: 4 }, { lat: 52.002, lng: 4.002 }, { status: 'at_pickup', route: { to_pickup: PICK, to_dropoff: DROP } });
+    const { active, next } = routeLegs(s, toLocal, null);
+    expect(active).toEqual(PICK.map((p) => toLocal(toLatLng(p))));
+    expect(next).toEqual(DROP.map((p) => toLocal(toLatLng(p))));
+  });
+
+  it('keeps a minimum on-screen width when zoomed out', () => {
+    expect(ribbonWidth(4.6, 5, 0.2)).toBe(4.6); // close: the prototype's width
+    expect(ribbonWidth(4.6, 5, 4)).toBe(20); // overview at 4 m/px: still 5 px
   });
 });

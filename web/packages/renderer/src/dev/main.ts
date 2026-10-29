@@ -44,6 +44,24 @@ sim.subscribe((snap) => {
 
 const refresh = () => hud.update(sim.snapshot(), devState());
 
+// The cards cover part of the map: tell the renderer, so its framing keeps store, home and courier visible.
+const hudInsets = () => {
+  const W = innerWidth;
+  const H = innerHeight;
+  const i = { top: 0, right: 0, bottom: 0, left: 0 };
+  for (const el of document.querySelectorAll<HTMLElement>('.topbar, .stats, .order, .toolbar, .stepper')) {
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) continue;
+    if (r.height > H * 0.35 && r.right > W - 24 && r.width < W * 0.5) i.right = Math.max(i.right, W - r.left);
+    else if (r.top + r.height / 2 < H / 2) i.top = Math.max(i.top, r.bottom);
+    else i.bottom = Math.max(i.bottom, H - r.top);
+  }
+  return i;
+};
+const syncInsets = () => scene.setInsets(hudInsets());
+syncInsets();
+addEventListener('resize', syncInsets);
+
 // --- toolbar --------------------------------------------------------------
 const runOrPause = () => {
   if (sim.currentStatus === 'delivered') {

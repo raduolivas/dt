@@ -37,6 +37,7 @@ const FIRST_AROUND_STOPS_M = 200;
 const LAZY_BOX_M = 300;
 const LAZY_RADIUS_M = 700;
 const LAZY_CONCURRENCY = 2;
+const RETRY_MS = 5000;
 
 /** A building that contains a point, in scene metres. */
 export interface Footprint extends FootprintShape {
@@ -82,6 +83,10 @@ export class TileCity {
   };
   private hidden: Footprint[] = [];
   private disposed = false;
+  /** Lazy loading waits for the first load, so `loadFirst`'s byte count covers every tile fetched until then. */
+  private firstDone = false;
+  /** When a tile last failed: it is retried after RETRY_MS, not in a tight loop. */
+  private readonly failedAt = new Map<string, number>();
   private lazyActive = 0;
   private lastFocus: THREE.Vector3 | null = null;
   private lastRadius = LAZY_RADIUS_M;
@@ -139,6 +144,18 @@ export class TileCity {
       (a, b) => Math.min(...focus.map((p) => distanceToTileM(p, a))) - Math.min(...focus.map((p) => distanceToTileM(p, b))),
     );
     const sizes = await Promise.all(order.map((t) => this.load(t)));
+    this.firstDone = true;
+    if (this.lastFocus) {
+      // A focus asked for during the first load runs after it resolved (next task), so its bytes are not counted.
+      const kick = new Promise<void>((resolve) =>
+        setTimeout(() => {
+          if (this.lastFocus) this.loadMore(this.lastFocus, this.lastRadius);
+          resolve();
+        }, 0),
+      );
+      this.inflight.add(kick);
+      void kick.finally(() => this.inflight.delete(kick));
+    }
     return { bytes: sizes.reduce((a, b) => a + b, 0) };
   }
 
@@ -156,10 +173,11 @@ export class TileCity {
     if (this.disposed) return;
     this.lastFocus = focus.clone();
     this.lastRadius = radiusM;
+    if (!this.firstDone) return; // remembered; runs when the first load is done
     const at = this.projection.toLatLng({ x: focus.x, z: focus.z });
     const near = [...this.pending.values()]
       .map((t) => ({ t, d: distanceToTileM(at, t) }))
-      .filter((e) => e.d <= radiusM)
+      .filter((e) => e.d <= radiusM && Date.now() - (this.failedAt.get(key(e.t)) ?? -Infinity) >= RETRY_MS)
       .sort((a, b) => a.d - b.d);
     for (const { t } of near) {
       if (this.lazyActive >= LAZY_CONCURRENCY) break;
@@ -252,6 +270,17 @@ export class TileCity {
       } catch (err) {
         if (!this.disposed && !(err instanceof DOMException && err.name === 'AbortError')) {
           console.warn(`tile ${k}:`, err);
+        }
+        // Forget the tile so a later loadMore can try again.
+        const failed = this.tiles.get(k);
+        if (failed) {
+          this.tiles.delete(k);
+          disposeGroup(failed.group);
+          this.root.remove(failed.group);
+        }
+        if (!this.disposed) {
+          this.pending.set(k, t);
+          this.failedAt.set(k, Date.now());
         }
       } finally {
         this.loading.delete(k);

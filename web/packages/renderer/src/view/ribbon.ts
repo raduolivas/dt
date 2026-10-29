@@ -1,5 +1,7 @@
 import * as THREE from 'three';
+import type { LatLng, TrackingSnapshot } from '@dt/contract';
 import type { Vec2 } from '../engine/geo';
+import { activeLeg, activeLegKind, isFinal, toLatLng } from '../snapshot';
 
 /** Flat ribbon (road-following line) lying at height `y`. */
 export function buildRibbon(points: Vec2[], width: number, y: number): THREE.BufferGeometry {
@@ -59,4 +61,26 @@ export function trimRouteFrom(points: Vec2[], p: Vec2): Vec2[] {
     }
   }
   return [bestPt, ...points.slice(best + 1)];
+}
+
+/**
+ * The two route ribbons for a snapshot: `active` is the leg the courier is on (`activeLeg()`), from the courier when
+ * it is drawn; `next` is the delivery leg while the courier is still on the way to the pickup. Final: none.
+ */
+export function routeLegs(
+  s: TrackingSnapshot,
+  toLocal: (p: LatLng) => Vec2,
+  courier: Vec2 | null,
+): { active: Vec2[]; next: Vec2[] } {
+  if (isFinal(s.status)) return { active: [], next: [] };
+  const leg = activeLeg(s).map(toLocal);
+  return {
+    active: courier ? trimRouteFrom(leg, courier) : leg,
+    next: activeLegKind(s) === 'to_pickup' ? s.route.to_dropoff.map((p) => toLocal(toLatLng(p))) : [],
+  };
+}
+
+/** Ribbon width in metres: `minM` at close zoom, never thinner than `minPx` screen pixels when zoomed out. */
+export function ribbonWidth(minM: number, minPx: number, metresPerPx: number): number {
+  return Math.max(minM, minPx * metresPerPx);
 }

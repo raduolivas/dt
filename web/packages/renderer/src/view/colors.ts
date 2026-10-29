@@ -58,8 +58,10 @@ export const CITY_DAY: CityColors = {
   walls: BUILDING_TINTS,
   roof: 0xe9eef9,
   roofRim: 0xffffff,
-  roofAccent: COLORS.blue,
-  roofAccentRim: 0x6f8ff0,
+  // A soft periwinkle between the prototype's blueLight and block colors: variety on the roofs without competing
+  // with the route, the store and the partner accent (which own the strong blue).
+  roofAccent: 0xc7d2f0,
+  roofAccentRim: 0xe6ecfb,
   roofUnit: 0xcdd6ea,
   landuse: {
     railway: 0xe8ecf6,
@@ -86,8 +88,8 @@ export const CITY_NIGHT: CityColors = {
   walls: [0x4b5a8a, 0x45527f, 0x515f90, 0x3f4b78, 0x55588a],
   roof: 0x3a4673,
   roofRim: 0x5a6aa0,
-  roofAccent: 0x2f4fc0,
-  roofAccentRim: 0x5a78e0,
+  roofAccent: 0x3f4d80,
+  roofAccentRim: 0x56649a,
   roofUnit: 0x34406a,
   landuse: { railway: 0x262f50, pitch: 0x214a40, playground: 0x214a40 },
 };

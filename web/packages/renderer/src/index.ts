@@ -4,6 +4,8 @@ import type { TileSourceSpec } from './tiles/source';
 import { CityScene } from './view/CityScene';
 
 export type { TileSourceSpec } from './tiles/source';
+export type { Insets } from './view/framing';
+import type { Insets } from './view/framing';
 export { activeLeg, activeLegKind, toLatLng, viewKind, type ViewKind } from './snapshot';
 
 export interface RendererOptions {
@@ -28,6 +30,8 @@ export interface Renderer {
   setAccent(c: string | null): void;
   overview(): void;
   setFollow(on: boolean): void;
+  /** Screen space the page's cards cover (CSS px); framing keeps store, home and courier clear of it. */
+  setInsets(i: Insets): void;
   destroy(): void;
 }
 
@@ -81,6 +85,7 @@ export function createRenderer(container: HTMLElement, o: RendererOptions = {}):
     },
     overview: () => scene.overview(),
     setFollow: (on) => scene.setFollow(on),
+    setInsets: (i) => scene.setInsets(i),
     destroy() {
       alive = false;
       cancelAnimationFrame(raf);

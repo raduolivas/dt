@@ -31,12 +31,22 @@ export function setFrustum(cam: THREE.OrthographicCamera, width: number, height:
   cam.bottom = -halfH;
 }
 
+/** Screen space covered by cards over the map, in CSS px. */
+export interface Insets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
 export interface Frame {
   target: THREE.Vector3;
   zoom: number;
-  /** Camera distance from the target along CAM_OFFSET (orthographic: only the depth range depends on it). */
+  /** Camera distance from the target along `back` (orthographic: only the depth range depends on it). */
   distance: number;
   far: number;
+  /** Unit vector from the target towards the camera (the orbit direction the frame was built for). */
+  back: THREE.Vector3;
 }
 
 /**
@@ -46,12 +56,13 @@ export interface Frame {
 export function computeFrame(
   cam: THREE.OrthographicCamera,
   points: THREE.Vector3[],
-  opts: { margin?: number; maxZoom?: number; lift?: number } = {},
+  opts: { margin?: number; maxZoom?: number; lift?: number; back?: THREE.Vector3; insets?: Insets; viewport?: [number, number] } = {},
 ): Frame {
   const margin = opts.margin ?? 0.2;
   const maxZoom = opts.maxZoom ?? 2.4;
   const lift = opts.lift ?? 34;
-  const back = CAM_OFFSET.clone().normalize();
+  // The current orbit direction when given (the user may have rotated), else the prototype's isometric angle.
+  const back = (opts.back ?? CAM_OFFSET).clone().normalize();
   const forward = back.clone().negate();
   const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
   const up = new THREE.Vector3().crossVectors(right, forward).normalize();
@@ -75,25 +86,32 @@ export function computeFrame(
   if (!Number.isFinite(minR)) {
     minR = maxR = minU = maxU = 0;
   }
-  const cr = (minR + maxR) / 2;
-  const cu = (minU + maxU) / 2;
+  // Only the part of the viewport not covered by the cards (insets, CSS px) frames the points.
+  const [vw, vh] = opts.viewport ?? [1, 1];
+  const ins = opts.insets ?? { top: 0, right: 0, bottom: 0, left: 0 };
+  const fx = Math.max(0.2, (vw - ins.left - ins.right) / vw);
+  const fy = Math.max(0.2, (vh - ins.top - ins.bottom) / vh);
+  const spanR = Math.max(1, maxR - minR) * (1 + 2 * margin);
+  const spanU = Math.max(1, maxU - minU) * (1 + 2 * margin);
+  const zoom = Math.min(maxZoom, (fx * (cam.right - cam.left)) / spanR, (fy * (cam.top - cam.bottom)) / spanU);
+  // Shift the view so the middle of the points lands in the middle of the free area.
+  const ndcX = (ins.left - ins.right) / vw;
+  const ndcY = (ins.bottom - ins.top) / vh;
+  const cr = (minR + maxR) / 2 - (ndcX * (cam.right - cam.left)) / 2 / zoom;
+  const cu = (minU + maxU) / 2 - (ndcY * (cam.top - cam.bottom)) / 2 / zoom;
   // The point on the ground (y = 0) that projects to the centre of the extents.
   const t = -(up.y * cu + right.y * cr) / forward.y;
   const target = right.clone().multiplyScalar(cr).addScaledVector(up, cu).addScaledVector(forward, t);
 
-  const spanR = Math.max(1, maxR - minR) * (1 + 2 * margin);
-  const spanU = Math.max(1, maxU - minU) * (1 + 2 * margin);
-  const zoom = Math.min(maxZoom, (cam.right - cam.left) / spanR, (cam.top - cam.bottom) / spanU);
-
   let radius = 0;
   for (const p of points) radius = Math.max(radius, p.distanceTo(target) + lift);
   const distance = Math.max(CAM_OFFSET.length(), radius + 200);
-  return { target, zoom, distance, far: Math.max(4000, distance + radius + 1000) };
+  return { target, zoom, distance, far: Math.max(4000, distance + radius + 1000), back };
 }
 
 /** Puts `cam` on a frame: position, zoom, depth range. */
 export function applyFrame(cam: THREE.OrthographicCamera, f: Frame): void {
-  cam.position.copy(CAM_OFFSET).normalize().multiplyScalar(f.distance).add(f.target);
+  cam.position.copy(f.back).multiplyScalar(f.distance).add(f.target);
   cam.zoom = f.zoom;
   cam.near = 1;
   cam.far = f.far;
@@ -102,9 +120,16 @@ export function applyFrame(cam: THREE.OrthographicCamera, f: Frame): void {
 }
 
 /** Sets the frustum for the viewport, then frames the points (store, home and courier). */
-export function frameCamera(cam: THREE.OrthographicCamera, points: THREE.Vector3[], width: number, height: number): Frame {
+export function frameCamera(
+  cam: THREE.OrthographicCamera,
+  points: THREE.Vector3[],
+  width: number,
+  height: number,
+  back?: THREE.Vector3,
+  insets?: Insets,
+): Frame {
   setFrustum(cam, width, height);
-  const f = computeFrame(cam, points);
+  const f = computeFrame(cam, points, { back, insets, viewport: [width, height] });
   applyFrame(cam, f);
   return f;
 }
