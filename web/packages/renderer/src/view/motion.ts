@@ -118,6 +118,7 @@ export class CourierMotion {
     this.cur = null;
     this.state = null;
     this.shown = false;
+    this.yawSet = false;
   }
 
   onSnapshot(s: TrackingSnapshot, nowMs: number): void {
@@ -169,5 +170,38 @@ export class CourierMotion {
       this.yaw += angleDiff(this.targetYaw, this.yaw) * (1 - Math.exp(-Math.max(0, dtMs) / TURN_TAU_MS));
     }
     return { p: this.cur, yaw: this.yaw, faded, visible: true };
+  }
+}
+
+/** Speed changes this fast on screen (s): the wheels and the walk follow the drawn courier, not the last fix. */
+const SPEED_TAU_S = 0.12;
+/** A step longer than this in one frame is a placement, not motion. */
+const SPEED_JUMP_M = 30;
+
+/**
+ * The speed the courier is drawn moving at (m/s, smoothed): it drives the wheels, pedals and steps, so they stop when
+ * dead reckoning has reached its cap or the glide has settled.
+ */
+export class SpeedMeter {
+  private has = false;
+  private lx = 0;
+  private lz = 0;
+  private v = 0;
+
+  reset(): void {
+    this.has = false;
+    this.v = 0;
+  }
+
+  update(p: Vec2, dtS: number): number {
+    const had = this.has;
+    const d = Math.hypot(p.x - this.lx, p.z - this.lz);
+    this.has = true;
+    this.lx = p.x;
+    this.lz = p.z;
+    if (!had || dtS <= 0 || d > SPEED_JUMP_M) return this.v;
+    this.v += (d / dtS - this.v) * (1 - Math.exp(-dtS / SPEED_TAU_S));
+    if (this.v < 0.02) this.v = 0;
+    return this.v;
   }
 }

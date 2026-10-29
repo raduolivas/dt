@@ -7,5 +7,9 @@
   background: #fff; box-shadow: 0 4px 14px rgba(32, 52, 110, 0.2); will-change: transform;
 }
 .scene-label.store { color: var(--blue, #2f5bea); }
-.scene-label.home { color: var(--coral, #ff6b4a); }
+.scene-label.home { color: var(--coral, #ff6b4a); transition: color 0.4s, background-color 0.4s; }
+/* delivered reads as success: the home label turns green with the pin */
+.scene-label.home.delivered { color: #fff; background: var(--green, #37c887); }
+.scene-label.home.delivered::before { content: '✓ '; }
+@media (prefers-reduced-motion: reduce) { .scene-label.home { transition: none; } }
 .scene-label.courier { background: var(--blue, #2f5bea); color: #fff; }

@@ -11,6 +11,7 @@ export { activeLeg, activeLegKind, toLatLng, viewKind, type ViewKind } from './s
 export interface RendererOptions {
   mode?: '3d' | '2d';
   theme?: 'light' | 'dark';
+  /** No camera moves, bounces, sway, shimmer or pulses (the courier still moves). Unset: `prefers-reduced-motion`. */
   reducedMotion?: boolean;
   /** Absent = the procedural grid city (dev only). */
   tiles?: TileSourceSpec;
@@ -32,6 +33,8 @@ export interface Renderer {
   setFollow(on: boolean): void;
   /** Screen space the page's cards cover (CSS px); framing keeps store, home and courier clear of it. */
   setInsets(i: Insets): void;
+  /** Overrides `prefers-reduced-motion` from now on. */
+  setReducedMotion(on: boolean): void;
   destroy(): void;
 }
 
@@ -41,10 +44,24 @@ export interface Renderer {
  */
 export function createRenderer(container: HTMLElement, o: RendererOptions = {}): Renderer {
   const clock = o.clock ?? (() => performance.now());
-  const scene = new CityScene(container, { accent: o.accent, tiles: o.tiles, theme: o.theme, onTiles: o.onTiles, clock: o.clock });
+  // Reduced motion: the option when given, else the system setting (followed while it changes).
+  const media = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+  let reducedSet = o.reducedMotion !== undefined;
+  const scene = new CityScene(container, {
+    accent: o.accent,
+    tiles: o.tiles,
+    theme: o.theme,
+    onTiles: o.onTiles,
+    clock: o.clock,
+    reducedMotion: o.reducedMotion ?? media?.matches ?? false,
+  });
+  const onMedia = (e: MediaQueryListEvent) => {
+    if (!reducedSet) scene.setReducedMotion(e.matches);
+  };
+  media?.addEventListener?.('change', onMedia);
   const gate = new SnapshotGate();
-  // `mode` and `reducedMotion` are accepted now and used by the 2D and motion tasks.
-  const state = { mode: o.mode ?? '3d', theme: o.theme ?? 'light', reducedMotion: o.reducedMotion ?? false };
+  // `mode` is accepted now and used by the 2D task.
+  const state = { mode: o.mode ?? '3d', theme: o.theme ?? 'light' };
   void state;
 
   let raf = 0;
@@ -86,8 +103,13 @@ export function createRenderer(container: HTMLElement, o: RendererOptions = {}):
     overview: () => scene.overview(),
     setFollow: (on) => scene.setFollow(on),
     setInsets: (i) => scene.setInsets(i),
+    setReducedMotion(on) {
+      reducedSet = true;
+      scene.setReducedMotion(on);
+    },
     destroy() {
       alive = false;
+      media?.removeEventListener?.('change', onMedia);
       cancelAnimationFrame(raf);
       scene.dispose();
     },

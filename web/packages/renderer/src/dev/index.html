@@ -36,7 +36,7 @@
         </div>
         <div class="courier-row">
           <span class="avatar">L</span>
-          <div><b>Lucas M.</b><small>Bicycle courier · 4.9 ★</small></div>
+          <div><b>Lucas M.</b><small><span id="courier-kind">Bicycle courier</span> · 4.9 ★</small></div>
         </div>
         <ol class="timeline" id="timeline">
           <li>Order confirmed</li>
@@ -102,6 +102,21 @@
             <button data-v="direct">Direct</button>
           </div>
           <small>Direct hides the courier until pickup. Changing the model restarts the order.</small>
+        </div>
+        <div class="field">
+          <span>Vehicle</span>
+          <div class="seg" id="p-vehicle">
+            <button data-v="bicycle" class="on">Bike</button>
+            <button data-v="e_bike">E-bike</button>
+            <button data-v="scooter">Scooter</button>
+            <button data-v="car">Car</button>
+            <button data-v="on_foot">On foot</button>
+          </div>
+          <small>Sets a typical speed for the vehicle.</small>
+        </div>
+        <div class="field">
+          <span>Motion</span>
+          <button id="btn-motion" class="toggle">Reduced motion: system</button>
         </div>
         <div class="field">
           <span>Courier signal</span>

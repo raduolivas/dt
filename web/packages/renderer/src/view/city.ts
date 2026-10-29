@@ -115,6 +115,7 @@ export class TileCity {
         new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.8, metalness: 0.02 }),
         this.cut,
         'trees',
+        this.shimmer,
       ),
     };
   }
@@ -204,7 +205,7 @@ export class TileCity {
     for (const tile of this.tiles.values()) void this.build(tile);
   }
 
-  /** Per-frame: the water shimmer (`time` in seconds; pass a constant to stop it). */
+  /** Per-frame: the water shimmer and the trees' sway (`time` in seconds; pass a constant to stop both). */
   frame(time: number): void {
     this.shimmer.value = time;
   }
@@ -638,14 +639,34 @@ interface Cutaway {
 }
 
 /** Screen-door (dithered) see-through around the line from the focus to the camera; no sorting, no extra pass. */
-function withCutaway(m: THREE.MeshStandardMaterial, cut: Cutaway, name: string): THREE.MeshStandardMaterial {
+function withCutaway(
+  m: THREE.MeshStandardMaterial,
+  cut: Cutaway,
+  name: string,
+  sway?: { value: number },
+): THREE.MeshStandardMaterial {
   m.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, cut);
+    if (sway) shader.uniforms.uDtSway = sway;
+    // Trees sway in the wind: the crown moves, the trunk's foot stays put; each tree on its own phase.
+    const swayGlsl = sway
+      ? `{
+          float dtPh = 0.0;
+          #ifdef USE_INSTANCING
+            dtPh = instanceMatrix[3].x * 0.071 + instanceMatrix[3].z * 0.053;
+          #endif
+          float dtBend = max(0.0, transformed.y - 2.5) / 7.0;
+          dtBend *= dtBend;
+          transformed.x += sin(uDtSway * 1.7 + dtPh) * 0.32 * dtBend;
+          transformed.z += sin(uDtSway * 1.3 + dtPh * 1.7) * 0.2 * dtBend;
+        }`
+      : '';
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vDtWorld;')
+      .replace('#include <common>', `#include <common>\nvarying vec3 vDtWorld;${sway ? '\nuniform float uDtSway;' : ''}`)
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
+        ${swayGlsl}
         {
           vec4 dtW = vec4(transformed, 1.0);
           #ifdef USE_INSTANCING

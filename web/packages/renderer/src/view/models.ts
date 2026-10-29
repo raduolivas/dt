@@ -517,25 +517,91 @@ export function makePin(color: number): THREE.Group {
 }
 
 // ---------------------------------------------------------------------------
-// Bicycle courier. Faces +Z. Units are "bike meters"; the scene scales it up.
+// Courier parts: geometries shared by every courier model (and every vehicle), materials from the `mat` cache.
 // ---------------------------------------------------------------------------
-const WHEEL_R = 0.55;
-export const BIKE_WHEEL_RADIUS = WHEEL_R;
+const geoCache = new Map<string, THREE.BufferGeometry>();
 
-function makeBar(radius: number, color: number): THREE.Mesh {
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, 1, 8), mat(color));
+/** One geometry per key for all courier models. Shared: never dispose it from a model. */
+export function sharedGeo<T extends THREE.BufferGeometry>(key: string, make: () => T): T {
+  let g = geoCache.get(key) as T | undefined;
+  if (!g) {
+    g = make();
+    geoCache.set(key, g);
+  }
+  return g;
+}
+
+/** A mesh of a shared geometry in a cached material, casting a shadow. */
+export function part(geo: THREE.BufferGeometry, color: number, extra: Partial<THREE.MeshStandardMaterialParameters> = {}) {
+  const m = new THREE.Mesh(geo, mat(color, extra));
   m.castShadow = true;
   return m;
 }
 
-const UP = new THREE.Vector3(0, 1, 0);
+export function partBox(w: number, h: number, d: number, color: number, extra: Partial<THREE.MeshStandardMaterialParameters> = {}) {
+  return part(sharedGeo(`box:${w}:${h}:${d}`, () => new THREE.BoxGeometry(w, h, d)), color, extra);
+}
+
+export function partSphere(r: number, color: number, extra: Partial<THREE.MeshStandardMaterialParameters> = {}) {
+  return part(sharedGeo(`sphere:${r}`, () => new THREE.SphereGeometry(r, 14, 12)), color, extra);
+}
+
+/** A unit-length bar along +Y; `setBar` stretches it between two points. */
+export function partBar(radius: number, color: number, top = radius) {
+  return part(sharedGeo(`bar:${radius}:${top}`, () => new THREE.CylinderGeometry(top, radius, 1, 8)), color);
+}
+
+export const UP = new THREE.Vector3(0, 1, 0);
 const _dir = new THREE.Vector3();
-function setBar(bar: THREE.Mesh, a: THREE.Vector3, b: THREE.Vector3) {
+/** Puts a unit bar (or box) of length 1 along +Y between `a` and `b`. */
+export function setBar(bar: THREE.Object3D, a: THREE.Vector3, b: THREE.Vector3) {
   _dir.subVectors(b, a);
   const len = _dir.length();
   bar.position.copy(a).addScaledVector(_dir, 0.5);
   bar.scale.set(1, Math.max(len, 0.001), 1);
   bar.quaternion.setFromUnitVectors(UP, _dir.normalize());
+}
+
+/** The blue courier box with white logos (the parcel), base at y = 0. */
+export function makeCourierBox(size = 0.78): THREE.Group {
+  const g = new THREE.Group();
+  const cube = partBox(size, size * 0.95, size, COLORS.blue);
+  cube.position.y = (size * 0.95) / 2;
+  const lid = partBox(size + 0.04, 0.08, size + 0.04, COLORS.blueDark);
+  lid.position.y = size;
+  const logoGeo = sharedGeo(`circle:${size}`, () => new THREE.CircleGeometry(size * 0.28, 20));
+  g.add(cube, lid);
+  for (const side of [-1, 1]) {
+    const logo = new THREE.Mesh(logoGeo, mat(0xffffff, { roughness: 0.6 }));
+    logo.position.set(side * (size / 2 + 0.01), size * 0.5, 0);
+    logo.rotation.y = (side * Math.PI) / 2;
+    g.add(logo);
+  }
+  return g;
+}
+
+/** The rider's head: skin, with a helmet (half sphere) in `helmet` color. */
+export function makeHead(helmet: number = COLORS.blue): THREE.Group {
+  const g = new THREE.Group();
+  const head = partSphere(0.19, COLORS.skin);
+  const cap = part(
+    sharedGeo('helmet', () => new THREE.SphereGeometry(0.225, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2)),
+    helmet,
+  );
+  cap.position.set(0, 0.04, -0.02);
+  g.add(head, cap);
+  return g;
+}
+
+// ---------------------------------------------------------------------------
+// Bicycle courier (the prototype's) and the e-bike. Faces +Z. Units are "bike meters"; the scene scales it up.
+// ---------------------------------------------------------------------------
+const WHEEL_R = 0.55;
+export const BIKE_WHEEL_RADIUS = WHEEL_R;
+
+export interface BicycleStyle {
+  /** The e-bike: chunkier frame, battery on the down tube, fat tyres, front light, hub motor, calmer pedalling. */
+  electric?: boolean;
 }
 
 export class Bicycle {
@@ -545,27 +611,31 @@ export class Bicycle {
   private legs: { thigh: THREE.Mesh; shin: THREE.Mesh; side: number }[] = [];
   private bottomBracket = new THREE.Vector3(0, 0.5, -0.05);
   private pedals: THREE.Mesh[] = [];
+  /** Pedal turns per wheel turn (the e-bike's motor helps: calmer legs). */
+  private readonly cadence: number;
+  private readonly hip = new THREE.Vector3();
+  private readonly knee = new THREE.Vector3();
+  private readonly foot = new THREE.Vector3();
   readonly parcelBox: THREE.Group;
 
-  constructor() {
-    const frameColor = COLORS.blue;
+  constructor(style: BicycleStyle = {}) {
+    const electric = style.electric ?? false;
+    this.cadence = electric ? 0.35 : 0.55;
+    const frameColor = electric ? COLORS.blueDark : COLORS.blue;
+    const tube = electric ? 0.065 : 0.045;
+    const tyre = electric ? 0.11 : 0.075;
     const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
     // wheels
+    const tireGeo = sharedGeo(`tire:${tyre}`, () => new THREE.TorusGeometry(WHEEL_R, tyre, 8, 28));
+    const spokeGeo = sharedGeo('spoke', () => new THREE.BoxGeometry(0.03, WHEEL_R * 2, 0.03));
     for (const z of [-0.85, 0.85]) {
       const w = new THREE.Group();
-      const tire = new THREE.Mesh(
-        new THREE.TorusGeometry(WHEEL_R, 0.075, 8, 28),
-        mat(0x20263a),
-      );
+      const tire = part(tireGeo, 0x20263a);
       tire.rotation.y = Math.PI / 2;
-      tire.castShadow = true;
       w.add(tire);
       for (let k = 0; k < 3; k++) {
-        const spoke = new THREE.Mesh(
-          new THREE.BoxGeometry(0.03, WHEEL_R * 2, 0.03),
-          mat(0xd7deef),
-        );
+        const spoke = new THREE.Mesh(spokeGeo, mat(0xd7deef));
         spoke.rotation.x = (k * Math.PI) / 3;
         w.add(spoke);
       }
@@ -589,66 +659,58 @@ export class Bicycle {
       [head, front],
     ];
     for (const [a, b] of frame) {
-      const bar = makeBar(0.045, frameColor);
+      const bar = partBar(tube, frameColor);
       setBar(bar, a, b);
       this.group.add(bar);
     }
-    const stem = makeBar(0.04, 0x20263a);
+    const stem = partBar(0.04, 0x20263a);
     setBar(stem, head, v(0, 1.4, 0.55));
-    const handle = box(0.62, 0.06, 0.06, 0x20263a);
+    const handle = partBox(0.62, 0.06, 0.06, 0x20263a);
     handle.position.set(0, 1.42, 0.55);
     this.group.add(stem, handle);
-    const saddle = box(0.2, 0.07, 0.34, 0x20263a);
+    const saddle = partBox(0.2, 0.07, 0.34, 0x20263a);
     saddle.position.set(0, 1.24, -0.42);
     this.group.add(saddle);
+
+    if (electric) {
+      // battery along the down tube, with a green charge stripe; front light; hub motor on the rear wheel
+      const battery = partBox(0.17, 1, 0.17, COLORS.white);
+      setBar(battery, v(0, 0.66, 0.08), v(0, 0.98, 0.4));
+      const charge = partBox(0.19, 1, 0.05, COLORS.green, { emissive: COLORS.green, emissiveIntensity: 0.4 });
+      setBar(charge, v(0, 0.74, 0.16), v(0, 0.9, 0.32));
+      const light = partBox(0.14, 0.1, 0.1, 0xfff6d8, { emissive: 0xfff1b8, emissiveIntensity: 0.9 });
+      light.position.set(0, 1.18, 0.7);
+      const motor = part(sharedGeo('hub', () => new THREE.CylinderGeometry(0.17, 0.17, 0.16, 14)), 0x3a4260);
+      motor.rotation.z = Math.PI / 2;
+      motor.position.copy(rear);
+      this.group.add(battery, charge, light, motor);
+    }
 
     // rider
     const hip = v(0, 1.28, -0.4);
     const shoulder = v(0, 1.85, 0.0);
-    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.17, 1, 10), mat(COLORS.shirt));
-    torso.castShadow = true;
+    const torso = part(sharedGeo('torso', () => new THREE.CylinderGeometry(0.2, 0.17, 1, 10)), COLORS.shirt);
     setBar(torso, hip, shoulder);
     this.group.add(torso);
-    const head3 = new THREE.Mesh(new THREE.SphereGeometry(0.19, 14, 12), mat(COLORS.skin));
+    const head3 = makeHead();
     head3.position.set(0, 2.12, 0.1);
-    head3.castShadow = true;
-    const helmet = new THREE.Mesh(
-      new THREE.SphereGeometry(0.225, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2),
-      mat(COLORS.blue),
-    );
-    helmet.position.set(0, 2.16, 0.08);
-    helmet.castShadow = true;
-    this.group.add(head3, helmet);
+    this.group.add(head3);
     for (const side of [-1, 1]) {
-      const arm = makeBar(0.06, COLORS.shirt);
+      const arm = partBar(0.06, COLORS.shirt);
       setBar(arm, v(side * 0.2, 1.78, 0.02), v(side * 0.28, 1.42, 0.55));
       this.group.add(arm);
       // legs
-      const thigh = makeBar(0.09, COLORS.pants);
-      const shin = makeBar(0.075, COLORS.pants);
+      const thigh = partBar(0.09, COLORS.pants);
+      const shin = partBar(0.075, COLORS.pants);
       this.group.add(thigh, shin);
       this.legs.push({ thigh, shin, side });
-      const pedal = box(0.12, 0.05, 0.22, 0x20263a);
+      const pedal = partBox(0.12, 0.05, 0.22, 0x20263a);
       this.group.add(pedal);
       this.pedals.push(pedal);
     }
 
     // delivery box on the back
-    this.parcelBox = new THREE.Group();
-    const cube = box(0.78, 0.74, 0.78, COLORS.blue);
-    cube.position.set(0, 0.37, 0);
-    const lid = box(0.82, 0.08, 0.82, COLORS.blueDark);
-    lid.position.set(0, 0.78, 0);
-    const logo = new THREE.Mesh(
-      new THREE.CircleGeometry(0.22, 20),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 }),
-    );
-    logo.position.set(0.4, 0.4, 0);
-    logo.rotation.y = Math.PI / 2;
-    const logo2 = logo.clone();
-    logo2.position.x = -0.4;
-    logo2.rotation.y = -Math.PI / 2;
-    this.parcelBox.add(cube, lid, logo, logo2);
+    this.parcelBox = makeCourierBox();
     this.parcelBox.position.set(0, 1.28, -1.02);
     this.group.add(this.parcelBox);
 
@@ -657,9 +719,10 @@ export class Bicycle {
 
   /** speedMs in world meters per second, scale = visual scale applied to the group. */
   animate(dt: number, speedMs: number, scale: number) {
+    if (speedMs <= 0) return;
     const omega = speedMs / (WHEEL_R * scale);
     for (const w of this.wheels) w.rotation.x += omega * dt;
-    this.pedalAngle += omega * 0.55 * dt;
+    this.pedalAngle += omega * this.cadence * dt;
     this.updateLegs();
   }
 
@@ -689,12 +752,12 @@ export class Bicycle {
       const kneeY = hipY + ny * a + nz * h;
       const kneeZ = hipZ + nz * a - ny * h;
       const x = leg.side * 0.13;
-      const hip = new THREE.Vector3(x, hipY, hipZ);
-      const knee = new THREE.Vector3(x, kneeY, kneeZ);
-      const foot = new THREE.Vector3(x, footY, footZ);
-      setBar(leg.thigh, hip, knee);
-      setBar(leg.shin, knee, foot);
-      this.pedals[leg.side > 0 ? 1 : 0].position.set(leg.side * 0.16, footY - 0.03, footZ);
+      this.hip.set(x, hipY, hipZ);
+      this.knee.set(x, kneeY, kneeZ);
+      this.foot.set(x, footY, footZ);
+      setBar(leg.thigh, this.hip, this.knee);
+      setBar(leg.shin, this.knee, this.foot);
+      this.pedals[leg.side > 0 ? 1 : 0]!.position.set(leg.side * 0.16, footY - 0.03, footZ);
     }
   }
 }

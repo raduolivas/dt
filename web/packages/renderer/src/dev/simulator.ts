@@ -1,4 +1,4 @@
-import type { CourierSignal, DeliveryStatus, TrackingSnapshot } from '@dt/contract';
+import type { CourierSignal, DeliveryStatus, TrackingSnapshot, Vehicle } from '@dt/contract';
 
 type DeliveryModel = TrackingSnapshot['delivery_model'];
 import { Path } from '../engine/path';
@@ -28,6 +28,7 @@ export interface SimParams {
   destination: DestinationPreset;
   /** `direct` hides the courier until `picked_up`; `end_to_end` shows it from `courier_assigned`. */
   model: DeliveryModel;
+  vehicle: Vehicle;
 }
 
 export const DEFAULT_PARAMS: SimParams = {
@@ -36,6 +37,7 @@ export const DEFAULT_PARAMS: SimParams = {
   timeScale: 4,
   destination: 'medium',
   model: 'end_to_end',
+  vehicle: 'bicycle',
 };
 
 const V1_STATUS: Record<OrderStatus, DeliveryStatus> = {
@@ -335,7 +337,7 @@ export class DeliverySimulator {
     const courier: TrackingSnapshot['courier'] = this.courierVisible()
       ? {
           display_name: 'Lucas M.',
-          vehicle: 'bicycle',
+          vehicle: this.params.vehicle,
           photo_url: null,
           position: lost && this.frozen ? this.frozen : projection.toLatLng(this.courierLocal()),
           heading_deg: bearingDeg,

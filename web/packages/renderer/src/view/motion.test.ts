@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LatLng, TrackingSnapshot } from '@dt/contract';
-import { CourierMotion, deadReckon, snapToLeg, type MotionState } from './motion';
+import { CourierMotion, SpeedMeter, deadReckon, snapToLeg, type MotionState } from './motion';
 
 // local metres: x east, z south. 1 degree of "lat" is 1 m in this toy projection.
 const toLocal = (p: LatLng) => ({ x: p.lng, z: p.lat });
@@ -62,6 +62,7 @@ function snap(over: {
   noCourier?: boolean;
   speed?: number | null;
   delivery?: string;
+  heading?: number;
 }): TrackingSnapshot {
   const signal = over.signal ?? 'live';
   return {
@@ -75,7 +76,7 @@ function snap(over: {
           vehicle: 'bicycle',
           photo_url: null,
           position: signal === 'pending' ? null : { lat: over.z ?? 0, lng: over.x ?? 10 },
-          heading_deg: 90,
+          heading_deg: over.heading ?? 90,
           speed_kmh: over.speed ?? 0,
           position_at: null,
           signal,
@@ -177,5 +178,32 @@ describe('CourierMotion', () => {
     const raw = new CourierMotion(toLocal);
     raw.onSnapshot(snap({ x: 50, z: 40, speed: 36 }), 0);
     expect(raw.frame(16, 5000).p).toEqual({ x: 50, z: 40 });
+  });
+
+  it('turns to the first heading at once again after a reset', () => {
+    const m = new CourierMotion(toLocal);
+    m.onSnapshot(snap({ version: 1, x: 10, heading: 90 }), 0);
+    const first = m.frame(16, 0).yaw;
+    m.reset();
+    m.onSnapshot(snap({ version: 2, x: 10, heading: 270 }), 10);
+    const yaw = m.frame(0, 10).yaw;
+    expect(Math.abs(yaw - first)).toBeCloseTo(Math.PI); // placed facing the new heading, not turning towards it
+  });
+});
+
+describe('SpeedMeter', () => {
+  it('reads the speed the courier is drawn moving at, and zero once it stands still', () => {
+    const s = new SpeedMeter();
+    let v = 0;
+    for (let i = 1; i <= 60; i++) v = s.update({ x: i * 0.16, z: 0 }, 0.016); // 10 m/s
+    expect(v).toBeCloseTo(10, 0);
+    for (let i = 0; i < 60; i++) v = s.update({ x: 9.6, z: 0 }, 0.016); // stalled (dead reckoning capped)
+    expect(v).toBeLessThan(0.05);
+  });
+  it('ignores the jump when the courier is placed somewhere new', () => {
+    const s = new SpeedMeter();
+    s.update({ x: 0, z: 0 }, 0.016);
+    s.reset();
+    expect(s.update({ x: 500, z: 0 }, 0.016)).toBe(0);
   });
 });

@@ -3,7 +3,6 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { TrackingSnapshot } from '@dt/contract';
 import { GeoProjection, type Vec2 } from '../engine/geo';
 import { BLOCK, GRID, ROAD_W, placeNear, projection as gridProjection, type Place } from './grid';
-import { viewKind } from '../snapshot';
 import { GROUND_Y, ROAD_TOP_Y } from '../tiles/build/common';
 import type { TileTheme } from '../tiles/build/decode';
 import { openTileSource, type TileSource, type TileSourceSpec } from '../tiles/source';
@@ -13,7 +12,6 @@ import { TileCity, placeSites } from './city';
 import { CITY_DAY, CITY_NIGHT } from './colors';
 import { CAM_OFFSET, FOLLOW_ZOOM, MAX_ZOOM, MIN_ZOOM, applyFrame, computeFrame, followZoom, setFrustum, type Insets } from './framing';
 import {
-  Bicycle,
   COLORS,
   HOUSE_HEIGHT,
   STORE_HEIGHT,
@@ -24,16 +22,18 @@ import {
   makeTree,
   mat,
   mulberry32,
+  UP,
   type HouseModel,
 } from './models';
-import { CourierMotion } from './motion';
+import { CourierMotion, SpeedMeter } from './motion';
+import { Effects } from './effects';
+import { COURIER_SCALE, makeCourierModel, type CourierModel } from './vehicles';
 import { fillRibbon, ribbonWidth, routeLegs, trimLegFrom } from './ribbon';
 
 /** The dropoff is private to the customer's own view; the label is never the address from the snapshot. */
 const HOME_LABEL = 'Your address';
 const ROUTE_ACTIVE = 0x2f6bff;
 
-const BIKE_SCALE = 6; // visual scale of the courier (toy city)
 const GRID_ROAD_TOP = 0.4;
 const GRID_BLOCK_TOP = 0.8;
 /** Tile city: the courier rides on the road surface, ribbons float above every flat layer. */
@@ -52,6 +52,14 @@ const XRAY_ROUTE_LAYER = 2;
 
 /** A stale or lost courier is drawn faded and still; the customer sees no alarm. */
 const FADED_OPACITY = 0.4;
+const XRAY_OPACITY = 0.45;
+/** The camera's intro: it turns in by this angle (rad) from further out, at this rate (1/s). */
+const INTRO_YAW = 0.55;
+const INTRO_ZOOM = 0.6;
+const INTRO_RATE = 1.8;
+const GLIDE_RATE = 5;
+/** Statuses during which the store is preparing the order (steam over the store). */
+const PREPARING: ReadonlySet<string> = new Set(['confirmed', 'courier_assigned', 'at_pickup']);
 /** The active ribbon is rebuilt when the courier has moved this far (m) since it was last cut. */
 const TRIM_STEP_M = 0.5;
 
@@ -75,6 +83,8 @@ export interface CitySceneOptions {
   onTiles?: (s: { bytes: number; ms: number; tiles: number }) => void;
   /** Milliseconds; the courier's glide and dead reckoning run on it. */
   clock?: () => number;
+  /** No camera moves, bounces, sway, shimmer or pulses (the courier still moves). */
+  reducedMotion?: boolean;
 }
 
 export class CityScene {
@@ -88,8 +98,10 @@ export class CityScene {
   private readonly ground: THREE.Mesh;
 
   private cityGroup = new THREE.Group();
-  private readonly bicycle = new Bicycle();
+  private courier: CourierModel = makeCourierModel('bicycle');
   private readonly courierRoot = new THREE.Group();
+  private readonly effects: Effects;
+  private readonly speed = new SpeedMeter();
   private readonly halo: THREE.Mesh;
   private readonly routeActive: THREE.Mesh;
   private readonly routeNext: THREE.Mesh;
@@ -133,16 +145,20 @@ export class CityScene {
   private readonly curPos = new THREE.Vector3();
   private readonly targetPos = new THREE.Vector3();
   private curYaw = 0;
-  private speedMs = 0;
+  /** The speed the courier is drawn moving at (m/s): it drives wheels, pedals and steps. */
+  private shownSpeed = 0;
   private readonly motion: CourierMotion;
   private readonly clock: () => number;
   private courierMats: THREE.Material[] = [];
   private faded = false;
+  /** The camera's intro is still to come (once per page, when the city is first on screen). */
+  private introPending = true;
+  /** Yaw (rad) the intro still has to turn; 0 when done. */
+  private introLeft = 0;
   private trimAt: Vec2 | null = null;
   /** The first view frames store, home and courier; follow starts when asked for. */
   private follow = false;
-  private goal: { target: THREE.Vector3; zoom: number } | null = null;
-  private parcelDrop = 0; // seconds since delivery, -1 when idle
+  private goal: { target: THREE.Vector3; zoom: number; rate: number } | null = null;
   private time = 0;
   private width = 1;
   private height = 1;
@@ -153,7 +169,7 @@ export class CityScene {
   private readonly xray = new THREE.MeshBasicMaterial({
     color: COLORS.blue,
     transparent: true,
-    opacity: 0.45,
+    opacity: XRAY_OPACITY,
     depthWrite: false,
     depthFunc: THREE.GreaterDepth,
   });
@@ -219,12 +235,19 @@ export class CityScene {
     this.controls.maxZoom = MAX_ZOOM;
     this.controls.rotateSpeed = 0.6;
     this.controls.enablePan = !this.follow; // the prototype: no pan while following
-    this.controls.addEventListener('start', () => (this.goal = null));
+    this.controls.addEventListener('start', () => {
+      // the user takes the camera: glides and the intro stop where they are
+      this.goal = null;
+      this.introLeft = 0;
+    });
+    this.effects = new Effects(this.scene);
+    const reduced =
+      opts.reducedMotion ?? (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    this.effects.setReducedMotion(reduced);
 
     // courier
     this.courierRoot.visible = false; // until a snapshot says there is a courier
-    this.courierRoot.scale.setScalar(BIKE_SCALE);
-    this.courierRoot.add(this.bicycle.group);
+    this.courierRoot.scale.setScalar(COURIER_SCALE);
     this.halo = new THREE.Mesh(
       new THREE.RingGeometry(1.5, 1.95, 40),
       new THREE.MeshBasicMaterial({ color: COLORS.blue, transparent: true, opacity: 0.55, side: THREE.DoubleSide }),
@@ -233,13 +256,8 @@ export class CityScene {
     this.halo.position.y = 0.1;
     this.courierRoot.add(this.halo);
     this.scene.add(this.courierRoot);
-    // the courier's materials are shared with the other bicycles: own copies, so this one can fade
-    this.courierRoot.traverse((o) => {
-      if (o instanceof THREE.Mesh && !Array.isArray(o.material) && o !== this.halo) {
-        o.material = o.material.clone();
-        this.courierMats.push(o.material);
-      }
-    });
+    this.halo.layers.enable(XRAY_LAYER);
+    this.mountCourier(this.courier);
     this.motion = new CourierMotion((p) => this.projection.toLocal(p));
     this.clock = opts.clock ?? (() => performance.now());
 
@@ -263,8 +281,6 @@ export class CityScene {
     // the ribbons' buffers are refilled in place (the bounding sphere would go stale)
     this.routeNext.frustumCulled = false;
     this.routeActive.frustumCulled = false;
-    // Game trick: where a building hides the courier or its route, a soft silhouette shows through.
-    this.courierRoot.traverse((o) => o.layers.enable(XRAY_LAYER));
     // The route reads in every view: where buildings hide it, a see-through copy of each ribbon shows through.
     const xrayRibbon = (src: THREE.Mesh, opacity: number) => {
       const m = (src.material as THREE.MeshBasicMaterial).clone();
@@ -313,7 +329,10 @@ export class CityScene {
   setFollow(on: boolean): void {
     this.follow = on;
     this.controls.enablePan = !on;
-    if (on) this.goal = { target: this.curPos.clone(), zoom: followZoom(this.camera, this.width) };
+    if (on) {
+      this.goal = { target: this.curPos.clone(), zoom: followZoom(this.camera, this.width), rate: GLIDE_RATE };
+      if (!this.effects.isEnabled('reframeGlide')) this.finishCameraMove();
+    }
   }
 
   get isFollowing(): boolean {
@@ -325,6 +344,16 @@ export class CityScene {
     this.follow = false;
     this.controls.enablePan = true;
     this.frameAll(false);
+  }
+
+  /** No camera moves, bounces, sway, shimmer or pulses; reframing snaps. The courier still moves. */
+  setReducedMotion(on: boolean): void {
+    this.effects.setReducedMotion(on);
+    if (on && (this.goal || this.introLeft > 0)) this.finishCameraMove();
+  }
+
+  get reducedMotion(): boolean {
+    return this.effects.reducedMotion;
   }
 
   /** Screen space the page's cards cover (CSS px): framing keeps store, home and courier out from under them. */
@@ -365,6 +394,8 @@ export class CityScene {
 
     // The server decides who is visible: no courier (or no position yet) means nothing is drawn.
     const wasShown = this.courierRoot.visible;
+    const v = s.courier?.vehicle;
+    if (v && v !== this.courier.vehicle) this.mountCourier(makeCourierModel(v));
     this.motion.onSnapshot(s, this.clock());
     const pos = this.motion.fix;
     this.courierRoot.visible = pos !== null;
@@ -377,29 +408,40 @@ export class CityScene {
       : (this.store?.stop ?? this.projection.toLocal(s.pickup.location));
     const at = pos ?? rest;
     this.targetPos.set(at.x, 0, at.z);
-    const c = s.courier;
-    this.speedMs = pos !== null && c?.signal === 'live' ? (c.speed_kmh ?? 0) / 3.6 : 0;
 
+    const changed = prev !== null && !newDelivery && prev.status !== s.status;
     if (!this.hasPos) {
       this.curPos.copy(this.targetPos);
+      this.speed.reset();
       this.frameAll(true);
       this.hasPos = true;
       if (this.follow) this.snapCameraTo(this.curPos);
+      if (!this.tileSpec) this.startIntro(); // the grid city is there at once; the tile city starts it when loaded
     } else if (pos === null) {
       // the courier left the scene: the resting point (store or home) takes over
       this.curPos.copy(this.targetPos);
+      this.speed.reset();
+      if (changed && !this.follow) this.frameAll(false, s.status === 'delivered');
     } else if (!wasShown) {
       // the courier appears (preparing -> live): start at its fix and show it with the store and home
       this.curPos.copy(this.targetPos);
+      this.speed.reset();
       if (!this.follow) this.frameAll(false);
+    } else if (changed && !this.follow) {
+      this.frameAll(false); // a new state: store, courier and home in view again
     }
 
-    // parcel on the bike / at the door
-    this.bicycle.parcelBox.visible = s.status !== 'delivered';
-    if (s.status === 'delivered' && prev?.status !== 'delivered') this.parcelDrop = 0;
-    if (s.status !== 'delivered') {
-      this.parcelDrop = -1;
-      if (this.house) this.house.parcel.visible = false;
+    // moments: the courier arrives at the store, the parcel is at the door
+    if (changed && s.status === 'at_pickup') {
+      this.effects.bounce('store');
+      if (pos !== null) this.effects.bounce('courier');
+    }
+    this.courier.parcel.visible = s.status !== 'delivered';
+    if (s.status === 'delivered') {
+      if (this.house) this.house.parcel.visible = true;
+      if (changed) this.celebrate();
+    } else if (this.house) {
+      this.house.parcel.visible = false;
     }
     this.applyHomePin();
     this.updateRoutes(s);
@@ -408,6 +450,8 @@ export class CityScene {
   frame(dt: number): void {
     dt = Math.min(dt, 0.1);
     this.time += dt;
+    const fx = this.effects;
+    fx.frame(dt);
 
     // courier smoothing (also makes sparse real-world GPS fixes look fluid)
     const m = this.motion.frame(dt * 1000, this.clock());
@@ -418,49 +462,63 @@ export class CityScene {
     } else {
       this.curPos.lerp(this.targetPos, 1 - Math.exp(-14 * dt)); // the resting point, for the camera to follow
     }
-    const bob = Math.sin(this.time * 14) * 0.02 * Math.min(1, this.speedMs / 3);
-    this.courierRoot.position.set(this.curPos.x, this.roadTop + bob, this.curPos.z);
+    // Wheels, pedals and steps follow the courier as drawn: still when dead reckoning has stopped or the glide settled.
+    this.shownSpeed = m.visible && !m.faded ? this.speed.update(m.p, dt) : 0;
+    this.courierRoot.position.set(this.curPos.x, this.roadTop + fx.hop(), this.curPos.z);
     this.courierRoot.rotation.y = this.curYaw;
-    this.bicycle.animate(dt, this.speedMs, BIKE_SCALE);
-    const pulse = this.faded ? 1 : 1 + Math.sin(this.time * 4) * 0.12;
-    this.halo.scale.setScalar(pulse);
-    (this.halo.material as THREE.MeshBasicMaterial).opacity = this.faded ? 0 : 0.4 + Math.sin(this.time * 4) * 0.15;
+    if (this.courierRoot.visible) this.courier.animate(this.shownSpeed, dt);
+    this.halo.scale.setScalar(fx.pulse('courier'));
+    (this.halo.material as THREE.MeshBasicMaterial).opacity = fx.haloOpacity();
 
     // pins + rings
-    const bobY = Math.sin(this.time * 2.4) * 1.2;
-    if (this.storePin && this.store) this.storePin.position.y = this.store.top + 8 + bobY;
-    if (this.homePin && this.home) this.homePin.position.y = this.home.top + 8 + bobY;
+    if (this.storePin && this.store) {
+      this.storePin.position.y = this.store.top + 8 + fx.bob('store');
+      const q = fx.squash('store');
+      this.storePin.scale.set(q.xz, q.y, q.xz);
+    }
+    if (this.homePin && this.home) {
+      this.homePin.position.y = this.home.top + 8 + fx.bob('home');
+      const q = fx.squash('home');
+      const k = fx.pulse('home');
+      this.homePin.scale.set(q.xz * k, q.y * k, q.xz * k);
+    }
     this.rings.forEach((r, i) => {
-      const t = (this.time * 0.9 + i * 0.5) % 1;
-      r.scale.setScalar(1 + t * 0.9);
-      (r.material as THREE.MeshBasicMaterial).opacity = 0.65 * (1 - t);
+      const t = fx.ringPhase(i);
+      r.scale.setScalar(t < 0 ? 1.25 : 1 + t * 0.9);
+      (r.material as THREE.MeshBasicMaterial).opacity = t < 0 ? 0.5 : 0.65 * (1 - t);
     });
 
-    this.animatePreparing();
-
-    // parcel drop animation at the door
-    if (this.house && this.parcelDrop >= 0) {
-      this.parcelDrop += dt;
-      const t = Math.min(this.parcelDrop / 0.7, 1);
-      const y = t < 1 ? 10 * (1 - t) * (1 - t) + Math.abs(Math.sin(t * Math.PI * 2.5)) * (1 - t) * 1.6 : 0;
-      this.house.parcel.visible = true;
-      this.house.parcel.position.y = 0.8 + y;
+    // the store prepares the order: steam over its roof (beside the pin, on the camera's left)
+    if (this.store && this.snap && PREPARING.has(this.snap.status)) {
+      fx.setPreparing(this.tmp.set(this.store.center.x - 7, this.store.top, this.store.center.z + 7));
+    } else {
+      fx.setPreparing(null);
     }
 
+    // the parcel drops onto the doorstep
+    if (this.house) this.house.parcel.position.y = 0.8 + fx.parcelLift();
+
     // camera
+    if (this.introLeft > 0) {
+      const step = this.introLeft < 0.002 ? this.introLeft : this.introLeft * (1 - Math.exp(-INTRO_RATE * dt));
+      this.orbitBy(step);
+      this.introLeft -= step;
+    }
     if (this.goal) {
-      const kk = 1 - Math.exp(-5 * dt);
+      if (this.follow) this.goal.target.copy(this.curPos); // following: the goal moves with the courier
+      const kk = 1 - Math.exp(-this.goal.rate * dt);
       const delta = this.tmp.copy(this.goal.target).sub(this.controls.target).multiplyScalar(kk);
       this.controls.target.add(delta);
       this.camera.position.add(delta);
       this.camera.zoom += (this.goal.zoom - this.camera.zoom) * kk;
       this.camera.updateProjectionMatrix();
-      if (!this.follow && delta.length() < 0.05 && Math.abs(this.goal.zoom - this.camera.zoom) < 0.01) {
+      if (delta.length() < 0.05 && Math.abs(this.goal.zoom - this.camera.zoom) < 0.01) {
         this.goal = null;
       }
     }
     if (this.follow) {
-      const delta = this.tmp.copy(this.curPos).sub(this.controls.target).multiplyScalar(1 - Math.exp(-6 * dt));
+      const k = fx.isEnabled('reframeGlide') ? 1 - Math.exp(-6 * dt) : 1;
+      const delta = this.tmp.copy(this.curPos).sub(this.controls.target).multiplyScalar(k);
       this.controls.target.add(delta);
       this.camera.position.add(delta);
     }
@@ -478,7 +536,7 @@ export class CityScene {
     this.sun.target.position.copy(tgt);
 
     if (this.tileCity) {
-      this.tileCity.frame(this.time);
+      this.tileCity.frame(fx.swayTime); // water shimmer and tree sway (still under reduced motion)
       const toCamera = this.tmp.copy(this.camera.position).sub(this.controls.target);
       this.tileCity.setCutaway(this.courierRoot.visible ? this.courierRoot.position : null, toCamera);
       this.lazyClock += dt;
@@ -531,6 +589,7 @@ export class CityScene {
     this.scene.traverse((o) => {
       if (o instanceof THREE.Mesh) o.geometry.dispose();
     });
+    this.effects.dispose();
     this.xray.dispose();
     this.xrayRibbonMats.forEach((m) => m.dispose());
     this.courierMats.forEach((m) => m.dispose());
@@ -550,14 +609,19 @@ export class CityScene {
     this.camera.position.add(delta);
   }
 
-  /** Frames store, home and the courier (when shown) with a margin; `snap` jumps there, else glides. */
-  private frameAll(snap: boolean) {
+  /**
+   * Frames store, home and the courier (when shown) with a margin, or only the home (`homeOnly`, on delivered).
+   * `snap` jumps there, else glides (under reduced motion it always snaps).
+   */
+  private frameAll(snap: boolean, homeOnly = false) {
     const s = this.snap;
     if (!s) return;
-    const pts = [this.store?.center ?? this.projection.toLocal(s.pickup.location), this.home?.center ?? this.projection.toLocal(s.dropoff.location)];
-    if (this.courierRoot.visible) pts.push({ x: this.targetPos.x, z: this.targetPos.z });
-    // Built for the current orbit direction, so it still frames after the user rotated the view.
-    const back = this.camera.position.clone().sub(this.controls.target);
+    const home = this.home?.center ?? this.projection.toLocal(s.dropoff.location);
+    const pts = homeOnly ? [home] : [this.store?.center ?? this.projection.toLocal(s.pickup.location), home];
+    if (!homeOnly && this.courierRoot.visible) pts.push({ x: this.targetPos.x, z: this.targetPos.z });
+    // Built for the orbit direction the camera has (or will have once the intro has turned), so it still frames after
+    // the user rotated the view.
+    const back = this.camera.position.clone().sub(this.controls.target).applyAxisAngle(UP, this.introLeft);
     const f = computeFrame(
       this.camera,
       pts.map((p) => new THREE.Vector3(p.x, 0, p.z)),
@@ -568,12 +632,15 @@ export class CityScene {
       applyFrame(this.camera, f); // the tested framing path
       this.controls.target.copy(f.target);
       this.goal = null;
+      this.introLeft = 0;
     } else {
       // Glide: same frame, reached by moving target and camera together along the current orbit direction.
-      this.camera.position.copy(f.back).multiplyScalar(f.distance).add(this.controls.target);
+      const now = this.tmp.copy(this.camera.position).sub(this.controls.target).normalize();
+      this.camera.position.copy(now).multiplyScalar(f.distance).add(this.controls.target);
       this.camera.far = f.far;
       this.camera.updateProjectionMatrix();
-      this.goal = { target: f.target, zoom: f.zoom };
+      this.goal = { target: f.target, zoom: f.zoom, rate: this.introLeft > 0 ? INTRO_RATE : GLIDE_RATE };
+      if (!this.effects.isEnabled('reframeGlide')) this.finishCameraMove();
     }
   }
 
@@ -623,20 +690,87 @@ export class CityScene {
   private setFaded(on: boolean) {
     if (on === this.faded) return;
     this.faded = on;
+    this.applyFade();
+  }
+
+  private applyFade() {
+    const on = this.faded;
     for (const m of this.courierMats) {
       m.transparent = on;
       m.opacity = on ? FADED_OPACITY : 1;
       m.needsUpdate = true;
     }
+    // the see-through silhouette fades with it, and the halo goes (also from the x-ray pass)
+    this.xray.opacity = on ? XRAY_OPACITY * FADED_OPACITY : XRAY_OPACITY;
+    this.halo.visible = !on;
   }
 
   /**
-   * PLACEHOLDER until the preparing animation (Task 8): the store pin pulses gently while no courier is drawn.
+   * Puts a courier model in the scene. Its materials are shared with every other model of the kind: it gets its own
+   * copies (one per shared material) so it can fade; the geometries stay shared.
    */
-  private animatePreparing() {
-    if (!this.storePin) return;
-    const on = this.snap !== null && viewKind(this.snap) === 'preparing';
-    this.storePin.scale.setScalar(on ? 1 + Math.sin(this.time * 3) * 0.08 : 1);
+  private mountCourier(model: CourierModel) {
+    if (this.courier !== model) this.courierRoot.remove(this.courier.root);
+    this.courierMats.forEach((m) => m.dispose());
+    this.courierMats = [];
+    const copies = new Map<THREE.Material, THREE.Material>();
+    model.root.traverse((o) => {
+      // Game trick: where a building hides the courier, a soft silhouette shows through.
+      o.layers.enable(XRAY_LAYER);
+      if (o instanceof THREE.Mesh && !Array.isArray(o.material)) {
+        let c = copies.get(o.material);
+        if (!c) {
+          c = (o.material as THREE.Material).clone();
+          copies.set(o.material, c);
+          this.courierMats.push(c);
+        }
+        o.material = c;
+      }
+    });
+    this.courier = model;
+    this.courierRoot.add(model.root);
+    if (this.snap) model.parcel.visible = this.snap.status !== 'delivered';
+    this.applyFade();
+  }
+
+  /** The camera's gentle intro: from a little further out and turned aside, it settles on the frame. */
+  private startIntro() {
+    if (!this.introPending) return;
+    this.introPending = false;
+    if (!this.effects.isEnabled('cameraIntro') || this.follow) return;
+    const zoom = this.camera.zoom;
+    this.orbitBy(-INTRO_YAW);
+    this.introLeft = INTRO_YAW;
+    this.camera.zoom = zoom * INTRO_ZOOM;
+    this.camera.updateProjectionMatrix();
+    this.goal = { target: this.controls.target.clone(), zoom, rate: INTRO_RATE };
+  }
+
+  /** Turns the camera about the vertical axis through what it looks at. */
+  private orbitBy(rad: number) {
+    const t = this.controls.target;
+    const off = this.tmp.copy(this.camera.position).sub(t).applyAxisAngle(UP, rad);
+    this.camera.position.copy(t).add(off);
+    this.camera.lookAt(t);
+  }
+
+  /** Ends a glide or the intro at once (reduced motion: the camera snaps). */
+  private finishCameraMove() {
+    if (this.introLeft > 0) this.orbitBy(this.introLeft);
+    this.introLeft = 0;
+    const g = this.goal;
+    if (!g) return;
+    this.snapCameraTo(g.target);
+    this.camera.zoom = g.zoom;
+    this.camera.updateProjectionMatrix();
+    this.goal = null;
+  }
+
+  /** Delivered: the pin bounces, the parcel drops at the door and a little confetti goes up over the home. */
+  private celebrate() {
+    this.effects.bounce('home');
+    this.effects.dropParcel();
+    if (this.home) this.effects.celebrate(new THREE.Vector3(this.home.center.x, this.home.top + 20, this.home.center.z));
   }
 
   private setLabelsVisible(on: boolean) {
@@ -653,11 +787,16 @@ export class CityScene {
     this.storePinMat?.emissive.setHex(this.accent ?? COLORS.blue);
   }
 
+  /** Delivered reads as success: the home pin, its curb ring and its label turn green (the prototype's pin color). */
   private applyHomePin() {
-    if (!this.homePinMat || !this.snap) return;
-    const c = this.snap.status === 'delivered' ? COLORS.green : COLORS.coral;
+    if (!this.snap) return;
+    const done = this.snap.status === 'delivered';
+    this.labels.home.classList.toggle('delivered', done);
+    if (!this.homePinMat) return;
+    const c = done ? COLORS.green : COLORS.coral;
     this.homePinMat.color.setHex(c);
     this.homePinMat.emissive.setHex(c);
+    (this.rings[1]?.material as THREE.MeshBasicMaterial | undefined)?.color.setHex(c);
   }
 
   private updateLabels() {
@@ -756,7 +895,14 @@ export class CityScene {
       this.house = sites.home.house;
       this.billboard = (sites.store.object.userData.billboard as THREE.Object3D | undefined) ?? null;
       this.addMarkers();
-      if (!this.follow) this.frameAll(false);
+      if (this.snap?.status === 'delivered') this.house.parcel.visible = true;
+      if (this.introPending && !this.follow) {
+        // the city is on screen for the first time: frame it and play the intro
+        this.frameAll(true);
+        this.startIntro();
+      } else if (!this.follow) {
+        this.frameAll(false, this.snap?.status === 'delivered');
+      }
       if (this.snap) this.updateRoutes(this.snap);
     }).catch((err) => console.warn('tiles:', err));
   }

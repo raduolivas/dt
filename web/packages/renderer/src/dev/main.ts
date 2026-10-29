@@ -1,4 +1,5 @@
 import './style.css';
+import type { Vehicle } from '@dt/contract';
 import { createRenderer, type TileSourceSpec } from '../index';
 import { DeliverySimulator } from './simulator';
 import { GRID_WORLD, amsterdamWorld, type DestinationPreset } from './world';
@@ -21,8 +22,11 @@ $('attribution').hidden = !tiles;
 
 const sim = new DeliverySimulator(tiles ? amsterdamWorld() : GRID_WORLD);
 const sceneEl = $('scene');
+// ?reduced=1|0 forces reduced motion on or off (default: the system setting).
+const reducedParam = query.get('reduced');
 const scene = createRenderer(sceneEl, {
   tiles,
+  reducedMotion: reducedParam === null ? undefined : reducedParam !== '0',
   onTiles: (t) => {
     // Read by the screenshot / budget scripts.
     document.body.dataset.tiles = JSON.stringify({ ...t, ms: Math.round(t.ms) });
@@ -144,6 +148,42 @@ modeButtons.forEach((b) =>
     refresh();
   }),
 );
+// --- vehicle (?vehicle=bicycle|e_bike|scooter|car|on_foot) -------------------
+const VEHICLES: Record<Vehicle, { label: string; kmh: number }> = {
+  bicycle: { label: 'Bicycle courier', kmh: 18 },
+  e_bike: { label: 'E-bike courier', kmh: 24 },
+  scooter: { label: 'Scooter courier', kmh: 32 },
+  car: { label: 'Car courier', kmh: 30 },
+  on_foot: { label: 'Courier on foot', kmh: 5 },
+};
+const speedInput = $<HTMLInputElement>('p-speed');
+const vehicleButtons = Array.from($('p-vehicle').querySelectorAll<HTMLButtonElement>('button'));
+const setVehicle = (v: Vehicle) => {
+  vehicleButtons.forEach((o) => o.classList.toggle('on', o.dataset.v === v));
+  $('courier-kind').textContent = VEHICLES[v].label;
+  speedInput.value = String(VEHICLES[v].kmh);
+  speedInput.dispatchEvent(new Event('input'));
+  sim.setParams({ vehicle: v });
+  refresh();
+};
+vehicleButtons.forEach((b) => b.addEventListener('click', () => setVehicle(b.dataset.v as Vehicle)));
+const vehicleParam = query.get('vehicle') as Vehicle | null;
+if (vehicleParam && vehicleParam in VEHICLES) setVehicle(vehicleParam);
+
+// --- reduced motion: system -> on -> off ------------------------------------
+const motionBtn = $('btn-motion');
+let motion: 'system' | 'on' | 'off' = reducedParam === null ? 'system' : reducedParam !== '0' ? 'on' : 'off';
+const showMotion = () => {
+  motionBtn.textContent = `Reduced motion: ${motion}`;
+  motionBtn.classList.toggle('on', motion === 'on');
+};
+showMotion();
+motionBtn.addEventListener('click', () => {
+  motion = motion === 'system' ? 'on' : motion === 'on' ? 'off' : 'on';
+  scene.setReducedMotion(motion === 'on');
+  showMotion();
+});
+
 const signalBtn = $('btn-signal');
 signalBtn.addEventListener('click', () => {
   const live = sim.courierSignal === 'live';
