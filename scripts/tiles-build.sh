@@ -29,6 +29,7 @@ case "$target" in
     pbf="noord-holland-latest.osm.pbf"
     out="$root/web/packages/renderer/fixtures/amsterdam-z14.pmtiles"
     bounds_args=(--bounds="$FIXTURE_BBOX")
+    bounds_label="$FIXTURE_BBOX"
     # Only z14 and only the layers the renderer draws, to stay under the size limit.
     minzoom=14
     layers="transportation,building,water,park,landuse,landcover"
@@ -38,6 +39,7 @@ case "$target" in
     pbf="netherlands-latest.osm.pbf"
     out="$root/build/tiles/nl.pmtiles"
     bounds_args=()
+    bounds_label="planet extract"
     minzoom=0
     layers="transportation,building,water,park,landuse,landcover,waterway,boundary,place"
     ;;
@@ -82,7 +84,7 @@ cat > "${out%.pmtiles}.json" <<JSON
   "osmSource": "$pbf_url",
   "osmDataDate": "$osm_date",
   "planetilerImage": "$PLANETILER_IMAGE",
-  "bounds": "${bounds_args[*]:-planet extract}",
+  "bounds": "$bounds_label",
   "minzoom": $minzoom,
   "maxzoom": 14,
   "layers": "$layers",

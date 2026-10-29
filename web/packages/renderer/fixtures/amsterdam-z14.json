@@ -2,7 +2,7 @@
   "osmSource": "https://download.geofabrik.de/europe/netherlands/noord-holland-latest.osm.pbf",
   "osmDataDate": "2026-10-25",
   "planetilerImage": "ghcr.io/onthegomap/planetiler@sha256:23dae8c006cfd4612cc1c439ca1ca6d02561eeffb3d6a78115ee020a62fca884",
-  "bounds": "--bounds=4.86,52.35,4.93,52.38",
+  "bounds": "4.86,52.35,4.93,52.38",
   "minzoom": 14,
   "maxzoom": 14,
   "layers": "transportation,building,water,park,landuse,landcover",
