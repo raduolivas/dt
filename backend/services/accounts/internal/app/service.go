@@ -73,6 +73,8 @@ func (s *Service) SetTenantSettings(ctx context.Context, actor domain.Actor, ten
 		return domain.TenantSettings{}, err
 	}
 	in.AllowedModels = slices.Clone(in.AllowedModels)
+	in.EmbedOrigins = slices.Clone(in.EmbedOrigins)
+	in.Branding = normalizeBranding(in.Branding)
 	in.UpdatedAt = s.Clock.Now()
 	if err := in.Validate(); err != nil {
 		return domain.TenantSettings{}, err
@@ -94,7 +96,27 @@ func publishSettings(ctx context.Context, tx Tx, tenantID string, st domain.Tena
 		TenantId: tenantID, AllowedModels: st.AllowedModels, DefaultModel: st.DefaultModel,
 		PickupConfirmation: st.PickupConfirmation, UpdatedAt: timestamppb.New(st.UpdatedAt),
 		DefaultPrepMinutes: prepToProto(st.DefaultPrepMinutes),
+		EmbedOrigins:       st.EmbedOrigins, Branding: brandingToProto(st.Branding),
 	})
+}
+
+// normalizeBranding drops an all-empty branding (DT defaults) and derives the
+// logo content type from the logo bytes.
+func normalizeBranding(b *domain.Branding) *domain.Branding {
+	if b == nil || b.IsZero() {
+		return nil
+	}
+	n := b.Normalized()
+	n.Logo = slices.Clone(n.Logo)
+	return &n
+}
+
+func brandingToProto(b *domain.Branding) *eventsv1.Branding {
+	if b == nil {
+		return nil
+	}
+	return &eventsv1.Branding{DisplayName: b.DisplayName, PrimaryColor: b.PrimaryColor, Theme: b.Theme,
+		Logo: b.Logo, LogoContentType: b.LogoContentType}
 }
 
 func prepToProto(p *int) *int32 {

@@ -154,3 +154,38 @@ func TestSetTenantSettingsEmitsPrep(t *testing.T) {
 		t.Fatalf("0 minutes: %v", err)
 	}
 }
+
+func TestSetTenantSettingsEmbedAndBranding(t *testing.T) {
+	e := setup(t, false)
+	logo := append([]byte("\x89PNG\r\n\x1a\n"), 0)
+	s := domain.DefaultTenantSettings()
+	s.EmbedOrigins = []string{"https://shop.example.com"}
+	s.Branding = &domain.Branding{DisplayName: "Acme", Theme: "dark", Logo: logo, LogoContentType: "image/webp"}
+	// The magic bytes alone are not a decodable PNG.
+	if _, err := e.svc.SetTenantSettings(context.Background(), owner, e.ten.ID, s); !errors.Is(err, domain.ErrInvalidArgument) {
+		t.Fatalf("truncated logo: %v", err)
+	}
+	s.Branding = &domain.Branding{DisplayName: "Acme", Theme: "dark", LogoContentType: "image/webp"}
+	got, err := e.svc.SetTenantSettings(context.Background(), owner, e.ten.ID, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Branding.LogoContentType != "" || got.Branding.DisplayName != "Acme" {
+		t.Fatalf("branding = %+v", got.Branding)
+	}
+	evs := settingsEvents(e)
+	p := evs[len(evs)-1].Payload.(*eventsv1.TenantSettingsSet)
+	if !reflect.DeepEqual(p.GetEmbedOrigins(), s.EmbedOrigins) || p.GetBranding().GetDisplayName() != "Acme" || p.GetBranding().GetTheme() != "dark" {
+		t.Fatalf("payload = %v", p)
+	}
+	// An all-empty branding is DT defaults.
+	s.Branding = &domain.Branding{}
+	got, err = e.svc.SetTenantSettings(context.Background(), owner, e.ten.ID, s)
+	if err != nil || got.Branding != nil {
+		t.Fatalf("empty branding = %+v, %v", got.Branding, err)
+	}
+	evs = settingsEvents(e)
+	if evs[len(evs)-1].Payload.(*eventsv1.TenantSettingsSet).Branding != nil {
+		t.Fatal("event carries empty branding")
+	}
+}

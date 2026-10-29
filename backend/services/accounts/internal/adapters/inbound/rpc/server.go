@@ -23,8 +23,9 @@ import (
 	"github.com/raduolivas/dt/backend/services/accounts/internal/domain"
 )
 
-// readMaxBytes bounds each request message; requests here are tiny.
-const readMaxBytes = 64 << 10
+// readMaxBytes bounds each request message: small, except SetTenantSettings,
+// which may carry a logo of up to domain.MaxLogoBytes.
+const readMaxBytes = 256 << 10
 
 // Mount registers the AccountsService on mux, behind the token check.
 func Mount(mux *http.ServeMux, svc *app.Service, token string, log *slog.Logger) error {
@@ -117,6 +118,7 @@ func (s *Server) SetTenantSettings(ctx context.Context, req *accountsv1.SetTenan
 	st, err := s.svc.SetTenantSettings(ctx, toActor(req.GetActor()), req.GetTenantId(), domain.TenantSettings{
 		AllowedModels: req.GetAllowedModels(), DefaultModel: req.GetDefaultModel(),
 		PickupConfirmation: req.GetPickupConfirmation(), DefaultPrepMinutes: prepFromProto(req.DefaultPrepMinutes),
+		EmbedOrigins: req.GetEmbedOrigins(), Branding: brandingFromProto(req.GetBranding()),
 	})
 	if err != nil {
 		return nil, ToConnect(ctx, s.log, err)
@@ -175,7 +177,24 @@ func toProtoSettings(s domain.TenantSettings) *accountsv1.TenantSettings {
 		AllowedModels: s.AllowedModels, DefaultModel: s.DefaultModel,
 		PickupConfirmation: s.PickupConfirmation, UpdatedAt: timestamppb.New(s.UpdatedAt),
 		DefaultPrepMinutes: prepToProto(s.DefaultPrepMinutes),
+		EmbedOrigins:       s.EmbedOrigins, Branding: brandingToProto(s.Branding),
 	}
+}
+
+func brandingFromProto(b *accountsv1.Branding) *domain.Branding {
+	if b == nil {
+		return nil
+	}
+	return &domain.Branding{DisplayName: b.GetDisplayName(), PrimaryColor: b.GetPrimaryColor(), Theme: b.GetTheme(),
+		Logo: b.GetLogo(), LogoContentType: b.GetLogoContentType()}
+}
+
+func brandingToProto(b *domain.Branding) *accountsv1.Branding {
+	if b == nil {
+		return nil
+	}
+	return &accountsv1.Branding{DisplayName: b.DisplayName, PrimaryColor: b.PrimaryColor, Theme: b.Theme,
+		Logo: b.Logo, LogoContentType: b.LogoContentType}
 }
 
 func prepFromProto(p *int32) *int {

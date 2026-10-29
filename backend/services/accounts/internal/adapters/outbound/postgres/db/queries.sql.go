@@ -44,7 +44,8 @@ func (q *Queries) GetKeyForUpdate(ctx context.Context, arg GetKeyForUpdateParams
 }
 
 const getTenant = `-- name: GetTenant :one
-SELECT id, name, live_enabled, created_at, allowed_models, default_model, pickup_confirmation, settings_updated_at, default_prep_minutes
+SELECT id, name, live_enabled, created_at, allowed_models, default_model, pickup_confirmation, settings_updated_at, default_prep_minutes,
+  embed_origins, branding, logo, logo_content_type
 FROM tenants WHERE id = $1
 `
 
@@ -61,6 +62,10 @@ func (q *Queries) GetTenant(ctx context.Context, id string) (Tenant, error) {
 		&i.PickupConfirmation,
 		&i.SettingsUpdatedAt,
 		&i.DefaultPrepMinutes,
+		&i.EmbedOrigins,
+		&i.Branding,
+		&i.Logo,
+		&i.LogoContentType,
 	)
 	return i, err
 }
@@ -107,8 +112,9 @@ func (q *Queries) InsertKey(ctx context.Context, arg InsertKeyParams) error {
 }
 
 const insertTenant = `-- name: InsertTenant :exec
-INSERT INTO tenants (id, name, live_enabled, created_at, allowed_models, default_model, pickup_confirmation, settings_updated_at, default_prep_minutes)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO tenants (id, name, live_enabled, created_at, allowed_models, default_model, pickup_confirmation, settings_updated_at, default_prep_minutes,
+  embed_origins, branding, logo, logo_content_type)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 `
 
 type InsertTenantParams struct {
@@ -121,6 +127,10 @@ type InsertTenantParams struct {
 	PickupConfirmation string
 	SettingsUpdatedAt  time.Time
 	DefaultPrepMinutes pgtype.Int4
+	EmbedOrigins       []string
+	Branding           []byte
+	Logo               []byte
+	LogoContentType    pgtype.Text
 }
 
 func (q *Queries) InsertTenant(ctx context.Context, arg InsertTenantParams) error {
@@ -134,6 +144,10 @@ func (q *Queries) InsertTenant(ctx context.Context, arg InsertTenantParams) erro
 		arg.PickupConfirmation,
 		arg.SettingsUpdatedAt,
 		arg.DefaultPrepMinutes,
+		arg.EmbedOrigins,
+		arg.Branding,
+		arg.Logo,
+		arg.LogoContentType,
 	)
 	return err
 }
@@ -199,7 +213,8 @@ func (q *Queries) SetLiveEnabled(ctx context.Context, arg SetLiveEnabledParams) 
 }
 
 const setTenantSettings = `-- name: SetTenantSettings :execrows
-UPDATE tenants SET allowed_models = $2, default_model = $3, pickup_confirmation = $4, settings_updated_at = $5, default_prep_minutes = $6
+UPDATE tenants SET allowed_models = $2, default_model = $3, pickup_confirmation = $4, settings_updated_at = $5, default_prep_minutes = $6,
+  embed_origins = $7, branding = $8, logo = $9, logo_content_type = $10
 WHERE id = $1
 `
 
@@ -210,6 +225,10 @@ type SetTenantSettingsParams struct {
 	PickupConfirmation string
 	SettingsUpdatedAt  time.Time
 	DefaultPrepMinutes pgtype.Int4
+	EmbedOrigins       []string
+	Branding           []byte
+	Logo               []byte
+	LogoContentType    pgtype.Text
 }
 
 func (q *Queries) SetTenantSettings(ctx context.Context, arg SetTenantSettingsParams) (int64, error) {
@@ -220,6 +239,10 @@ func (q *Queries) SetTenantSettings(ctx context.Context, arg SetTenantSettingsPa
 		arg.PickupConfirmation,
 		arg.SettingsUpdatedAt,
 		arg.DefaultPrepMinutes,
+		arg.EmbedOrigins,
+		arg.Branding,
+		arg.Logo,
+		arg.LogoContentType,
 	)
 	if err != nil {
 		return 0, err

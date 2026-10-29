@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"image"
+	"image/png"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -457,5 +461,89 @@ func TestSetTenantSettingsRPC(t *testing.T) {
 	}
 	if n != 2 {
 		t.Fatalf("settings events = %d, want 2", n)
+	}
+}
+
+func TestSetTenantSettingsEmbedAndBrandingRPC(t *testing.T) {
+	t.Parallel()
+	srv, pool := server(t)
+	c := authed(srv)
+	ctx := context.Background()
+	created, err := c.CreateTenant(ctx, &accountsv1.CreateTenantRequest{Name: "Acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tid := created.GetTenant().GetId()
+	if def := created.GetTenant().GetSettings(); len(def.GetEmbedOrigins()) != 0 || def.GetBranding() != nil {
+		t.Fatalf("default settings = %v", def)
+	}
+	var logo bytes.Buffer
+	// ~90 KB of noise: bigger than the old 64 KB request limit, under the 100 KB logo cap.
+	noise := image.NewGray(image.Rect(0, 0, 300, 300))
+	rng := rand.New(rand.NewPCG(1, 2)) //nolint:gosec // deterministic test fixture
+	for i := range noise.Pix {
+		noise.Pix[i] = byte(rng.Uint32())
+	}
+	if err := png.Encode(&logo, noise); err != nil {
+		t.Fatal(err)
+	}
+	req := &accountsv1.SetTenantSettingsRequest{
+		Actor: owner, TenantId: tid, AllowedModels: []string{"direct"}, DefaultModel: "direct", PickupConfirmation: "any",
+		EmbedOrigins: []string{"https://shop.example.com", "https://*.example.org:8443"},
+		// The caller's content type is ignored: it is derived from the bytes.
+		Branding: &accountsv1.Branding{DisplayName: "Acme Foods", PrimaryColor: "#0A84FF", Theme: "dark",
+			Logo: logo.Bytes(), LogoContentType: "image/webp"},
+	}
+
+	badReq := &accountsv1.SetTenantSettingsRequest{Actor: owner, TenantId: tid, AllowedModels: []string{"direct"},
+		DefaultModel: "direct", PickupConfirmation: "any", EmbedOrigins: []string{"http://x.com"}}
+	if _, err := c.SetTenantSettings(ctx, badReq); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("bad origin: %v", err)
+	}
+
+	res, err := c.SetTenantSettings(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(what string, s *accountsv1.TenantSettings, b *accountsv1.Branding, origins []string) {
+		t.Helper()
+		if !reflect.DeepEqual(origins, s.GetEmbedOrigins()) {
+			t.Fatalf("%s: embed_origins = %v", what, s.GetEmbedOrigins())
+		}
+		if got := s.GetBranding(); got.GetDisplayName() != b.GetDisplayName() || got.GetPrimaryColor() != b.GetPrimaryColor() ||
+			got.GetTheme() != b.GetTheme() || !bytes.Equal(got.GetLogo(), b.GetLogo()) || got.GetLogoContentType() != b.GetLogoContentType() {
+			t.Fatalf("%s: branding = %v", what, got.GetDisplayName())
+		}
+	}
+	want := &accountsv1.Branding{DisplayName: "Acme Foods", PrimaryColor: "#0A84FF", Theme: "dark",
+		Logo: logo.Bytes(), LogoContentType: "image/png"}
+	check("response", res.GetSettings(), want, req.GetEmbedOrigins())
+	// The newest tenant.settings_set event carries both fields, logo included.
+	var raw []byte
+	if err := pool.QueryRow(ctx, `SELECT payload FROM outbox WHERE subject = 'accounts.tenant.settings_set' ORDER BY created_at DESC LIMIT 1`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var env eventsv1.Envelope
+	if err := proto.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	var ev eventsv1.TenantSettingsSet
+	if err := env.GetPayload().UnmarshalTo(&ev); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ev.GetEmbedOrigins(), req.GetEmbedOrigins()) || ev.GetBranding().GetDisplayName() != "Acme Foods" ||
+		ev.GetBranding().GetPrimaryColor() != "#0A84FF" || ev.GetBranding().GetTheme() != "dark" ||
+		!bytes.Equal(ev.GetBranding().GetLogo(), logo.Bytes()) || ev.GetBranding().GetLogoContentType() != "image/png" {
+		t.Fatalf("event = %v", &ev)
+	}
+
+	// Omitting them replaces the settings whole; an all-empty branding is DT defaults.
+	req.EmbedOrigins, req.Branding = nil, &accountsv1.Branding{}
+	res, err = c.SetTenantSettings(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.GetSettings().GetEmbedOrigins()) != 0 || res.GetSettings().GetBranding() != nil {
+		t.Fatalf("cleared settings = %v", res.GetSettings())
 	}
 }

@@ -28,7 +28,11 @@ type TenantSettings struct {
 	PickupConfirmation string
 	// DefaultPrepMinutes is the usual preparation time; nil = none. 1..240.
 	DefaultPrepMinutes *int
-	UpdatedAt          time.Time
+	// EmbedOrigins are the https origins allowed to frame the hosted tracking page.
+	EmbedOrigins []string
+	// Branding is the hosted page's look; nil = DT defaults.
+	Branding  *Branding
+	UpdatedAt time.Time
 }
 
 // DefaultTenantSettings returns the settings every new tenant starts with.
@@ -63,6 +67,12 @@ func (s TenantSettings) Validate() error {
 	}
 	if p := s.DefaultPrepMinutes; p != nil && (*p < 1 || *p > 240) {
 		return fmt.Errorf("%w: default_prep_minutes must be 1..240", ErrInvalidArgument)
+	}
+	if err := validateEmbedOrigins(s.EmbedOrigins); err != nil {
+		return err
+	}
+	if s.Branding != nil {
+		return s.Branding.Validate()
 	}
 	return nil
 }

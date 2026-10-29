@@ -39,13 +39,16 @@ const usage = `usage:
   dtctl tenant create --name NAME
   dtctl tenant live   --tenant ID --enabled=true|false
   dtctl tenant settings --tenant ID [--models direct,end_to_end] [--default direct] [--pickup any] [--prep-minutes N|none]
+                        [--embed-origin URL]... [--brand-name N] [--brand-color #RRGGBB] [--brand-theme light|dark|auto]
+                        [--brand-logo PATH]
   dtctl key create    --tenant ID --env test|live [--name N] [--scope S]... [--allow-ip CIDR]...
   dtctl key roll      --tenant ID --key ID
   dtctl key revoke    --tenant ID --key ID
   dtctl key list      --tenant ID --env test|live
 
 note: "tenant settings" replaces the settings whole: a flag you omit returns to its default (omitting --prep-minutes
-clears the preparation time), so pass every setting you want to keep.
+clears the preparation time), so pass every setting you want to keep, including --embed-origin, --brand-name,
+--brand-color, --brand-theme and --brand-logo (omitting them clears the embed origins and the branding).
 
 env: DT_ACCOUNTS_URL (default http://127.0.0.1:8084), DT_INTERNAL_RPC_TOKEN (required),
      DT_INTERNAL_RPC_TLS_CERT, DT_INTERNAL_RPC_TLS_KEY, DT_INTERNAL_RPC_TLS_CA (mTLS; use an https URL)
@@ -97,6 +100,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 		fs.StringVar(&settings.defaultModel, "default", "direct", "default model")
 		fs.StringVar(&settings.pickup, "pickup", "any", "pickup confirmation: any, courier, store or courier_and_store")
 		fs.Var(&settings.prep, "prep-minutes", "default preparation time, 1-240 minutes, or none (default none)")
+		fs.Var(&settings.embedOrigins, "embed-origin", "https origin allowed to frame the hosted page, e.g. https://shop.example.com (repeatable; default none)")
+		fs.StringVar(&settings.brandName, "brand-name", "", "hosted page display name, up to 60 characters")
+		fs.StringVar(&settings.brandColor, "brand-color", "", "hosted page primary color, #RRGGBB")
+		fs.StringVar(&settings.brandTheme, "brand-theme", "", "hosted page theme: light, dark or auto")
+		fs.StringVar(&settings.brandLogo, "brand-logo", "", "path to a PNG or WebP logo, up to 100 KB and 512x512")
 	case "key create":
 		fs.StringVar(&tenant, "tenant", "", "tenant id")
 		fs.StringVar(&env, "env", "", "test or live")
@@ -156,7 +164,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if len(settings.models) == 0 {
 		settings.models = csv{"direct", "end_to_end"}
 	}
-	err = call(ctx, c, cmd, stdout, stderr, name, tenant, key, environment, enabled, scopes, allowIPs, settings)
+	var branding *accountsv1.Branding
+	if cmd == "tenant settings" {
+		if branding, err = settings.branding(); err != nil {
+			return err
+		}
+	}
+	err = call(ctx, c, cmd, stdout, stderr, name, tenant, key, environment, enabled, scopes, allowIPs, settings, branding)
 	if err != nil {
 		return rpcError{err: err, dtCode: rpcauth.CodeFrom(info)}
 	}
@@ -165,7 +179,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 func call(ctx context.Context, c accountsv1connect.AccountsServiceClient, cmd string, stdout, stderr io.Writer,
 	name, tenant, key string, env eventsv1.Environment, enabled bool, scopes, allowIPs list,
-	settings tenantSettings,
+	settings tenantSettings, branding *accountsv1.Branding,
 ) error {
 	switch cmd {
 	case "tenant create":
@@ -183,7 +197,7 @@ func call(ctx context.Context, c accountsv1connect.AccountsServiceClient, cmd st
 		res, err := c.SetTenantSettings(ctx, &accountsv1.SetTenantSettingsRequest{
 			Actor: actor, TenantId: tenant, AllowedModels: settings.models,
 			DefaultModel: settings.defaultModel, PickupConfirmation: settings.pickup,
-			DefaultPrepMinutes: settings.prep.v,
+			DefaultPrepMinutes: settings.prep.v, EmbedOrigins: settings.embedOrigins, Branding: branding,
 		})
 		if err != nil {
 			return err
@@ -192,6 +206,9 @@ func call(ctx context.Context, c accountsv1connect.AccountsServiceClient, cmd st
 		notef(stderr, "tenant %s settings: models=%s default=%s pickup=%s prep_minutes=%s\n", tenant,
 			strings.Join(st.GetAllowedModels(), ","), st.GetDefaultModel(), st.GetPickupConfirmation(),
 			prepString(st.DefaultPrepMinutes))
+		notef(stderr, "  embed_origins=%s brand_name=%q brand_color=%s brand_theme=%s logo=%s (%d bytes)\n",
+			strings.Join(st.GetEmbedOrigins(), ","), st.GetBranding().GetDisplayName(), st.GetBranding().GetPrimaryColor(),
+			st.GetBranding().GetTheme(), st.GetBranding().GetLogoContentType(), len(st.GetBranding().GetLogo()))
 	case "key create":
 		res, err := c.CreateApiKey(ctx, &accountsv1.CreateApiKeyRequest{
 			Actor: actor, TenantId: tenant, Environment: env, Name: name, Scopes: scopes, AllowedIps: allowIPs,
@@ -359,9 +376,29 @@ func (l *list) Set(v string) error { *l = append(*l, v); return nil }
 
 // tenantSettings are the flags of `tenant settings`.
 type tenantSettings struct {
-	models               csv
-	defaultModel, pickup string
-	prep                 prepMinutes
+	models                                       csv
+	defaultModel, pickup                         string
+	prep                                         prepMinutes
+	embedOrigins                                 list
+	brandName, brandColor, brandTheme, brandLogo string
+}
+
+// branding builds the request's Branding from the --brand-* flags; nil when
+// none is set (DT defaults). The logo's content type is derived server-side
+// from its bytes, so only the bytes are sent.
+func (t tenantSettings) branding() (*accountsv1.Branding, error) {
+	if t.brandName == "" && t.brandColor == "" && t.brandTheme == "" && t.brandLogo == "" {
+		return nil, nil
+	}
+	b := &accountsv1.Branding{DisplayName: t.brandName, PrimaryColor: t.brandColor, Theme: t.brandTheme}
+	if t.brandLogo != "" {
+		logo, err := os.ReadFile(t.brandLogo)
+		if err != nil {
+			return nil, fmt.Errorf("read --brand-logo: %w", err)
+		}
+		b.Logo = logo
+	}
+	return b, nil
 }
 
 // prepMinutes is the --prep-minutes flag: N in 1..240, or "none" (unset).

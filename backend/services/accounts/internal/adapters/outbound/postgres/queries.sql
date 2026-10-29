@@ -1,13 +1,16 @@
 -- name: InsertTenant :exec
-INSERT INTO tenants (id, name, live_enabled, created_at, allowed_models, default_model, pickup_confirmation, settings_updated_at, default_prep_minutes)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+INSERT INTO tenants (id, name, live_enabled, created_at, allowed_models, default_model, pickup_confirmation, settings_updated_at, default_prep_minutes,
+  embed_origins, branding, logo, logo_content_type)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
 
 -- name: GetTenant :one
-SELECT id, name, live_enabled, created_at, allowed_models, default_model, pickup_confirmation, settings_updated_at, default_prep_minutes
+SELECT id, name, live_enabled, created_at, allowed_models, default_model, pickup_confirmation, settings_updated_at, default_prep_minutes,
+  embed_origins, branding, logo, logo_content_type
 FROM tenants WHERE id = $1;
 
 -- name: SetTenantSettings :execrows
-UPDATE tenants SET allowed_models = $2, default_model = $3, pickup_confirmation = $4, settings_updated_at = $5, default_prep_minutes = $6
+UPDATE tenants SET allowed_models = $2, default_model = $3, pickup_confirmation = $4, settings_updated_at = $5, default_prep_minutes = $6,
+  embed_origins = $7, branding = $8, logo = $9, logo_content_type = $10
 WHERE id = $1;
 
 -- name: SetLiveEnabled :execrows

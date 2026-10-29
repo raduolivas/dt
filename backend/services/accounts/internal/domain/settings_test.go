@@ -73,3 +73,15 @@ func TestTenantSettingsPrepRange(t *testing.T) {
 		})
 	}
 }
+
+func TestSettingsValidateBranding(t *testing.T) {
+	s := DefaultTenantSettings()
+	s.Branding = &Branding{Theme: "night"}
+	if err := s.Validate(); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("err = %v", err)
+	}
+	s.Branding = &Branding{Theme: "dark"}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

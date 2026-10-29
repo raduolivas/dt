@@ -56,11 +56,17 @@ type tx struct {
 }
 
 func (t *tx) InsertTenant(ctx context.Context, ten domain.Tenant) error {
-	err := t.q.InsertTenant(ctx, db.InsertTenantParams{
+	brand, err := brandingToDB(ten.Settings.Branding)
+	if err != nil {
+		return err
+	}
+	err = t.q.InsertTenant(ctx, db.InsertTenantParams{
 		ID: ten.ID, Name: ten.Name, LiveEnabled: ten.LiveEnabled, CreatedAt: ten.CreatedAt,
 		AllowedModels: nonNil(ten.Settings.AllowedModels), DefaultModel: ten.Settings.DefaultModel,
 		PickupConfirmation: ten.Settings.PickupConfirmation, SettingsUpdatedAt: ten.Settings.UpdatedAt,
 		DefaultPrepMinutes: prepToDB(ten.Settings.DefaultPrepMinutes),
+		EmbedOrigins:       nonNil(ten.Settings.EmbedOrigins),
+		Branding:           brand.JSON, Logo: brand.Logo, LogoContentType: brand.ContentType,
 	})
 	if err != nil {
 		return fmt.Errorf("insert tenant: %w", err)
@@ -73,21 +79,32 @@ func (t *tx) GetTenant(ctx context.Context, id string) (domain.Tenant, error) {
 	if err != nil {
 		return domain.Tenant{}, notFound("get tenant", err)
 	}
+	branding, err := brandingFromDB(row.Branding, row.Logo, row.LogoContentType)
+	if err != nil {
+		return domain.Tenant{}, fmt.Errorf("tenant %s: %w", id, err)
+	}
 	return domain.Tenant{
 		ID: row.ID, Name: row.Name, LiveEnabled: row.LiveEnabled, CreatedAt: row.CreatedAt.UTC(),
 		Settings: domain.TenantSettings{
 			AllowedModels: row.AllowedModels, DefaultModel: row.DefaultModel,
 			PickupConfirmation: row.PickupConfirmation, UpdatedAt: row.SettingsUpdatedAt.UTC(),
 			DefaultPrepMinutes: prepFromDB(row.DefaultPrepMinutes),
+			EmbedOrigins:       nilIfEmpty(row.EmbedOrigins), Branding: branding,
 		},
 	}, nil
 }
 
 func (t *tx) SetTenantSettings(ctx context.Context, id string, s domain.TenantSettings) error {
+	brand, err := brandingToDB(s.Branding)
+	if err != nil {
+		return err
+	}
 	n, err := t.q.SetTenantSettings(ctx, db.SetTenantSettingsParams{
 		ID: id, AllowedModels: nonNil(s.AllowedModels), DefaultModel: s.DefaultModel,
 		PickupConfirmation: s.PickupConfirmation, SettingsUpdatedAt: s.UpdatedAt,
 		DefaultPrepMinutes: prepToDB(s.DefaultPrepMinutes),
+		EmbedOrigins:       nonNil(s.EmbedOrigins),
+		Branding:           brand.JSON, Logo: brand.Logo, LogoContentType: brand.ContentType,
 	})
 	if err != nil {
 		return fmt.Errorf("set tenant settings: %w", err)
@@ -255,4 +272,57 @@ func prepFromDB(p pgtype.Int4) *int {
 	}
 	v := int(p.Int32)
 	return &v
+}
+
+func nilIfEmpty[T any](s []T) []T {
+	if len(s) == 0 {
+		return nil
+	}
+	return s
+}
+
+// brandingJSON is the branding column; the logo has its own columns.
+type brandingJSON struct {
+	DisplayName  string `json:"display_name,omitempty"`
+	PrimaryColor string `json:"primary_color,omitempty"`
+	Theme        string `json:"theme,omitempty"`
+}
+
+type brandingCols struct {
+	JSON        []byte
+	Logo        []byte
+	ContentType pgtype.Text
+}
+
+// brandingToDB splits b into the three nullable columns; nil = all NULL.
+func brandingToDB(b *domain.Branding) (brandingCols, error) {
+	if b == nil {
+		return brandingCols{}, nil
+	}
+	j, err := json.Marshal(brandingJSON{DisplayName: b.DisplayName, PrimaryColor: b.PrimaryColor, Theme: b.Theme})
+	if err != nil {
+		return brandingCols{}, fmt.Errorf("marshal branding: %w", err)
+	}
+	c := brandingCols{JSON: j}
+	if len(b.Logo) > 0 {
+		c.Logo = b.Logo
+		c.ContentType = pgtype.Text{String: b.LogoContentType, Valid: true}
+	}
+	return c, nil
+}
+
+func brandingFromDB(j, logo []byte, contentType pgtype.Text) (*domain.Branding, error) {
+	if j == nil {
+		return nil, nil
+	}
+	var bj brandingJSON
+	if err := json.Unmarshal(j, &bj); err != nil {
+		return nil, fmt.Errorf("branding: %w", err)
+	}
+	b := &domain.Branding{DisplayName: bj.DisplayName, PrimaryColor: bj.PrimaryColor, Theme: bj.Theme}
+	if len(logo) > 0 {
+		b.Logo = logo
+		b.LogoContentType = contentType.String
+	}
+	return b, nil
 }
