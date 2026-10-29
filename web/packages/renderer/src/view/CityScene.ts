@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { TrackingSnapshot } from '@dt/contract';
 import { GeoProjection, type Vec2 } from '../engine/geo';
 import { BLOCK, GRID, ROAD_W, placeNear, projection as gridProjection, type Place } from './grid';
@@ -10,9 +9,11 @@ import { createWorkerBuilder, type TileBuilder } from '../tiles/workerPool';
 import './scene.css';
 import { TileCity, placeSites } from './city';
 import { DAY } from './colors';
-import { makeCourierGlow } from './night';
+import { isSharedTexture, makeCourierGlow } from './night';
 import { THEME_FADE_MS, applyTheme, createLights, nightMix, refreshTheme, type ThemeFade } from './theme';
-import { CAM_OFFSET, FOLLOW_ZOOM, MAX_ZOOM, MIN_ZOOM, applyFrame, computeFrame, followZoom, setFrustum, type Insets } from './framing';
+import { MIN_ZOOM, computeFrame, followZoom, setFrustum, type Insets } from './framing';
+import { CameraRig, type CameraMode } from './camera';
+import type { Quality } from './quality';
 import {
   COLORS,
   HOUSE_HEIGHT,
@@ -24,7 +25,6 @@ import {
   makeTree,
   mat,
   mulberry32,
-  UP,
   type HouseModel,
 } from './models';
 import { CourierMotion, SpeedMeter } from './motion';
@@ -55,11 +55,6 @@ const XRAY_ROUTE_LAYER = 2;
 /** A stale or lost courier is drawn faded and still; the customer sees no alarm. */
 const FADED_OPACITY = 0.4;
 const XRAY_OPACITY = 0.45;
-/** The camera's intro: it turns in by this angle (rad) from further out, at this rate (1/s). */
-const INTRO_YAW = 0.55;
-const INTRO_ZOOM = 0.6;
-const INTRO_RATE = 1.8;
-const GLIDE_RATE = 5;
 /** Statuses during which the store is preparing the order (steam over the store). */
 const PREPARING: ReadonlySet<string> = new Set(['confirmed', 'courier_assigned', 'at_pickup']);
 /** The active ribbon is rebuilt when the courier has moved this far (m) since it was last cut. */
@@ -87,13 +82,19 @@ export interface CitySceneOptions {
   clock?: () => number;
   /** No camera moves, bounces, sway, shimmer or pulses (the courier still moves). */
   reducedMotion?: boolean;
+  /** The first view: the isometric 3D view (default) or straight down (2D). */
+  mode?: CameraMode;
+  /** Makes the WebGL renderer (tests pass a mock); default a `THREE.WebGLRenderer`. */
+  webgl?: () => THREE.WebGLRenderer;
 }
 
 export class CityScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
-  private readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 4000);
-  private readonly controls: OrbitControls;
+  /** Camera, orbit controls, framing moves, the intro and the 2D/3D view. */
+  private readonly rig: CameraRig;
+  private readonly camera: THREE.OrthographicCamera;
+  private readonly controls: CameraRig['controls'];
   private readonly resizeObserver: ResizeObserver;
   private readonly sun: THREE.DirectionalLight;
   private readonly ground: THREE.Mesh;
@@ -157,14 +158,17 @@ export class CityScene {
   private readonly clock: () => number;
   private courierMats: THREE.Material[] = [];
   private faded = false;
-  /** The camera's intro is still to come (once per page, when the city is first on screen). */
-  private introPending = true;
-  /** Yaw (rad) the intro still has to turn; 0 when done. */
-  private introLeft = 0;
   private trimAt: Vec2 | null = null;
-  /** The first view frames store, home and courier; follow starts when asked for. */
-  private follow = false;
-  private goal: { target: THREE.Vector3; zoom: number; rate: number } | null = null;
+  /** The WebGL context is gone (iOS Safari drops it in the background or low on memory): nothing is drawn. */
+  private contextLost = false;
+  private readonly onContextLost = (e: Event) => {
+    e.preventDefault(); // we restore it: the browser may hand it back
+    this.contextLost = true;
+  };
+  private readonly onContextRestored = () => {
+    this.contextLost = false;
+    this.rebuildGpu();
+  };
   private time = 0;
   private width = 1;
   private height = 1;
@@ -194,13 +198,16 @@ export class CityScene {
       this.ribbonY = ROAD_TOP_Y + 0.15;
     }
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    this.renderer = opts.webgl ? opts.webgl() : new THREE.WebGLRenderer({ antialias: true, alpha: false });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.domElement.className = 'scene-canvas';
     container.appendChild(this.renderer.domElement);
+    // three.js re-creates its GL state on restore; the scene marks its buffers and textures for upload again
+    this.renderer.domElement.addEventListener('webglcontextlost', this.onContextLost);
+    this.renderer.domElement.addEventListener('webglcontextrestored', this.onContextRestored);
 
     this.scene.background = new THREE.Color(DAY.sky);
 
@@ -215,23 +222,14 @@ export class CityScene {
     this.ground.receiveShadow = true;
     if (this.tileSpec) this.scene.add(this.ground);
 
-    // camera + controls
-    this.camera.position.copy(CAM_OFFSET);
-    this.camera.zoom = FOLLOW_ZOOM;
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.08;
-    this.controls.minPolarAngle = 0.35;
-    this.controls.maxPolarAngle = 1.25;
-    this.controls.minZoom = MIN_ZOOM;
-    this.controls.maxZoom = MAX_ZOOM;
-    this.controls.rotateSpeed = 0.6;
-    this.controls.enablePan = !this.follow; // the prototype: no pan while following
-    this.controls.addEventListener('start', () => {
-      // the user takes the camera: glides and the intro stop where they are
-      this.goal = null;
-      this.introLeft = 0;
-    });
+    // camera + controls (glides and the intro are off under reduced motion: the camera snaps)
+    this.rig = new CameraRig(
+      this.renderer.domElement,
+      { glide: () => this.effects.isEnabled('reframeGlide'), intro: () => this.effects.isEnabled('cameraIntro') },
+      opts.mode,
+    );
+    this.camera = this.rig.camera;
+    this.controls = this.rig.controls;
     this.effects = new Effects(this.scene);
     const reduced =
       opts.reducedMotion ?? (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -329,29 +327,39 @@ export class CityScene {
   }
 
   setFollow(on: boolean): void {
-    this.follow = on;
-    this.controls.enablePan = !on;
-    if (on) {
-      this.goal = { target: this.curPos.clone(), zoom: followZoom(this.camera, this.width), rate: GLIDE_RATE };
-      if (!this.effects.isEnabled('reframeGlide')) this.finishCameraMove();
-    }
+    this.rig.setFollow(on, this.curPos, followZoom(this.camera, this.width));
   }
 
   get isFollowing(): boolean {
-    return this.follow;
+    return this.rig.following;
   }
 
   /** Frames store, home and courier. */
   overview(): void {
-    this.follow = false;
-    this.controls.enablePan = true;
+    this.rig.setFollow(false, this.curPos, 0);
     this.frameAll(false);
+  }
+
+  /** 3D (isometric orbit) or 2D (straight down, no rotation, zoom kept): a smooth tilt, or at once under reduced motion. */
+  setMode(m: CameraMode): void {
+    this.rig.setMode(m);
+  }
+
+  /** Pixel ratio cap and shadow map size (adaptive quality on slow phones). */
+  setQuality(q: Quality): void {
+    this.renderer.setPixelRatio(Math.min(typeof devicePixelRatio === 'number' ? devicePixelRatio : 1, q.maxPixelRatio));
+    this.renderer.setSize(this.width, this.height, false);
+    const shadow = this.sun.shadow;
+    if (shadow.mapSize.x === q.shadowMapSize) return;
+    shadow.mapSize.set(q.shadowMapSize, q.shadowMapSize);
+    shadow.map?.dispose(); // made again at the new size on the next frame
+    shadow.map = null;
   }
 
   /** No camera moves, bounces, sway, shimmer or pulses; reframing snaps. The courier still moves. */
   setReducedMotion(on: boolean): void {
     this.effects.setReducedMotion(on);
-    if (on && (this.goal || this.introLeft > 0)) this.finishCameraMove();
+    if (on) this.rig.finishMove();
     if (on) this.themeFade?.finish(); // no day/night fade under reduced motion
   }
 
@@ -420,19 +428,19 @@ export class CityScene {
       this.speed.reset();
       this.frameAll(true);
       this.hasPos = true;
-      if (this.follow) this.snapCameraTo(this.curPos);
-      if (!this.tileSpec) this.startIntro(); // the grid city is there at once; the tile city starts it when loaded
+      if (this.rig.following) this.rig.snapTo(this.curPos);
+      if (!this.tileSpec) this.rig.startIntro(); // the grid city is there at once; the tile city starts it when loaded
     } else if (pos === null) {
       // the courier left the scene: the resting point (store or home) takes over
       this.curPos.copy(this.targetPos);
       this.speed.reset();
-      if (changed && !this.follow) this.frameAll(false, s.status === 'delivered');
+      if (changed && !this.rig.following) this.frameAll(false, s.status === 'delivered');
     } else if (!wasShown) {
       // the courier appears (preparing -> live): start at its fix and show it with the store and home
       this.curPos.copy(this.targetPos);
       this.speed.reset();
-      if (!this.follow) this.frameAll(false);
-    } else if (changed && !this.follow) {
+      if (!this.rig.following) this.frameAll(false);
+    } else if (changed && !this.rig.following) {
       this.frameAll(false); // a new state: store, courier and home in view again
     }
 
@@ -505,30 +513,7 @@ export class CityScene {
     if (this.house) this.house.parcel.position.y = 0.8 + fx.parcelLift();
 
     // camera
-    if (this.introLeft > 0) {
-      const step = this.introLeft < 0.002 ? this.introLeft : this.introLeft * (1 - Math.exp(-INTRO_RATE * dt));
-      this.orbitBy(step);
-      this.introLeft -= step;
-    }
-    if (this.goal) {
-      if (this.follow) this.goal.target.copy(this.curPos); // following: the goal moves with the courier
-      const kk = 1 - Math.exp(-this.goal.rate * dt);
-      const delta = this.tmp.copy(this.goal.target).sub(this.controls.target).multiplyScalar(kk);
-      this.controls.target.add(delta);
-      this.camera.position.add(delta);
-      this.camera.zoom += (this.goal.zoom - this.camera.zoom) * kk;
-      this.camera.updateProjectionMatrix();
-      if (delta.length() < 0.05 && Math.abs(this.goal.zoom - this.camera.zoom) < 0.01) {
-        this.goal = null;
-      }
-    }
-    if (this.follow) {
-      const k = fx.isEnabled('reframeGlide') ? 1 - Math.exp(-6 * dt) : 1;
-      const delta = this.tmp.copy(this.curPos).sub(this.controls.target).multiplyScalar(k);
-      this.controls.target.add(delta);
-      this.camera.position.add(delta);
-    }
-    this.controls.update();
+    this.rig.frame(dt, this.curPos);
     this.rebuildRibbons(false);
 
     if (this.billboard) {
@@ -557,7 +542,7 @@ export class CityScene {
     }
 
     this.updateLabels();
-    this.render();
+    if (!this.contextLost) this.render();
   }
 
   private render() {
@@ -583,6 +568,51 @@ export class CityScene {
     this.scene.background = bg;
   }
 
+  /**
+   * After a lost WebGL context: three.js starts over with a fresh GL state, so every program, texture and vertex
+   * buffer the scene uses is marked for upload again (the scene graph and its data are all still here) and the shadow
+   * map is drawn again. The theme stays where it was (day, night or mid-fade); the size is set again.
+   */
+  private rebuildGpu() {
+    const seen = new Set<object>();
+    const bump = (a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute | null | undefined) => {
+      if (!a) return;
+      if (a instanceof THREE.InterleavedBufferAttribute) a.data.needsUpdate = true;
+      else a.needsUpdate = true;
+    };
+    const material = (m: THREE.Material) => {
+      if (seen.has(m)) return;
+      seen.add(m);
+      m.needsUpdate = true;
+      for (const v of Object.values(m)) {
+        if (v instanceof THREE.Texture && v.image && !seen.has(v)) {
+          seen.add(v);
+          v.needsUpdate = true;
+        }
+      }
+    };
+    this.scene.traverse((o) => {
+      const geo = (o as THREE.Mesh).geometry as THREE.BufferGeometry | undefined;
+      if (geo?.isBufferGeometry && !seen.has(geo)) {
+        seen.add(geo);
+        Object.values(geo.attributes).forEach(bump);
+        bump(geo.index);
+      }
+      if (o instanceof THREE.InstancedMesh) {
+        bump(o.instanceMatrix);
+        bump(o.instanceColor);
+      }
+      const mats = (o as THREE.Mesh).material;
+      if (mats) (Array.isArray(mats) ? mats : [mats]).forEach(material);
+    });
+    material(this.xray); // the x-ray pass's override material is in no mesh
+    this.sun.shadow.map?.dispose();
+    this.sun.shadow.map = null;
+    this.renderer.shadowMap.needsUpdate = true;
+    refreshTheme(this.scene);
+    this.resize();
+  }
+
   get drawCalls(): number {
     return this.renderer.info.render.calls;
   }
@@ -590,7 +620,9 @@ export class CityScene {
   dispose(): void {
     this.generation++;
     this.resizeObserver.disconnect();
-    this.controls.dispose();
+    this.renderer.domElement.removeEventListener('webglcontextlost', this.onContextLost);
+    this.renderer.domElement.removeEventListener('webglcontextrestored', this.onContextRestored);
+    this.rig.dispose();
     this.disposeCity();
     if (this.ownsBuilder) this.builder?.dispose?.();
     this.scene.traverse((o) => {
@@ -611,12 +643,6 @@ export class CityScene {
   // internals
   // ---------------------------------------------------------------------------
 
-  private snapCameraTo(p: THREE.Vector3) {
-    const delta = this.tmp.copy(p).sub(this.controls.target);
-    this.controls.target.add(delta);
-    this.camera.position.add(delta);
-  }
-
   /**
    * Frames store, home and the courier (when shown) with a margin, or only the home (`homeOnly`, on delivered).
    * `snap` jumps there, else glides (under reduced motion it always snaps).
@@ -627,29 +653,17 @@ export class CityScene {
     const home = this.home?.center ?? this.projection.toLocal(s.dropoff.location);
     const pts = homeOnly ? [home] : [this.store?.center ?? this.projection.toLocal(s.pickup.location), home];
     if (!homeOnly && this.courierRoot.visible) pts.push({ x: this.targetPos.x, z: this.targetPos.z });
-    // Built for the orbit direction the camera has (or will have once the intro has turned), so it still frames after
-    // the user rotated the view.
-    const back = this.camera.position.clone().sub(this.controls.target).applyAxisAngle(UP, this.introLeft);
+    // Built for the orbit direction the camera has (or will have once the intro has turned and the 2D/3D tilt has
+    // settled), so it still frames after the user rotated the view.
+    const back = this.rig.frameBack();
     const f = computeFrame(
       this.camera,
       pts.map((p) => new THREE.Vector3(p.x, 0, p.z)),
       { back, insets: this.insets, viewport: [this.width, this.height] },
     );
     this.controls.minZoom = Math.min(MIN_ZOOM, f.zoom * 0.8);
-    if (snap) {
-      applyFrame(this.camera, f); // the tested framing path
-      this.controls.target.copy(f.target);
-      this.goal = null;
-      this.introLeft = 0;
-    } else {
-      // Glide: same frame, reached by moving target and camera together along the current orbit direction.
-      const now = this.tmp.copy(this.camera.position).sub(this.controls.target).normalize();
-      this.camera.position.copy(now).multiplyScalar(f.distance).add(this.controls.target);
-      this.camera.far = f.far;
-      this.camera.updateProjectionMatrix();
-      this.goal = { target: f.target, zoom: f.zoom, rate: this.introLeft > 0 ? INTRO_RATE : GLIDE_RATE };
-      if (!this.effects.isEnabled('reframeGlide')) this.finishCameraMove();
-    }
+    if (snap) this.rig.snapToFrame(f);
+    else this.rig.glideToFrame(f);
   }
 
   private resize() {
@@ -744,39 +758,6 @@ export class CityScene {
     if (this.themeFade) refreshTheme(this.scene, model.root);
   }
 
-  /** The camera's gentle intro: from a little further out and turned aside, it settles on the frame. */
-  private startIntro() {
-    if (!this.introPending) return;
-    this.introPending = false;
-    if (!this.effects.isEnabled('cameraIntro') || this.follow) return;
-    const zoom = this.camera.zoom;
-    this.orbitBy(-INTRO_YAW);
-    this.introLeft = INTRO_YAW;
-    this.camera.zoom = zoom * INTRO_ZOOM;
-    this.camera.updateProjectionMatrix();
-    this.goal = { target: this.controls.target.clone(), zoom, rate: INTRO_RATE };
-  }
-
-  /** Turns the camera about the vertical axis through what it looks at. */
-  private orbitBy(rad: number) {
-    const t = this.controls.target;
-    const off = this.tmp.copy(this.camera.position).sub(t).applyAxisAngle(UP, rad);
-    this.camera.position.copy(t).add(off);
-    this.camera.lookAt(t);
-  }
-
-  /** Ends a glide or the intro at once (reduced motion: the camera snaps). */
-  private finishCameraMove() {
-    if (this.introLeft > 0) this.orbitBy(this.introLeft);
-    this.introLeft = 0;
-    const g = this.goal;
-    if (!g) return;
-    this.snapCameraTo(g.target);
-    this.camera.zoom = g.zoom;
-    this.camera.updateProjectionMatrix();
-    this.goal = null;
-  }
-
   /** Delivered: the pin bounces, the parcel drops at the door and a little confetti goes up over the home. */
   private celebrate() {
     this.effects.bounce('home');
@@ -833,8 +814,11 @@ export class CityScene {
         const ms = Array.isArray(o.material) ? o.material : [o.material];
         for (const m of ms) {
           if (!(m instanceof THREE.MeshStandardMaterial)) continue;
-          if (m.map && m.map.image) m.map.dispose();
-          if (m.emissiveMap && m.emissiveMap !== m.map && m.emissiveMap.image) m.emissiveMap.dispose();
+          // the shared window textures stay (every city and model uses them); clones are the model's own
+          if (m.map && m.map.image && !isSharedTexture(m.map)) m.map.dispose();
+          if (m.emissiveMap && m.emissiveMap !== m.map && m.emissiveMap.image && !isSharedTexture(m.emissiveMap)) {
+            m.emissiveMap.dispose();
+          }
         }
       }
     });
@@ -919,11 +903,11 @@ export class CityScene {
       this.billboard = (sites.store.object.userData.billboard as THREE.Object3D | undefined) ?? null;
       this.addMarkers();
       if (this.snap?.status === 'delivered') this.house.parcel.visible = true;
-      if (this.introPending && !this.follow) {
+      if (this.rig.introPending && !this.rig.following) {
         // the city is on screen for the first time: frame it and play the intro
         this.frameAll(true);
-        this.startIntro();
-      } else if (!this.follow) {
+        this.rig.startIntro();
+      } else if (!this.rig.following) {
         this.frameAll(false, this.snap?.status === 'delivered');
       }
       if (this.snap) this.updateRoutes(this.snap);

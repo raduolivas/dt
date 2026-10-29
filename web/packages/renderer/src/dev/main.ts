@@ -18,7 +18,6 @@ const tiles: TileSourceSpec | undefined = query.get('pmtiles')
     : tilesParam === 'grid'
       ? undefined
       : { kind: 'pmtiles', url: new URL('amsterdam-z14.pmtiles', location.href).href };
-$('attribution').hidden = !tiles;
 
 const sim = new DeliverySimulator(tiles ? amsterdamWorld() : GRID_WORLD);
 const sceneEl = $('scene');
@@ -26,8 +25,12 @@ const sceneEl = $('scene');
 const reducedParam = query.get('reduced');
 // ?theme=dark starts at night (light | dark | auto).
 const themeParam = query.get('theme') as 'light' | 'dark' | 'auto' | null;
+// ?mode=2d starts in the top-down view.
+let mode: '3d' | '2d' = query.get('mode') === '2d' ? '2d' : '3d';
+const fpsEl = $('fps');
 const scene = createRenderer(sceneEl, {
   tiles,
+  mode,
   theme: themeParam ?? undefined,
   reducedMotion: reducedParam === null ? undefined : reducedParam !== '0',
   onTiles: (t) => {
@@ -35,7 +38,10 @@ const scene = createRenderer(sceneEl, {
     document.body.dataset.tiles = JSON.stringify({ ...t, ms: Math.round(t.ms) });
     console.info(`[dt] first tiles: ${t.tiles} tiles, ${t.bytes} bytes, ${Math.round(t.ms)} ms`);
   },
-  onFrameStats: (f) => (document.body.dataset.frame = JSON.stringify({ fps: Math.round(f.fps), drawCalls: f.drawCalls })),
+  onFrameStats: (f) => {
+    document.body.dataset.frame = JSON.stringify({ fps: Math.round(f.fps), drawCalls: f.drawCalls });
+    fpsEl.textContent = `${Math.round(f.fps)} fps · ${f.drawCalls} calls`;
+  },
 });
 const hud = new Hud();
 const courierTag = () => sceneEl.querySelector<HTMLElement>('.scene-label.courier');
@@ -97,6 +103,14 @@ $('btn-overview').addEventListener('click', () => {
   scene.overview();
   following = false;
   followBtn.classList.remove('on');
+});
+// --- 2D / 3D --------------------------------------------------------------
+const modeBtn = $('btn-mode');
+modeBtn.classList.toggle('on', mode === '2d');
+modeBtn.addEventListener('click', () => {
+  mode = mode === '3d' ? '2d' : '3d';
+  scene.setMode(mode);
+  modeBtn.classList.toggle('on', mode === '2d');
 });
 const params = $('params');
 $('btn-params').addEventListener('click', () => (params.hidden = !params.hidden));

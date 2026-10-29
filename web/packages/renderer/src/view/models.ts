@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 import { BUILDING_TINTS, COLORS } from './colors';
-import { LIT_CELLS, litWindowTexture } from './night';
+import { LIT_CELLS, litWindowTexture, markShared } from './night';
 
 export { COLORS, DAY, NIGHT, type Palette } from './colors';
 
@@ -75,7 +75,7 @@ export function windowTexture(): THREE.Texture {
   t.colorSpace = THREE.SRGBColorSpace;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.anisotropy = 4;
-  windowBase = t;
+  windowBase = markShared(t);
   return t;
 }
 

@@ -9,7 +9,8 @@
   <body>
     <div id="app">
       <div id="scene"></div>
-      <div class="attribution" id="attribution" hidden>© OpenStreetMap contributors · © OpenMapTiles</div>
+      <!-- the map data credit comes with the renderer (in #scene) -->
+      <div class="fps" id="fps" aria-hidden="true">-- fps</div>
 
       <header class="topbar">
         <div class="brand">
@@ -54,6 +55,7 @@
         <button id="btn-reset" title="Restart">Restart</button>
         <button id="btn-follow" class="toggle" title="Camera follows the courier">Follow</button>
         <button id="btn-overview" title="See the whole city">Overview</button>
+        <button id="btn-mode" class="toggle" title="Top-down 2D view">2D</button>
         <button id="btn-params" title="Simulation parameters">Parameters</button>
       </nav>
 

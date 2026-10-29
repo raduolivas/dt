@@ -30,6 +30,15 @@ function canvas2d(w: number, h: number): { c: HTMLCanvasElement; g: CanvasRender
   return g ? { c, g } : null;
 }
 
+/** Textures made once and shared by every city and model (`windowTexture`, `litWindowTexture`, the glow falloff). */
+const shared = new WeakSet<THREE.Texture>();
+/** A shared texture: a city or a model that uses it must not dispose it (its clones are its own). */
+export const isSharedTexture = (t: THREE.Texture): boolean => shared.has(t);
+export const markShared = <T extends THREE.Texture>(t: T): T => {
+  shared.add(t);
+  return t;
+};
+
 let litBase: THREE.Texture | null = null;
 /**
  * The lit-window variant of the prototype's window texture, as an emissive map: black, with the lit windows of the
@@ -68,7 +77,7 @@ export function litWindowTexture(): THREE.Texture {
   }
   litBase.wrapS = litBase.wrapT = THREE.RepeatWrapping;
   litBase.repeat.set(1 / n, 1 / n);
-  return litBase;
+  return markShared(litBase);
 }
 
 let glowBase: THREE.Texture | null = null;
@@ -89,7 +98,7 @@ export function glowTexture(): THREE.Texture {
   g.fillStyle = grad;
   g.fillRect(0, 0, 128, 128);
   glowBase = new THREE.CanvasTexture(c);
-  return glowBase;
+  return markShared(glowBase);
 }
 
 /** An unlit additive glow material (never written to depth, so glows overlap softly). */
