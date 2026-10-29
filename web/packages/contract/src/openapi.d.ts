@@ -885,8 +885,16 @@ export interface components {
             /** Format: date-time */
             expires_at: string;
             snapshot: components["schemas"]["TrackingSnapshot"];
-            /** @description Always `null` for now. */
-            branding: null;
+            /** @description The tenant's viewer branding, or `null` for the DT defaults. `logo_url`, when present, is served on the tracking host. */
+            branding: components["schemas"]["Branding"] | null;
+        };
+        Branding: {
+            display_name: string | null;
+            primary_color: string | null;
+            /** @enum {string} */
+            theme: "light" | "dark" | "auto";
+            /** @description Absolute URL of the logo, served on the tracking host. `null` when no logo is set. */
+            logo_url: string | null;
         };
         ViewerTokenRefresh: {
             viewer_token: string;

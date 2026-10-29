@@ -39,4 +39,15 @@ message TenantSettingsSet {
   string pickup_confirmation = 4;
   google.protobuf.Timestamp updated_at = 5;
   optional int32 default_prep_minutes = 6; // unset = none
+  repeated string embed_origins = 7;
+  Branding branding = 8; // unset = DT defaults
+}
+
+// Branding mirrors dt.accounts.v1.Branding; events must not import the accounts API package.
+message Branding {
+  string display_name = 1;
+  string primary_color = 2;
+  string theme = 3;
+  bytes logo = 4;
+  string logo_content_type = 5;
 }
