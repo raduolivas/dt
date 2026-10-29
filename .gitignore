@@ -23,3 +23,4 @@ infra/aws/**/imports_generated.tf
 infra/aws/**/*.tfstate
 infra/aws/**/*.tfstate.*
 infra/aws/**/*.tfplan
+build/

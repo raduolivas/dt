@@ -36,6 +36,15 @@ audit-web: ## Fail on high or critical vulnerabilities in web dependencies
 web-dev: ## Run the renderer prototype dev server
 	pnpm -C web --filter @dt/renderer dev
 
+# ---- map tiles --------------------------------------------------------------
+.PHONY: tiles-fixture tiles-nl
+
+tiles-fixture: ## Build the committed Amsterdam z14 test fixture with Planetiler (Docker)
+	scripts/tiles-build.sh fixture
+
+tiles-nl: ## Build the Netherlands z14 PMTiles into build/tiles/nl.pmtiles (large)
+	scripts/tiles-build.sh nl
+
 # ---- contracts --------------------------------------------------------------
 .PHONY: gen lint-contracts
 
