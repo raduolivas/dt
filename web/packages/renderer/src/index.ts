@@ -4,7 +4,7 @@ import type { TileSourceSpec } from './tiles/source';
 import { CityScene } from './view/CityScene';
 
 export type { TileSourceSpec } from './tiles/source';
-export { activeLeg, toLatLng, viewKind, type ViewKind } from './snapshot';
+export { activeLeg, activeLegKind, toLatLng, viewKind, type ViewKind } from './snapshot';
 
 export interface RendererOptions {
   mode?: '3d' | '2d';
@@ -17,6 +17,8 @@ export interface RendererOptions {
   /** Milliseconds; tests freeze it. */
   clock?: () => number;
   onFrameStats?: (s: { fps: number; drawCalls: number }) => void;
+  /** The first tiles of a delivery are on screen: bytes fetched, time since the delivery started, tile count. */
+  onTiles?: (s: { bytes: number; ms: number; tiles: number }) => void;
 }
 
 export interface Renderer {
@@ -35,9 +37,9 @@ export interface Renderer {
  */
 export function createRenderer(container: HTMLElement, o: RendererOptions = {}): Renderer {
   const clock = o.clock ?? (() => performance.now());
-  const scene = new CityScene(container, { accent: o.accent });
+  const scene = new CityScene(container, { accent: o.accent, tiles: o.tiles, theme: o.theme, onTiles: o.onTiles });
   const gate = new SnapshotGate();
-  // `mode`, `theme` and `reducedMotion` are accepted now and used by the 2D, night and motion tasks.
+  // `mode` and `reducedMotion` are accepted now and used by the 2D and motion tasks.
   const state = { mode: o.mode ?? '3d', theme: o.theme ?? 'light', reducedMotion: o.reducedMotion ?? false };
   void state;
 
@@ -72,6 +74,7 @@ export function createRenderer(container: HTMLElement, o: RendererOptions = {}):
     },
     setTheme(t) {
       state.theme = t;
+      scene.setTheme(t);
     },
     setAccent(c) {
       scene.setAccent(c);

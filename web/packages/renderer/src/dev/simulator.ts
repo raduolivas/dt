@@ -2,9 +2,8 @@ import type { CourierSignal, DeliveryStatus, TrackingSnapshot } from '@dt/contra
 
 type DeliveryModel = TrackingSnapshot['delivery_model'];
 import { Path } from '../engine/path';
-import { routeBetween } from '../engine/router';
 import type { Vec2 } from '../engine/geo';
-import { COURIER_START, DESTINATIONS, STORE, projection, type DestinationPreset } from './world';
+import { GRID_WORLD, type DestinationPreset, type DevWorld } from './world';
 
 /** The simulator's own finer-grained phases; the v1 `DeliveryStatus` is derived from them. */
 export type OrderStatus =
@@ -89,7 +88,8 @@ export class DeliverySimulator {
   private frozen: { lat: number; lng: number } | null = null; // last known position while the signal is down
   private timeline: { status: DeliveryStatus; at: string }[] = [];
 
-  constructor() {
+  /** The grid world by default; the dev page passes the Amsterdam world when it draws real tiles. */
+  constructor(private readonly world: DevWorld = GRID_WORLD) {
     this.reset();
   }
 
@@ -113,7 +113,7 @@ export class DeliverySimulator {
 
   /** Simulate the courier's phone losing (or regaining) its connection. */
   setSignal(signal: CourierSignal): void {
-    if (signal !== 'live' && this.signal === 'live') this.frozen = projection.toLatLng(this.courierLocal());
+    if (signal !== 'live' && this.signal === 'live') this.frozen = this.world.projection.toLatLng(this.courierLocal());
     this.signal = signal;
     this.emit();
   }
@@ -128,9 +128,8 @@ export class DeliverySimulator {
 
   /** Rebuild routes from the current params and go back to "order requested". */
   reset(): void {
-    const dest = DESTINATIONS[this.params.destination];
-    this.leg1 = new Path(routeBetween(COURIER_START, STORE.stop, 'a'));
-    this.leg2 = new Path(routeBetween(STORE.stop, dest.stop, 'b'));
+    this.leg1 = new Path(this.world.toStore());
+    this.leg2 = new Path(this.world.toHome(this.params.destination));
     this.status = 'requested';
     this.stateTime = 0;
     this.elapsed = 0;
@@ -153,6 +152,13 @@ export class DeliverySimulator {
 
   pause(): void {
     this.running = false;
+  }
+
+  /** Jump `simSec` simulated seconds ahead (dev page `?t=`, screenshots), then emit once. */
+  advance(simSec: number): void {
+    this.running = true;
+    for (let t = simSec; t > 0 && this.status !== 'delivered'; t -= MAX_STEP_SEC) this.step(Math.min(t, MAX_STEP_SEC));
+    this.emit();
   }
 
   /** Advance the simulation by `realDtSec` real seconds (scaled by timeScale). */
@@ -315,6 +321,7 @@ export class DeliverySimulator {
 
   snapshot(): TrackingSnapshot {
     const total = this.leg1.length + this.leg2.length;
+    const projection = this.world.projection;
     const toLL = (pts: Vec2[]) => pts.map((p) => pair(projection.toLatLng(p)));
     let bearingDeg = (this.bearing * 180) / Math.PI;
     bearingDeg = ((bearingDeg % 360) + 360) % 360;
@@ -343,8 +350,8 @@ export class DeliverySimulator {
       delivery_model: this.params.model,
       status: V1_STATUS[this.status],
       courier,
-      pickup: { location: projection.toLatLng(STORE.stop), name: STORE.label },
-      dropoff: { location: projection.toLatLng(DESTINATIONS[this.params.destination].stop), label: 'Home' },
+      pickup: { location: this.world.storeLocation, name: this.world.storeName },
+      dropoff: { location: this.world.homeLocation(this.params.destination), label: 'Home' },
       route: {
         // Direct has no courier leg; after pickup the leg is gone in both models.
         to_pickup: direct || !beforePickup ? null : toLL(this.leg1.points),

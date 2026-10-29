@@ -25,7 +25,7 @@ function tileLat(y: number, z: number): number {
 }
 
 /** Metres from p to the nearest point of the tile's lng/lat rectangle (0 inside). */
-function distanceToTileM(p: LatLng, t: TileXY): number {
+export function distanceToTileM(p: LatLng, t: TileXY): number {
   const west = tileLng(t.x, t.z);
   const east = tileLng(t.x + 1, t.z);
   const north = tileLat(t.y, t.z);

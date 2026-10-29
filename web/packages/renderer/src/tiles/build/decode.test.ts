@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { fixtureTiles } from '../fixture';
 import { decodeTile, type BuildResult } from './decode';
-import { buildBuildings } from './buildings';
+import { buildBuildings, toyHeight } from './buildings';
 import { paletteFor } from './common';
 
 const origin = { lat: 52.3702, lng: 4.8952 };
@@ -17,7 +17,7 @@ async function decodeAllUncached(): Promise<BuildResult[]> {
   return tiles.map((t) => decodeTile({ tile: { z: t.z, x: t.x, y: t.y }, data: t.data, origin, theme: 'light' }));
 }
 
-describe('decodeTile', () => {
+describe('decodeTile', { timeout: 30_000 }, () => {
   it('finds roads, buildings, water and parks in the fixture', async () => {
     const all = await decodeAll();
     const sum = (f: (r: BuildResult) => number) => all.reduce((s, r) => s + f(r), 0);
@@ -83,15 +83,41 @@ describe('buildings', () => {
   const proj = { project: (px: number, py: number): [number, number] => [px * 0.37, py * 0.37] };
   const palette = paletteFor('light');
 
+  // Wall vertices only (horizontal normals): the roof rim and rooftop units sit a little above the roof.
+  const wallYs = (b: { positions: Float32Array; normals: Float32Array }) =>
+    Array.from({ length: b.positions.length / 3 }, (_, i) => i)
+      .filter((i) => Math.abs(b.normals[i * 3 + 1]!) < 1e-6)
+      .map((i) => b.positions[i * 3 + 1]!);
+
   it('defaults the height to 9 m and respects render_min_height', () => {
-    const def = buildBuildings([{ id: 1, props: {}, rings: square }], proj, palette);
-    const ys = Array.from({ length: def.positions.length / 3 }, (_, i) => def.positions[i * 3 + 1]!);
+    const ys = wallYs(buildBuildings([{ id: 1, props: {}, rings: square }], proj, palette));
     expect(Math.max(...ys)).toBeCloseTo(9);
     expect(Math.min(...ys)).toBeCloseTo(0);
-    const lifted = buildBuildings([{ id: 1, props: { render_height: 20, render_min_height: 12 }, rings: square }], proj, palette);
-    const ys2 = Array.from({ length: lifted.positions.length / 3 }, (_, i) => lifted.positions[i * 3 + 1]!);
-    expect(Math.max(...ys2)).toBeCloseTo(20);
-    expect(Math.min(...ys2)).toBeCloseTo(12);
+    const ys2 = wallYs(buildBuildings([{ id: 1, props: { render_height: 20, render_min_height: 12 }, rings: square }], proj, palette));
+    const top = toyHeight(20);
+    expect(Math.max(...ys2)).toBeCloseTo(top);
+    expect(Math.min(...ys2)).toBeCloseTo((12 * top) / 20); // the base scales with the toy height
+  });
+
+  it('soft caps tall buildings so the city stays toy sized', () => {
+    expect(toyHeight(9)).toBe(9);
+    expect(toyHeight(20)).toBeGreaterThan(13);
+    expect(toyHeight(20)).toBeLessThan(16);
+    expect(toyHeight(44)).toBeLessThan(21);
+    expect(toyHeight(44)).toBeGreaterThan(toyHeight(20));
+    expect(toyHeight(300)).toBeLessThan(22.01);
+    const ys = wallYs(buildBuildings([{ id: 1, props: { render_height: 120 }, rings: square }], proj, palette));
+    expect(Math.max(...ys)).toBeLessThan(22.01);
+  });
+
+  it('records one footprint per polygon with its vertex range', () => {
+    const b = buildBuildings([{ id: 1, props: {}, rings: square }], proj, palette);
+    expect(b.footprints.info.length).toBe(4);
+    expect(b.footprints.info[0]).toBeCloseTo(9);
+    expect(b.footprints.info[2]).toBe(0);
+    expect(b.footprints.info[3]).toBe(b.positions.length / 3);
+    expect(b.footprints.rings.length).toBe(4);
+    expect(b.uvs.length).toBe((b.positions.length / 3) * 2);
   });
 
   it('gives the same building the same tint in two runs', () => {

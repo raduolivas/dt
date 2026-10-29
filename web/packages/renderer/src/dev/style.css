@@ -136,3 +136,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
   .stepper { padding: 10px 12px; }
   .stepper-head { margin-bottom: 10px; }
 }
+
+/* map data attribution (always visible with real tiles; the full element comes with the page) */
+.attribution {
+  position: absolute; left: 8px; bottom: 4px; z-index: 5; pointer-events: none;
+  font-size: 10px; font-weight: 600; color: #56607e; background: rgba(255, 255, 255, 0.75);
+  padding: 2px 6px; border-radius: 6px;
+}

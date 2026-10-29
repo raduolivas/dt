@@ -1,14 +1,35 @@
 import './style.css';
-import { createRenderer } from '../index';
+import { createRenderer, type TileSourceSpec } from '../index';
 import { DeliverySimulator } from './simulator';
-import type { DestinationPreset } from './world';
+import { GRID_WORLD, amsterdamWorld, type DestinationPreset } from './world';
 import { Hud, courierLabel } from './ui';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
-const sim = new DeliverySimulator();
+// ?tiles=fixture (default: the committed Amsterdam PMTiles), ?tiles=openfreemap, ?tiles=grid (the procedural city),
+// or ?pmtiles=<url> for any OpenMapTiles PMTiles archive covering the Amsterdam route.
+const query = new URLSearchParams(location.search);
+const tilesParam = query.get('tiles') ?? 'fixture';
+const tiles: TileSourceSpec | undefined = query.get('pmtiles')
+  ? { kind: 'pmtiles', url: query.get('pmtiles')! }
+  : tilesParam === 'openfreemap'
+    ? { kind: 'zxy', tilejson: 'https://tiles.openfreemap.org/planet' }
+    : tilesParam === 'grid'
+      ? undefined
+      : { kind: 'pmtiles', url: new URL('amsterdam-z14.pmtiles', location.href).href };
+$('attribution').hidden = !tiles;
+
+const sim = new DeliverySimulator(tiles ? amsterdamWorld() : GRID_WORLD);
 const sceneEl = $('scene');
-const scene = createRenderer(sceneEl, {});
+const scene = createRenderer(sceneEl, {
+  tiles,
+  onTiles: (t) => {
+    // Read by the screenshot / budget scripts.
+    document.body.dataset.tiles = JSON.stringify({ ...t, ms: Math.round(t.ms) });
+    console.info(`[dt] first tiles: ${t.tiles} tiles, ${t.bytes} bytes, ${Math.round(t.ms)} ms`);
+  },
+  onFrameStats: (f) => (document.body.dataset.frame = JSON.stringify({ fps: Math.round(f.fps), drawCalls: f.drawCalls })),
+});
 const hud = new Hud();
 const courierTag = () => sceneEl.querySelector<HTMLElement>('.scene-label.courier');
 const devState = () => ({ running: sim.isRunning, phase: sim.currentStatus, elapsedSec: sim.elapsedSec });
@@ -41,7 +62,7 @@ $('btn-reset').addEventListener('click', () => {
   refresh();
 });
 const followBtn = $('btn-follow');
-let following = true;
+let following = false; // the first view frames store, home and courier
 followBtn.addEventListener('click', () => {
   following = !following;
   scene.setFollow(following);
@@ -76,8 +97,16 @@ const bindRange = (id: string, label: string, fmt: (v: number) => string, apply:
 bindRange('p-speed', 'v-speed', (v) => `${v} km/h`, (v) => sim.setParams({ courierSpeedKmh: v }));
 bindRange('p-prep', 'v-prep', (v) => `${v} s`, (v) => sim.setParams({ prepTimeSec: v }));
 bindRange('p-scale', 'v-scale', (v) => `${v}×`, (v) => sim.setParams({ timeScale: v }));
+// ?speed=<n> overrides the simulation speed (scripts and screenshots), ?dest=near|medium|far picks the destination.
+if (query.get('speed')) sim.setParams({ timeScale: Number(query.get('speed')) });
+const destParam = query.get('dest') as DestinationPreset | null;
+if (destParam && ['near', 'medium', 'far'].includes(destParam)) {
+  sim.setParams({ destination: destParam });
+  sim.reset();
+}
 
 const destButtons = Array.from($('p-dest').querySelectorAll<HTMLButtonElement>('button'));
+if (destParam) destButtons.forEach((o) => o.classList.toggle('on', o.dataset.v === destParam));
 destButtons.forEach((b) =>
   b.addEventListener('click', () => {
     const v = b.dataset.v as DestinationPreset;
@@ -104,6 +133,14 @@ signalBtn.addEventListener('click', () => {
   signalBtn.textContent = live ? 'Restore signal' : 'Drop signal';
   refresh();
 });
+
+// ?t=<seconds> starts the order and jumps that far into it (screenshots of a given moment); ?pause keeps it there.
+if (query.get('t')) {
+  sim.advance(Number(query.get('t')));
+  if (query.has('pause')) sim.pause();
+  refresh();
+}
+if (query.has('follow')) followBtn.click();
 
 // --- simulator loop (the renderer runs its own frame loop) ------------------
 let last = performance.now();

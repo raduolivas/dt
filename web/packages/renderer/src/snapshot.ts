@@ -14,9 +14,14 @@ export function isFinal(status: DeliveryStatus): boolean {
   return FINAL.has(status);
 }
 
+/** Which leg the courier is on: to the pickup before `picked_up` when the snapshot has it, else to the dropoff. */
+export function activeLegKind(s: TrackingSnapshot): 'to_pickup' | 'to_dropoff' {
+  return BEFORE_PICKUP.has(s.status) && s.route.to_pickup ? 'to_pickup' : 'to_dropoff';
+}
+
 /** The leg the courier is on: to the pickup before `picked_up` when the snapshot has it, else to the dropoff. */
 export function activeLeg(s: TrackingSnapshot): LatLng[] {
-  const leg = BEFORE_PICKUP.has(s.status) && s.route.to_pickup ? s.route.to_pickup : s.route.to_dropoff;
+  const leg = activeLegKind(s) === 'to_pickup' ? s.route.to_pickup! : s.route.to_dropoff;
   return leg.map(toLatLng);
 }
 

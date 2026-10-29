@@ -1,57 +1,89 @@
-import { ShapeUtils, Vector2 } from 'three';
+import { Color, ShapeUtils, Vector2 } from 'three';
+import { CITY_DAY, CITY_NIGHT, type CityColors } from '../../view/colors';
 import { GeoProjection } from '../../engine/geo';
 import type { TileXY } from '../corridor';
 
 export type TileTheme = 'light' | 'dark';
+/** Linear RGB (vertex colors are not color managed, so the sRGB palette is converted once here). */
 export type RGB = [number, number, number];
 
 export interface Palette {
-  roadMajor: RGB;
-  roadMid: RGB;
-  roadMinor: RGB;
+  block: RGB;
+  blockSide: RGB;
+  road: RGB;
   roadPath: RGB;
-  buildings: RGB[];
+  roadMark: RGB;
   water: RGB;
   park: RGB;
+  walls: RGB[];
+  roof: RGB;
+  roofRim: RGB;
+  roofAccent: RGB;
+  roofAccentRim: RGB;
+  roofUnit: RGB;
   landuse: Record<string, RGB>;
-  landuseDefault: RGB;
 }
 
-const hex = (h: string): RGB => [
-  parseInt(h.slice(1, 3), 16) / 255,
-  parseInt(h.slice(3, 5), 16) / 255,
-  parseInt(h.slice(5, 7), 16) / 255,
-];
+const linear = (hex: number): RGB => {
+  const c = new Color(hex); // three converts sRGB hex to the linear working space
+  return [c.r, c.g, c.b];
+};
 
 export function paletteFor(theme: TileTheme): Palette {
-  if (theme === 'dark') {
-    return {
-      roadMajor: hex('#5a6478'),
-      roadMid: hex('#4a5266'),
-      roadMinor: hex('#3e455a'),
-      roadPath: hex('#343a4c'),
-      buildings: ['#6d6480', '#64708a', '#7a6a78', '#5e6c7c', '#72668a', '#6a7684'].map(hex),
-      water: hex('#1f3f66'),
-      park: hex('#2b5a3c'),
-      landuse: { residential: hex('#2a3042'), industrial: hex('#323244'), commercial: hex('#2e3446') },
-      landuseDefault: hex('#2a3042'),
-    };
-  }
+  const c: CityColors = theme === 'dark' ? CITY_NIGHT : CITY_DAY;
   return {
-    roadMajor: hex('#ffd9a0'),
-    roadMid: hex('#fff2d6'),
-    roadMinor: hex('#ffffff'),
-    roadPath: hex('#e8dcc8'),
-    buildings: ['#f2c6a0', '#e9d8c4', '#f4b9a8', '#d9c9b8', '#f0dca8', '#c9d6c0'].map(hex),
-    water: hex('#8fd0f0'),
-    park: hex('#a8dc9c'),
-    landuse: { residential: hex('#efe6d2'), industrial: hex('#e2dccf'), commercial: hex('#f1e2cf') },
-    landuseDefault: hex('#efe6d2'),
+    block: linear(c.block),
+    blockSide: linear(c.blockSide),
+    road: linear(c.road),
+    roadPath: linear(c.roadPath),
+    roadMark: linear(c.roadMark),
+    water: linear(c.water),
+    park: linear(c.park),
+    walls: c.walls.map(linear),
+    roof: linear(c.roof),
+    roofRim: linear(c.roofRim),
+    roofAccent: linear(c.roofAccent),
+    roofAccentRim: linear(c.roofAccentRim),
+    roofUnit: linear(c.roofUnit),
+    landuse: Object.fromEntries(Object.entries(c.landuse).map(([k, v]) => [k, linear(v)])),
   };
 }
 
-/** Vertical order of flat layers (metres) so they never z-fight. */
-export const LAYER_Y = { landuse: 0.01, park: 0.02, water: 0.03, road: 0.05 } as const;
+/** Top of the raised city blocks: every tile is a pale slab this high above the ground. */
+export const GROUND_Y = 0.8;
+
+/** Vertical order of the flat layers (metres) so they never z-fight. Roads stack by rank on top. */
+export const LAYER_Y = {
+  landuse: GROUND_Y + 0.02,
+  park: GROUND_Y + 0.04,
+  water: GROUND_Y + 0.06,
+  waterRim: GROUND_Y + 0.07,
+  road: GROUND_Y + 0.1,
+  /** Height step per road rank (curb, surface and marks of one rank fit inside it). */
+  roadRank: 0.04,
+  bridge: 0.5,
+} as const;
+
+/** The highest a flat road layer gets (a top-rank bridge); route ribbons and the courier sit above it. */
+export const ROAD_TOP_Y = LAYER_Y.road + 6 * LAYER_Y.roadRank + LAYER_Y.bridge;
+
+/** A tile's rectangle in scene metres (local x depends only on lng and z only on lat, so it is axis aligned). */
+export interface Bounds {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
+export function tileBounds(proj: Projector, extent: number): Bounds {
+  const [x0, z0] = proj.project(0, 0);
+  const [x1, z1] = proj.project(extent, extent);
+  return { minX: Math.min(x0, x1), maxX: Math.max(x0, x1), minZ: Math.min(z0, z1), maxZ: Math.max(z0, z1) };
+}
+
+export function inBounds(b: Bounds, x: number, z: number): boolean {
+  return x >= b.minX && x < b.maxX && z >= b.minZ && z < b.maxZ;
+}
 
 export interface MeshBuffers {
   positions: Float32Array;
@@ -89,6 +121,11 @@ export class MeshBuilder {
     if (dot === 0) return; // degenerate
     if (dot > 0) this.idx.push(a, b, c);
     else this.idx.push(a, c, b);
+  }
+
+  /** Vertices added so far. */
+  get vertices(): number {
+    return this.pos.length / 3;
   }
 
   get empty(): boolean {
@@ -199,4 +236,39 @@ export function flatArea(
   const { verts, tris } = triangulate(rings);
   const ids = verts.map((v) => mesh.vertex(v[0], y, v[1], [0, 1, 0], c));
   for (let i = 0; i < tris.length; i += 3) mesh.tri(ids[tris[i]!]!, ids[tris[i + 1]!]!, ids[tris[i + 2]!]!);
+}
+
+/** A flat quad along segment a→b, `half` wide on each side, at height y (straight ends). */
+export function segmentQuad(mesh: MeshBuilder, a: [number, number], b: [number, number], half: number, y: number, c: RGB): void {
+  const dx = b[0] - a[0];
+  const dz = b[1] - a[1];
+  const l = Math.hypot(dx, dz);
+  if (l < 1e-4) return;
+  const nx = (-dz / l) * half;
+  const nz = (dx / l) * half;
+  const up: [number, number, number] = [0, 1, 0];
+  const v0 = mesh.vertex(a[0] + nx, y, a[1] + nz, up, c);
+  const v1 = mesh.vertex(a[0] - nx, y, a[1] - nz, up, c);
+  const v2 = mesh.vertex(b[0] - nx, y, b[1] - nz, up, c);
+  const v3 = mesh.vertex(b[0] + nx, y, b[1] + nz, up, c);
+  mesh.tri(v0, v1, v2);
+  mesh.tri(v0, v2, v3);
+}
+
+/** Even-odd point in polygon test on a projected ring. */
+export function insideRing(ring: [number, number][], x: number, z: number): boolean {
+  let c = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, zi] = ring[i]!;
+    const [xj, zj] = ring[j]!;
+    if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) c = !c;
+  }
+  return c;
+}
+
+/** Stable seed for one polygon of a (possibly merged) feature: a hash of its first vertex in tile units. */
+export function polygonSeed(poly: { x: number; y: number }[][]): number {
+  const p = poly[0]?.[0];
+  if (!p) return 1;
+  return (Math.imul(p.x | 0, 73856093) ^ Math.imul(p.y | 0, 19349663) ^ 0x9e3779b9) >>> 0;
 }
