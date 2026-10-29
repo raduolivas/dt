@@ -86,6 +86,8 @@ export interface CitySceneOptions {
   mode?: CameraMode;
   /** Makes the WebGL renderer (tests pass a mock); default a `THREE.WebGLRenderer`. */
   webgl?: () => THREE.WebGLRenderer;
+  /** The WebGL context was lost (`true`) or restored and rebuilt (`false`). */
+  onContext?: (lost: boolean) => void;
 }
 
 export class CityScene {
@@ -164,11 +166,14 @@ export class CityScene {
   private readonly onContextLost = (e: Event) => {
     e.preventDefault(); // we restore it: the browser may hand it back
     this.contextLost = true;
+    this.onContext?.(true);
   };
   private readonly onContextRestored = () => {
     this.contextLost = false;
     this.rebuildGpu();
+    this.onContext?.(false);
   };
+  private readonly onContext?: (lost: boolean) => void;
   private time = 0;
   private width = 1;
   private height = 1;
@@ -191,6 +196,7 @@ export class CityScene {
     this.ownsBuilder = !opts.builder;
     this.builder = opts.builder ?? null;
     this.onTiles = opts.onTiles;
+    this.onContext = opts.onContext;
     if (this.tileSpec) {
       this.tileSource = openTileSource(this.tileSpec);
       this.tileSource.catch((err) => console.warn('tiles:', err));

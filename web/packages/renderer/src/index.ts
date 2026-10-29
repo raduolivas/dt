@@ -19,6 +19,8 @@ export type RendererTheme = 'light' | 'dark' | 'auto';
 export const ATTRIBUTION = '© OpenStreetMap contributors · © OpenMapTiles';
 /** With no tile on screen this long after the delivery started, the renderer draws the 2D fallback map instead. */
 export const TILE_FALLBACK_MS = 10_000;
+/** A lost WebGL context not restored within this long (iOS may never give it back): the 2D fallback map takes over. */
+export const CONTEXT_FALLBACK_MS = 3_000;
 
 export interface RendererOptions {
   /** `3d` (default): the isometric toy city; `2d`: the same scene seen straight down. */
@@ -102,7 +104,13 @@ export function createRenderer(container: HTMLElement, o: RendererOptions = {}, 
   let latest: TrackingSnapshot | null = null;
   let tilesOnScreen = false;
   let tilesTimer: ReturnType<typeof setTimeout> | null = null;
+  let contextTimer: ReturnType<typeof setTimeout> | null = null;
   let alive = true;
+  const clearTimers = () => {
+    if (tilesTimer !== null) clearTimeout(tilesTimer);
+    if (contextTimer !== null) clearTimeout(contextTimer);
+    tilesTimer = contextTimer = null;
+  };
 
   const attribution = document.createElement('div');
   attribution.className = 'dt-attribution';
@@ -125,6 +133,10 @@ export function createRenderer(container: HTMLElement, o: RendererOptions = {}, 
           tilesTimer = null;
           o.onTiles?.(t);
         },
+        onContext: (lost) => {
+          if (contextTimer !== null) clearTimeout(contextTimer);
+          contextTimer = lost ? setTimeout(toFallback, CONTEXT_FALLBACK_MS) : null;
+        },
       });
     } catch (err) {
       // e.g. WebGL 1 only (three.js needs WebGL 2), or a context that will not start
@@ -142,14 +154,20 @@ export function createRenderer(container: HTMLElement, o: RendererOptions = {}, 
   let view: View = scene ?? makeFallback();
   container.appendChild(attribution); // over the canvas
 
-  /** The map tiles did not come: the same handle draws the 2D map from now on. */
+  /** No WebGL picture to show (the context did not come back): the same handle draws the 2D map from now on. */
   const toFallback = () => {
-    tilesTimer = null;
-    if (!scene || tilesOnScreen || !alive) return;
+    clearTimers();
+    if (!scene || !alive) return;
     scene.dispose();
     scene = null;
     view = makeFallback();
     container.appendChild(attribution);
+  };
+
+  /** The map tiles did not come. */
+  const tilesMissing = () => {
+    tilesTimer = null;
+    if (!tilesOnScreen) toFallback();
   };
 
   const onMedia = (e: MediaQueryListEvent) => {
@@ -190,7 +208,7 @@ export function createRenderer(container: HTMLElement, o: RendererOptions = {}, 
       latest = s;
       view.onSnapshot(s);
       // the delivery started: its first tiles have 10 s to show up
-      if (scene && o.tiles && !tilesOnScreen && tilesTimer === null) tilesTimer = setTimeout(toFallback, TILE_FALLBACK_MS);
+      if (scene && o.tiles && !tilesOnScreen && tilesTimer === null) tilesTimer = setTimeout(tilesMissing, TILE_FALLBACK_MS);
     },
     setMode(m) {
       scene?.setMode(m); // the fallback map is 2D already
@@ -218,7 +236,7 @@ export function createRenderer(container: HTMLElement, o: RendererOptions = {}, 
     },
     destroy() {
       alive = false;
-      if (tilesTimer !== null) clearTimeout(tilesTimer);
+      clearTimers();
       media?.removeEventListener?.('change', onMedia);
       cancelAnimationFrame(raf);
       view.dispose();

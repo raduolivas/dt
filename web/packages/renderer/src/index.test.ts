@@ -95,6 +95,55 @@ describe('createRenderer', () => {
     expect(fallbackCanvas()).toBeUndefined();
   });
 
+  it('swaps to the fallback, on the same handle, when a lost WebGL context is not back within 3 s', async () => {
+    vi.useFakeTimers();
+    const gl = mockWebGL();
+    const r = createRenderer(container(), { reducedMotion: true }, { webgl: () => gl });
+    r.update(snap);
+    gl.domElement.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    await vi.advanceTimersByTimeAsync(2_900);
+    expect(fallbackCanvas()).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fallbackCanvas()).toBeDefined();
+    expect(dom.container.children).not.toContain(gl.domElement);
+    expect(attribution()?.textContent).toBe(ATTRIBUTION);
+    // a late restore changes nothing: the fallback stays
+    gl.domElement.dispatchEvent(new Event('webglcontextrestored'));
+    r.update({ ...snap, version: 2 });
+    dom.frame();
+    expect(fallbackCanvas()).toBeDefined();
+    r.destroy();
+    expect(fallbackCanvas()).toBeUndefined();
+  });
+
+  it('keeps the 3D scene, rebuilt, when the lost context is restored within 3 s', async () => {
+    vi.useFakeTimers();
+    const gl = mockWebGL();
+    const r = createRenderer(container(), { reducedMotion: true }, { webgl: () => gl });
+    r.update(snap);
+    await vi.advanceTimersByTimeAsync(100); // fake timers drive the animation frames
+    expect(gl.renders).toBeGreaterThan(0);
+    gl.domElement.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    const renders = gl.renders;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(gl.renders).toBe(renders); // nothing drawn while lost
+    gl.domElement.dispatchEvent(new Event('webglcontextrestored'));
+    expect(gl.shadowMap.needsUpdate).toBe(true); // rebuilt
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fallbackCanvas()).toBeUndefined();
+    expect(gl.renders).toBeGreaterThan(renders); // drawing again
+    r.destroy();
+  });
+
+  it('cancels the context timer on destroy', async () => {
+    vi.useFakeTimers();
+    const gl = mockWebGL();
+    const r = createRenderer(container(), { reducedMotion: true }, { webgl: () => gl });
+    gl.domElement.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    r.destroy();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('reports fps once per second', () => {
     let now = 0;
     const stats: number[] = [];
