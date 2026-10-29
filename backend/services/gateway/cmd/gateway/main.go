@@ -41,6 +41,7 @@ import (
 	redislimit "github.com/raduolivas/dt/backend/services/gateway/internal/adapters/outbound/redis"
 	trackingadapter "github.com/raduolivas/dt/backend/services/gateway/internal/adapters/outbound/tracking"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
+	"github.com/raduolivas/dt/backend/services/gateway/internal/domain"
 	"github.com/raduolivas/dt/backend/services/gateway/migrations"
 )
 
@@ -285,7 +286,19 @@ func trackPageConfig(trackingBase string) (httpapi.TrackPageConfig, error) {
 			return c, errors.New("TRACKING_PAGE_CONNECT_EXTRA must be space-separated http(s) origins")
 		}
 	}
+	// The CSP names origins only; the page's JSON config keeps the full URLs.
+	c.Origins = domain.PageOrigins{CDN: originOf(c.CDN), API: originOf(c.API), Tiles: originOf(c.Tiles), Extra: c.Extra}
 	return c, nil
+}
+
+// originOf reduces an http(s) URL (already validated) to scheme://host[:port];
+// "" stays "".
+func originOf(s string) string {
+	u, err := url.Parse(s)
+	if s == "" || err != nil {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 type systemClock struct{}

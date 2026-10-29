@@ -95,7 +95,7 @@ func TestTrackPageHeaders(t *testing.T) {
 		"X-Content-Type-Options": "nosniff",
 		"Content-Type":           "text/html; charset=utf-8",
 		"Content-Security-Policy": "default-src 'none'; script-src https://cdn.example; style-src https://cdn.example 'unsafe-inline'; " +
-			"img-src https://cdn.example 'self' data: blob:; connect-src https://api.example/v1 https://cdn.example/t.pmtiles https://cdn.example https://tiles.openfreemap.org; " +
+			"img-src https://cdn.example 'self' data: blob:; connect-src https://api.example https://cdn.example https://cdn.example https://tiles.openfreemap.org; " +
 			"worker-src blob:; font-src https://cdn.example; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
 	}
 	for k, w := range want {
@@ -183,6 +183,13 @@ func TestTrackPageRateLimitedPerIP(t *testing.T) {
 	rec := v.do(pageReq(tok))
 	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") == "" {
 		t.Fatalf("over the limit: %d, Retry-After %q", rec.Code, rec.Header().Get("Retry-After"))
+	}
+	// The 429 and the mux's 405 are logged without the token too.
+	if p := v.do(httptest.NewRequest(http.MethodPost, "/t/"+tok, nil)); p.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST = %d", p.Code)
+	}
+	if strings.Contains(v.logs.String(), tok) || !strings.Contains(v.logs.String(), `"path":"/t/{token}"`) {
+		t.Fatalf("token in logs or path not redacted: %s", v.logs.String())
 	}
 }
 

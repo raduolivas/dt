@@ -5,6 +5,7 @@ package otelx
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 
@@ -15,6 +16,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+
+	"github.com/raduolivas/dt/backend/pkg/httpx"
 )
 
 // Init installs the global tracer provider and a W3C traceparent + baggage
@@ -63,7 +66,33 @@ func HTTP(h http.Handler, service string, opts ...Option) http.Handler {
 	for _, opt := range opts {
 		o = append(o, opt.o...)
 	}
-	return otelhttp.NewHandler(h, service, o...)
+	traced := otelhttp.NewHandler(restoreURL(h), service, o...)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// otelhttp records url.path from the request it is given: hand it
+		// one whose credential path segments are redacted, and let the inner
+		// handler see the real URL again.
+		if red := httpx.RedactPath(r.URL.Path); red != r.URL.Path {
+			u := *r.URL
+			u.Path, u.RawPath = red, ""
+			r2 := r.WithContext(context.WithValue(r.Context(), realURLKey{}, r.URL))
+			r2.URL = &u
+			r = r2
+		}
+		traced.ServeHTTP(w, r)
+	})
+}
+
+type realURLKey struct{}
+
+// restoreURL puts the real URL back on the request in place, so the mux's
+// Pattern lands on the request otelhttp holds (the span name reads it).
+func restoreURL(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if u, ok := r.Context().Value(realURLKey{}).(*url.URL); ok {
+			r.URL = u
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Option customises HTTP.

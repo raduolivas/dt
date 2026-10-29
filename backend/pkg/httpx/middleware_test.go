@@ -63,17 +63,27 @@ func TestAccessLogOmitsQuery(t *testing.T) {
 	}
 }
 
-func TestAccessLogSetLogPath(t *testing.T) {
+func TestAccessLogRedactsCredentialPaths(t *testing.T) {
 	var logs bytes.Buffer
 	log := logx.New(&logs, slog.LevelDebug, "test")
-	h := httpx.AccessLog(log)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Even behind a middleware that copies the request.
-		httpx.SetLogPath(r.WithContext(r.Context()), "GET /t/{token}")
-	}))
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/t/secretsecret", nil))
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /t/{token}", func(http.ResponseWriter, *http.Request) {})
+	h := httpx.AccessLog(log)(mux)
+	// Handled (200), rejected by the mux (405) and unmatched (404) alike.
+	for _, m := range []string{http.MethodGet, http.MethodPost} {
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(m, "/t/secretsecret", nil))
+	}
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/t/secretsecret/more", nil))
 	out := logs.String()
-	if strings.Contains(out, "secretsecret") || !strings.Contains(out, `"path":"GET /t/{token}"`) {
+	if strings.Contains(out, "secretsecret") || strings.Count(out, `"path":"/t/{token}"`) != 3 {
 		t.Fatalf("log = %s", out)
 	}
-	httpx.SetLogPath(httptest.NewRequest(http.MethodGet, "/x", nil), "ignored") // outside AccessLog: no-op
+}
+
+func TestRedactPath(t *testing.T) {
+	for in, want := range map[string]string{"/v1/x": "/v1/x", "/t/abc": "/t/{token}", "/t/": "/t/{token}", "/tx/abc": "/tx/abc", "/logos/a/b": "/logos/a/b"} {
+		if got := httpx.RedactPath(in); got != want {
+			t.Errorf("RedactPath(%q) = %q, want %q", in, got, want)
+		}
+	}
 }

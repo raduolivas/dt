@@ -119,7 +119,8 @@ func newViewerEdge(t *testing.T, lim app.Limiter) *viewerEdge {
 		Page:    &app.TrackPage{Links: links, Settings: settings},
 		Limiter: lim, Log: log,
 		Config: httpapi.TrackPageConfig{Base: "https://cdn.example/page/", API: "https://api.example/v1",
-			Tiles: "https://cdn.example/t.pmtiles", CDN: "https://cdn.example", Extra: []string{"https://tiles.openfreemap.org"}},
+			Tiles: "https://cdn.example/t.pmtiles", CDN: "https://cdn.example", Extra: []string{"https://tiles.openfreemap.org"},
+			Origins: domain.PageOrigins{CDN: "https://cdn.example", API: "https://api.example", Tiles: "https://cdn.example", Extra: []string{"https://tiles.openfreemap.org"}}},
 	})
 	h := httpx.RequestID(httpx.AccessLog(log)(httpx.Recover(log)(mux)))
 	return &viewerEdge{t: t, h: h, links: links, snaps: snaps, signer: s, seed: seed, logs: logs, settings: settings}

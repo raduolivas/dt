@@ -31,11 +31,11 @@ func TestFrameAncestorsDropsInjection(t *testing.T) {
 
 func TestPageCSPExact(t *testing.T) {
 	t.Parallel()
-	o := PageOrigins{CDN: "https://cdn.example", API: "https://api.example/v1", Tiles: "https://cdn.example/t.pmtiles",
+	o := PageOrigins{CDN: "https://cdn.example", API: "https://api.example", Tiles: "https://cdn.example",
 		Extra: []string{"https://tiles.openfreemap.org", "https://x.example"}}
 	want := "default-src 'none'; script-src https://cdn.example; style-src https://cdn.example 'unsafe-inline'; " +
 		"img-src https://cdn.example 'self' data: blob:; " +
-		"connect-src https://api.example/v1 https://cdn.example/t.pmtiles https://cdn.example https://tiles.openfreemap.org https://x.example; " +
+		"connect-src https://api.example https://cdn.example https://cdn.example https://tiles.openfreemap.org https://x.example; " +
 		"worker-src blob:; font-src https://cdn.example; base-uri 'none'; form-action 'none'; frame-ancestors https://shop.example"
 	if got := PageCSP("https://shop.example", o); got != want {
 		t.Fatalf("csp =\n%s\nwant\n%s", got, want)
@@ -43,7 +43,7 @@ func TestPageCSPExact(t *testing.T) {
 	// No extras: no trailing space.
 	o.Extra = nil
 	if got := PageCSP("'none'", o); got == "" || got[len(got)-len("frame-ancestors 'none'"):] != "frame-ancestors 'none'" ||
-		!contains(got, "connect-src https://api.example/v1 https://cdn.example/t.pmtiles https://cdn.example; ") {
+		!contains(got, "connect-src https://api.example https://cdn.example https://cdn.example; ") {
 		t.Fatalf("csp = %s", got)
 	}
 }

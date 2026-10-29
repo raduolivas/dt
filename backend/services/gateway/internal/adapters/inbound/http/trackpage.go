@@ -31,6 +31,10 @@ type TrackPageConfig struct {
 	// the page's own origin). Extra are further connect-src origins (dev).
 	API, Tiles, CDN string
 	Extra           []string
+	// Origins are the origins of API, Tiles, CDN and Extra as the CSP names
+	// them (scheme://host[:port], no path: a CSP source with a path only
+	// matches that exact path). Empty means no CDN/API/tiles sources.
+	Origins domain.PageOrigins
 }
 
 // pageJSON is the dt-config element the page script reads.
@@ -82,7 +86,7 @@ func MountTrackPage(mux *http.ServeMux, d TrackPageDeps) {
 	if err := trackPageTmpl.Execute(&body, map[string]any{"Base": base, "Config": cfg}); err != nil {
 		panic("httpapi: track page template: " + err.Error())
 	}
-	origins := domain.PageOrigins{CDN: d.Config.CDN, API: d.Config.API, Tiles: d.Config.Tiles, Extra: d.Config.Extra}
+	origins := d.Config.Origins
 	a := &trackPageAPI{page: d.Page, shell: body.Bytes(), origins: origins, log: log}
 
 	var h http.Handler = http.HandlerFunc(a.serve)
@@ -100,8 +104,6 @@ type trackPageAPI struct {
 }
 
 func (a *trackPageAPI) serve(w http.ResponseWriter, r *http.Request) {
-	// The path carries the link token: keep it out of the access log.
-	httpx.SetLogPath(r, "GET /t/{token}")
 	fa, err := a.page.FrameAncestors(r.Context(), r.PathValue("token"))
 	if err != nil {
 		a.log.WarnContext(r.Context(), "track_page_unavailable",
