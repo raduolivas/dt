@@ -9,7 +9,7 @@ ctx.onmessage = (e) => {
   const m = e.data;
   if (m.type !== 'build') return;
   try {
-    const { layers } = decodeTile({ tile: m.tile, data: m.data, origin: m.origin, theme: m.theme });
+    const { layers } = decodeTile({ tile: m.tile, data: m.data, origin: m.origin });
     ctx.postMessage({ type: 'built', id: m.id, layers }, transferList(layers));
   } catch (err) {
     ctx.postMessage({ type: 'error', id: m.id, message: err instanceof Error ? err.message : String(err) }, []);

@@ -1,53 +1,65 @@
 import { Color, ShapeUtils, Vector2 } from 'three';
-import { CITY_DAY, CITY_NIGHT, type CityColors } from '../../view/colors';
+import { DAY, NIGHT, type CityColors } from '../../view/colors';
 import { GeoProjection } from '../../engine/geo';
 import type { TileXY } from '../corridor';
 
 export type TileTheme = 'light' | 'dark';
 /** Linear RGB (vertex colors are not color managed, so the sRGB palette is converted once here). */
 export type RGB = [number, number, number];
+/**
+ * A vertex paint: the day color, then the night color (linear RGB each). Tiles carry both, so the theme fades on the
+ * GPU without rebuilding a tile.
+ */
+export type Paint = readonly [number, number, number, number, number, number];
 
-export interface Palette {
-  block: RGB;
-  blockSide: RGB;
-  road: RGB;
-  roadPath: RGB;
-  roadMark: RGB;
-  water: RGB;
-  park: RGB;
-  walls: RGB[];
-  roof: RGB;
-  roofRim: RGB;
-  roofAccent: RGB;
-  roofAccentRim: RGB;
-  roofUnit: RGB;
-  landuse: Record<string, RGB>;
+/** The city palette in vertex paints (day and night). */
+export interface TilePalette {
+  block: Paint;
+  blockSide: Paint;
+  road: Paint;
+  roadPath: Paint;
+  roadMark: Paint;
+  water: Paint;
+  park: Paint;
+  walls: Paint[];
+  roof: Paint;
+  roofRim: Paint;
+  roofAccent: Paint;
+  roofAccentRim: Paint;
+  roofUnit: Paint;
+  landuse: Record<string, Paint>;
 }
 
 const linear = (hex: number): RGB => {
   const c = new Color(hex); // three converts sRGB hex to the linear working space
   return [c.r, c.g, c.b];
 };
+const paint = (day: number, night: number): Paint => [...linear(day), ...linear(night)];
 
-export function paletteFor(theme: TileTheme): Palette {
-  const c: CityColors = theme === 'dark' ? CITY_NIGHT : CITY_DAY;
+export function tilePalette(): TilePalette {
+  const d: CityColors = DAY.city;
+  const n: CityColors = NIGHT.city;
+  const pick = (k: Exclude<keyof CityColors, 'walls' | 'landuse'>) => paint(d[k], n[k]);
   return {
-    block: linear(c.block),
-    blockSide: linear(c.blockSide),
-    road: linear(c.road),
-    roadPath: linear(c.roadPath),
-    roadMark: linear(c.roadMark),
-    water: linear(c.water),
-    park: linear(c.park),
-    walls: c.walls.map(linear),
-    roof: linear(c.roof),
-    roofRim: linear(c.roofRim),
-    roofAccent: linear(c.roofAccent),
-    roofAccentRim: linear(c.roofAccentRim),
-    roofUnit: linear(c.roofUnit),
-    landuse: Object.fromEntries(Object.entries(c.landuse).map(([k, v]) => [k, linear(v)])),
+    block: pick('block'),
+    blockSide: pick('blockSide'),
+    road: pick('road'),
+    roadPath: pick('roadPath'),
+    roadMark: pick('roadMark'),
+    water: pick('water'),
+    park: pick('park'),
+    walls: d.walls.map((w, i) => paint(w, n.walls[i % n.walls.length]!)),
+    roof: pick('roof'),
+    roofRim: pick('roofRim'),
+    roofAccent: pick('roofAccent'),
+    roofAccentRim: pick('roofAccentRim'),
+    roofUnit: pick('roofUnit'),
+    landuse: Object.fromEntries(Object.entries(d.landuse).map(([k, v]) => [k, paint(v, n.landuse[k] ?? n.block)])),
   };
 }
+
+/** The lit-window pattern is LIT_CELLS × LIT_CELLS windows; walls start at a seeded whole cell of it. */
+export const LIT_CELLS = 8;
 
 /** Top of the raised city blocks: every tile is a pale slab this high above the ground. */
 export const GROUND_Y = 0.8;
@@ -90,6 +102,8 @@ export interface MeshBuffers {
   normals: Float32Array;
   indices: Uint32Array;
   colors: Float32Array;
+  /** The night paint of every vertex (linear RGB), next to `colors` (the day). */
+  colorsNight: Float32Array;
 }
 
 /** Growable triangle mesh. Triangles are wound to face their vertex normal. */
@@ -97,12 +111,14 @@ export class MeshBuilder {
   private pos: number[] = [];
   private nor: number[] = [];
   private col: number[] = [];
+  private colN: number[] = [];
   private idx: number[] = [];
 
-  vertex(x: number, y: number, z: number, n: [number, number, number], c: RGB): number {
+  vertex(x: number, y: number, z: number, n: [number, number, number], c: Paint): number {
     this.pos.push(x, y, z);
     this.nor.push(n[0], n[1], n[2]);
     this.col.push(c[0], c[1], c[2]);
+    this.colN.push(c[3], c[4], c[5]);
     return this.pos.length / 3 - 1;
   }
 
@@ -138,6 +154,7 @@ export class MeshBuilder {
       normals: new Float32Array(this.nor),
       indices: new Uint32Array(this.idx),
       colors: new Float32Array(this.col),
+      colorsNight: new Float32Array(this.colN),
     };
   }
 }
@@ -229,7 +246,7 @@ export function flatArea(
   poly: { x: number; y: number }[][],
   proj: Projector,
   y: number,
-  c: RGB,
+  c: Paint,
 ): void {
   const rings = projectPolygon(poly, proj);
   if (rings[0]!.length < 3) return;
@@ -239,7 +256,7 @@ export function flatArea(
 }
 
 /** A flat quad along segment a→b, `half` wide on each side, at height y (straight ends). */
-export function segmentQuad(mesh: MeshBuilder, a: [number, number], b: [number, number], half: number, y: number, c: RGB): void {
+export function segmentQuad(mesh: MeshBuilder, a: [number, number], b: [number, number], half: number, y: number, c: Paint): void {
   const dx = b[0] - a[0];
   const dz = b[1] - a[1];
   const l = Math.hypot(dx, dz);

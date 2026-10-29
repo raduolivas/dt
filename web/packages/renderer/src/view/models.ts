@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 
 import { BUILDING_TINTS, COLORS } from './colors';
+import { LIT_CELLS, litWindowTexture } from './night';
 
-export { COLORS } from './colors';
+export { COLORS, DAY, NIGHT, type Palette } from './colors';
 
 const materialCache = new Map<string, THREE.MeshStandardMaterial>();
 
@@ -145,10 +146,10 @@ function textSign(text: string, w: number, h: number, bg: string, fg: string): T
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
-  return new THREE.Mesh(
-    new THREE.PlaneGeometry(w, h),
-    new THREE.MeshStandardMaterial({ map: t, roughness: 0.6 }),
-  );
+  // The sign lights up at night: its own picture as the emissive map (`applyTheme` raises the `sign` glow).
+  const m = new THREE.MeshStandardMaterial({ map: t, emissive: 0xffffff, emissiveMap: t, emissiveIntensity: 0, roughness: 0.6 });
+  m.userData.dtGlow = 'sign';
+  return new THREE.Mesh(new THREE.PlaneGeometry(w, h), m);
 }
 
 // ---------------------------------------------------------------------------
@@ -412,10 +413,20 @@ export function makeHouseOnFootprint(fp: FootprintShape, toward: { x: number; z:
   const walls = windowTexture().clone();
   walls.repeat.set(1 / 6.5, 1 / 6.5);
   walls.needsUpdate = true;
-  const body = new THREE.Mesh(prism(fp, 0, h), [
-    mat(COLORS.white),
-    new THREE.MeshStandardMaterial({ color: COLORS.white, map: walls, roughness: 0.75 }),
-  ]);
+  // Lit windows at night, like the city's buildings (the `windows` glow).
+  const lit = litWindowTexture().clone();
+  lit.repeat.set(1 / 6.5 / LIT_CELLS, 1 / 6.5 / LIT_CELLS);
+  lit.needsUpdate = true;
+  const wallMat = new THREE.MeshStandardMaterial({
+    color: COLORS.white,
+    map: walls,
+    emissive: 0xffffff,
+    emissiveMap: lit,
+    emissiveIntensity: 0,
+    roughness: 0.75,
+  });
+  wallMat.userData.dtGlow = 'windows';
+  const body = new THREE.Mesh(prism(fp, 0, h), [mat(COLORS.white), wallMat]);
   body.castShadow = body.receiveShadow = true;
   g.add(body);
 

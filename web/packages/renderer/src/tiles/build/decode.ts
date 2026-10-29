@@ -5,7 +5,7 @@ import { GeoProjection } from '../../engine/geo';
 import type { TileXY } from '../corridor';
 import { buildParks, buildLanduse, buildWater, quayTrees, type AreaBuffers, type ParkBuffers } from './areas';
 import { buildBuildings, type BuildingBuffers, type FootprintBuffers } from './buildings';
-import { insideRing, makeProjector, paletteFor, tileBounds, type Feature, type TileTheme } from './common';
+import { insideRing, makeProjector, tilePalette, tileBounds, type Feature } from './common';
 import { buildRoads, type RoadBuffers } from './roads';
 
 export type { TileTheme } from './common';
@@ -16,7 +16,6 @@ export interface BuildRequest {
   data: ArrayBuffer;
   /** Scene origin (the pickup); geometry is returned in metres around it. */
   origin: LatLng;
-  theme: TileTheme;
 }
 
 export interface BuildLayers {
@@ -35,7 +34,7 @@ export interface BuildResult {
 }
 
 /** Messages between the renderer and the tile worker. */
-export type WorkerIn = { type: 'build'; id: number; tile: TileXY; data: ArrayBuffer; origin: LatLng; theme: TileTheme };
+export type WorkerIn = { type: 'build'; id: number; tile: TileXY; data: ArrayBuffer; origin: LatLng };
 export type WorkerOut =
   | { type: 'built'; id: number; layers: BuildLayers }
   | { type: 'error'; id: number; message: string };
@@ -50,7 +49,7 @@ const PARKS = new Set(['park']);
 export function decodeTile(req: BuildRequest): BuildResult {
   const vt = new VectorTile(new PbfReader(req.data));
   const geo = new GeoProjection(req.origin);
-  const palette = paletteFor(req.theme);
+  const palette = tilePalette(); // day and night paints: a theme change never rebuilds a tile
 
   const read = (name: string, keep: (f: Feature) => boolean = () => true): { feats: Feature[]; extent: number } => {
     const layer = vt.layers[name];
@@ -116,6 +115,7 @@ function mergeParks(parts: ParkBuffers[]): ParkBuffers {
     positions: cat(parts.map((p) => p.positions), Float32Array),
     normals: cat(parts.map((p) => p.normals), Float32Array),
     colors: cat(parts.map((p) => p.colors), Float32Array),
+    colorsNight: cat(parts.map((p) => p.colorsNight), Float32Array),
     indices: cat(parts.map((p) => p.indices), Uint32Array, offsets),
     trees: cat(parts.map((p) => p.trees), Float32Array),
   };

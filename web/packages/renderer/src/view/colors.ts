@@ -75,21 +75,120 @@ export const CITY_DAY: CityColors = {
   },
 };
 
-/** A first night palette; the full night city (lit windows, streetlights) comes with the theme work. */
+/** The real-map city by night (albedo under the moon): deep blues, the water darker than the streets. */
 export const CITY_NIGHT: CityColors = {
-  ground: 0x141b33,
-  block: 0x222c4d,
-  blockSide: 0x1a2240,
-  road: 0x343f66,
-  roadPath: 0x2b3556,
-  roadMark: 0x9aa9dc,
-  water: 0x17305e,
-  park: 0x1f4a44,
-  walls: [0x4b5a8a, 0x45527f, 0x515f90, 0x3f4b78, 0x55588a],
-  roof: 0x3a4673,
-  roofRim: 0x5a6aa0,
-  roofAccent: 0x3f4d80,
-  roofAccentRim: 0x56649a,
-  roofUnit: 0x34406a,
-  landuse: { railway: 0x262f50, pitch: 0x214a40, playground: 0x214a40 },
+  ground: 0x1a2245,
+  block: 0x6c78ad,
+  blockSide: 0x4a5590,
+  road: 0x3a4474,
+  roadPath: 0x4f5a8c,
+  roadMark: 0xaab6e6,
+  water: 0x1d3a7c,
+  park: 0x3f7a74,
+  walls: [0xc4cdf0, 0xb8c3ec, 0xb1bde8, 0xa8b5e2, 0xbeb8ea],
+  roof: 0x8a96c8,
+  roofRim: 0xa9b5e2,
+  roofAccent: 0x7d8bc6,
+  roofAccentRim: 0x9aa7da,
+  roofUnit: 0x76829f,
+  landuse: {
+    railway: 0x65709f,
+    school: 0x7177ad,
+    university: 0x7177ad,
+    college: 0x7177ad,
+    kindergarten: 0x7177ad,
+    hospital: 0x7a76a8,
+    pitch: 0x467f76,
+    playground: 0x467f76,
+  },
+};
+
+export type ColorKey = keyof typeof COLORS;
+
+/** An emissive glow: `color` null keeps the material's own emissive color (pins in the partner color). */
+export interface Glow {
+  color: number | null;
+  intensity: number;
+}
+
+/**
+ * What glows: shop and house windows (`glass`, matched by the prototype's glass emissive), vehicle lamps (`lamp`,
+ * `tail`), the store's signs, the store and home pins, and the lit windows of the city's buildings.
+ */
+export type GlowKey = 'glass' | 'lamp' | 'tail' | 'sign' | 'pin' | 'windows';
+
+/**
+ * One theme of the scene: the prototype's model colors (`COLORS` keys), the real-map city colors, the sky and the
+ * two lights (hemisphere and sun, which is the moon at night), and what glows how much.
+ */
+export type Palette = Record<ColorKey, number> & {
+  sky: number;
+  hemiSky: number;
+  hemiGround: number;
+  hemiIntensity: number;
+  sunColor: number;
+  sunIntensity: number;
+  /** Where the sun (or moon) stands relative to what the camera looks at (scene metres). */
+  sunOffset: readonly [number, number, number];
+  city: CityColors;
+  glow: Record<GlowKey, Glow>;
+  /** Strength of the streetlight pools and the courier's headlight (0 = not drawn). */
+  streetlights: number;
+};
+
+/** The day: the prototype exactly (its `COLORS`, sky, hemisphere and warm sun). */
+export const DAY: Palette = {
+  ...COLORS,
+  sky: COLORS.ground,
+  hemiSky: 0xffffff,
+  hemiGround: 0xb9c6e6,
+  hemiIntensity: 1.5,
+  sunColor: 0xffffff,
+  sunIntensity: 2.4,
+  sunOffset: [-260, 420, 180],
+  city: CITY_DAY,
+  glow: {
+    glass: { color: 0x6f9cff, intensity: 0.25 },
+    lamp: { color: 0xfff1b8, intensity: 0.9 },
+    tail: { color: COLORS.coral, intensity: 0.5 },
+    sign: { color: null, intensity: 0 },
+    pin: { color: null, intensity: 0.25 },
+    windows: { color: null, intensity: 0 },
+  },
+  streetlights: 0,
+};
+
+/**
+ * The night, still the toy city: a deep blue sky, a cool moon (the sun light, moved and recolored), warm lit windows,
+ * streetlight pools, the store sign and the pins glowing. The bright accents (blue, coral, green, the rider) keep their
+ * day colors so the store, the home and the courier read the same.
+ */
+export const NIGHT: Palette = {
+  ...COLORS,
+  ground: CITY_NIGHT.ground,
+  road: 0x3a4474,
+  roadMark: 0xaab6e6,
+  block: 0x6c78ad,
+  white: 0xdfe5ff,
+  glass: 0x6a7fc0,
+  leaf: 0x5fa88f,
+  leafDark: 0x468a78,
+  trunk: 0x6f5d5a,
+  sky: 0x0d1430,
+  hemiSky: 0x8796d8,
+  hemiGround: 0x1a2147,
+  hemiIntensity: 1.0,
+  sunColor: 0xc0ccff,
+  sunIntensity: 1.0,
+  sunOffset: [240, 420, -150],
+  city: CITY_NIGHT,
+  glow: {
+    glass: { color: 0xffc46b, intensity: 1.1 },
+    lamp: { color: 0xfff1b8, intensity: 2.2 },
+    tail: { color: 0xff5a3a, intensity: 1.6 },
+    sign: { color: null, intensity: 0.9 },
+    pin: { color: null, intensity: 0.85 },
+    windows: { color: null, intensity: 1.35 },
+  },
+  streetlights: 1,
 };

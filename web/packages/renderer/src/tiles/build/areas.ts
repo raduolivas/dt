@@ -13,9 +13,9 @@ import {
   type Bounds,
   type Feature,
   type MeshBuffers,
-  type Palette,
+  type TilePalette,
   type Projector,
-  type RGB,
+  type Paint,
 } from './common';
 
 export type AreaBuffers = MeshBuffers;
@@ -27,7 +27,7 @@ const QUAY_HALF_M = 0.7;
  * Water: a soft blue plane with a quay edge in the block side color (so canals read as sunk between the raised
  * blocks). Ring edges that only exist because the tile cut the polygon get no quay.
  */
-export function buildWater(features: Feature[], proj: Projector, palette: Palette, bounds?: Bounds): AreaBuffers {
+export function buildWater(features: Feature[], proj: Projector, palette: TilePalette, bounds?: Bounds): AreaBuffers {
   const mesh = new MeshBuilder();
   for (const f of features) {
     for (const poly of classifyRings(f.rings)) {
@@ -60,7 +60,7 @@ function onTileCut(b: Bounds, p: [number, number], q: [number, number]): boolean
  * The tile's raised pale slab (top at GROUND_Y, sides down to the ground, so the loaded city stands like a diorama
  * block) plus the faint land use tints.
  */
-export function buildLanduse(features: Feature[], proj: Projector, palette: Palette, bounds?: Bounds): AreaBuffers {
+export function buildLanduse(features: Feature[], proj: Projector, palette: TilePalette, bounds?: Bounds): AreaBuffers {
   const mesh = new MeshBuilder();
   if (bounds) slab(mesh, bounds, palette.block, palette.blockSide);
   for (const f of features) {
@@ -71,7 +71,7 @@ export function buildLanduse(features: Feature[], proj: Projector, palette: Pale
   return mesh.build();
 }
 
-function slab(mesh: MeshBuilder, b: Bounds, top: RGB, side: RGB): void {
+function slab(mesh: MeshBuilder, b: Bounds, top: Paint, side: Paint): void {
   const up: [number, number, number] = [0, 1, 0];
   const t = [
     mesh.vertex(b.minX, GROUND_Y, b.minZ, up, top),
@@ -118,7 +118,7 @@ export const TREE_M2: Record<string, number> = {
 const MAX_TREES_PER_POLYGON = 160;
 
 /** Green areas plus scattered tree positions `[x, z, scale]` (stride 3), seeded per polygon, kept inside the tile. */
-export function buildParks(features: Feature[], proj: Projector, palette: Palette, bounds?: Bounds): ParkBuffers {
+export function buildParks(features: Feature[], proj: Projector, palette: TilePalette, bounds?: Bounds): ParkBuffers {
   const mesh = new MeshBuilder();
   const trees: number[] = [];
   for (const f of features) {

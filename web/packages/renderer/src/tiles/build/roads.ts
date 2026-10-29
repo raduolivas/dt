@@ -6,12 +6,16 @@ import {
   type Bounds,
   type Feature,
   type MeshBuffers,
-  type Palette,
+  type TilePalette,
   type Projector,
-  type RGB,
+  type Paint,
 } from './common';
 
-export type RoadBuffers = MeshBuffers;
+/**
+ * `lights`: streetlights, stride 3 `[x, z, yaw]`: the pole stands at x, z on the curb and its arm (local +Z, turned
+ * by `yaw` about Y) reaches over the street. Kept only inside the tile (tiles overlap a little).
+ */
+export type RoadBuffers = MeshBuffers & { lights: Float32Array };
 
 interface RoadStyle {
   /** Drawn width in metres: toy sized (wider than real) so the oversized courier fits the street. */
@@ -21,15 +25,17 @@ interface RoadStyle {
   path?: boolean;
   /** Dashed centre line, as on the prototype's streets. */
   marks?: boolean;
+  /** Streetlights along it (night). */
+  lit?: boolean;
 }
 
 const STYLES: Record<string, RoadStyle> = {
-  motorway: { width: 16, rank: 5, marks: true },
-  trunk: { width: 15, rank: 5, marks: true },
-  primary: { width: 13, rank: 4, marks: true },
-  secondary: { width: 12, rank: 3, marks: true },
-  tertiary: { width: 11, rank: 3, marks: true },
-  minor: { width: 8.5, rank: 2, marks: true },
+  motorway: { lit: true, width: 16, rank: 5, marks: true },
+  trunk: { lit: true, width: 15, rank: 5, marks: true },
+  primary: { lit: true, width: 13, rank: 4, marks: true },
+  secondary: { lit: true, width: 12, rank: 3, marks: true },
+  tertiary: { lit: true, width: 11, rank: 3, marks: true },
+  minor: { lit: true, width: 8.5, rank: 2, marks: true },
   busway: { width: 7, rank: 2 },
   service: { width: 5, rank: 1 },
   raceway: { width: 6, rank: 1 },
@@ -50,6 +56,9 @@ const DASH_M = 5;
 const DASH_PERIOD_M = 9;
 const DASH_HALF_W = 0.35;
 const MITER_LIMIT = 2.5;
+/** Streetlights: one every LIGHT_EVERY_M along a lit street, alternating sides, on the curb. */
+const LIGHT_EVERY_M = 34;
+const LIGHT_CURB_M = 0.9;
 
 function styleOf(f: Feature): RoadStyle | undefined {
   const cls = String(f.props.class ?? '');
@@ -62,14 +71,15 @@ function styleOf(f: Feature): RoadStyle | undefined {
  * blocks read as raised), with the light dashed centre line on streets. Footways and paths are thinner and lighter.
  * Bridges sit slightly raised. Tunnels, rail, ferries and cable cars are not drawn.
  */
-export function buildRoads(features: Feature[], proj: Projector, palette: Palette, bounds?: Bounds): RoadBuffers {
+export function buildRoads(features: Feature[], proj: Projector, palette: TilePalette, bounds?: Bounds): RoadBuffers {
   const mesh = new MeshBuilder();
+  const lights: number[] = [];
   for (const f of features) {
     const style = styleOf(f);
     if (!style || f.props.brunnel === 'tunnel') continue;
     const bridge = f.props.brunnel === 'bridge' ? LAYER_Y.bridge : 0;
     const base = LAYER_Y.road + style.rank * LAYER_Y.roadRank + bridge;
-    const color: RGB = style.path ? palette.roadPath : palette.road;
+    const color: Paint = style.path ? palette.roadPath : palette.road;
     for (const line of f.rings) {
       const pts: [number, number][] = [];
       for (const p of line) {
@@ -81,13 +91,38 @@ export function buildRoads(features: Feature[], proj: Projector, palette: Palett
       if (!style.path) ribbon(mesh, pts, style.width / 2 + CURB_M, base, palette.blockSide);
       ribbon(mesh, pts, style.width / 2, base + 0.015, color);
       if (style.marks) dashes(mesh, pts, base + 0.03, palette.roadMark, bounds);
+      if (style.lit && !bridge) streetlights(lights, pts, style.width / 2 + CURB_M + LIGHT_CURB_M, bounds);
     }
   }
-  return mesh.build();
+  return { ...mesh.build(), lights: new Float32Array(lights) };
+}
+
+/** Poles every LIGHT_EVERY_M along the line, alternating sides, `off` metres from the centre line. */
+function streetlights(out: number[], pts: [number, number][], off: number, bounds?: Bounds): void {
+  let next = LIGHT_EVERY_M / 2; // metres along the line to the next pole
+  let along = 0;
+  let side = 1;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1]!;
+    const b = pts[i]!;
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const ux = (b[0] - a[0]) / len;
+    const uz = (b[1] - a[1]) / len;
+    while (next <= along + len) {
+      const t = next - along;
+      // left normal (-uz, ux) times the side
+      const x = a[0] + ux * t - uz * off * side;
+      const z = a[1] + uz * t + ux * off * side;
+      if (!bounds || inBounds(bounds, x, z)) out.push(x, z, Math.atan2(uz * side, -ux * side));
+      side = -side;
+      next += LIGHT_EVERY_M;
+    }
+    along += len;
+  }
 }
 
 /** Dashes along the centre line; a dash is kept only when its middle is inside the tile (tiles overlap a little). */
-function dashes(mesh: MeshBuilder, pts: [number, number][], y: number, c: RGB, bounds?: Bounds): void {
+function dashes(mesh: MeshBuilder, pts: [number, number][], y: number, c: Paint, bounds?: Bounds): void {
   let phase = 2; // metres into the current period
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1]!;
@@ -110,7 +145,7 @@ function dashes(mesh: MeshBuilder, pts: [number, number][], y: number, c: RGB, b
   }
 }
 
-function ribbon(mesh: MeshBuilder, pts: [number, number][], half: number, y: number, c: RGB): void {
+function ribbon(mesh: MeshBuilder, pts: [number, number][], half: number, y: number, c: Paint): void {
   if (pts.length < 2) return;
   const dirs: [number, number][] = [];
   for (let i = 1; i < pts.length; i++) {

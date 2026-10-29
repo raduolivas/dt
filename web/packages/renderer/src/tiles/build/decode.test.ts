@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { fixtureTiles } from '../fixture';
 import { decodeTile, type BuildResult } from './decode';
 import { buildBuildings, toyHeight } from './buildings';
-import { paletteFor } from './common';
+import { tilePalette } from './common';
 
 const origin = { lat: 52.3702, lng: 4.8952 };
 
@@ -14,7 +14,7 @@ function decodeAll(): Promise<BuildResult[]> {
 
 async function decodeAllUncached(): Promise<BuildResult[]> {
   const tiles = await fixtureTiles();
-  return tiles.map((t) => decodeTile({ tile: { z: t.z, x: t.x, y: t.y }, data: t.data, origin, theme: 'light' }));
+  return tiles.map((t) => decodeTile({ tile: { z: t.z, x: t.x, y: t.y }, data: t.data, origin }));
 }
 
 describe('decodeTile', { timeout: 30_000 }, () => {
@@ -31,7 +31,7 @@ describe('decodeTile', { timeout: 30_000 }, () => {
   it('is deterministic: the same tile gives identical buffers (same tints)', async () => {
     const tiles = await fixtureTiles();
     const t = tiles[0]!;
-    const run = () => decodeTile({ tile: { z: t.z, x: t.x, y: t.y }, data: t.data, origin, theme: 'light' });
+    const run = () => decodeTile({ tile: { z: t.z, x: t.x, y: t.y }, data: t.data, origin });
     const a = run();
     const b = run();
     expect(Array.from(a.layers.buildings.colors)).toEqual(Array.from(b.layers.buildings.colors));
@@ -81,7 +81,7 @@ describe('buildings', () => {
     ],
   ];
   const proj = { project: (px: number, py: number): [number, number] => [px * 0.37, py * 0.37] };
-  const palette = paletteFor('light');
+  const palette = tilePalette();
 
   // Wall vertices only (horizontal normals): the roof rim and rooftop units sit a little above the roof.
   const wallYs = (b: { positions: Float32Array; normals: Float32Array }) =>

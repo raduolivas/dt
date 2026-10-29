@@ -9,7 +9,9 @@ import { openTileSource, type TileSource, type TileSourceSpec } from '../tiles/s
 import { createWorkerBuilder, type TileBuilder } from '../tiles/workerPool';
 import './scene.css';
 import { TileCity, placeSites } from './city';
-import { CITY_DAY, CITY_NIGHT } from './colors';
+import { DAY } from './colors';
+import { makeCourierGlow } from './night';
+import { THEME_FADE_MS, applyTheme, createLights, nightMix, refreshTheme, type ThemeFade } from './theme';
 import { CAM_OFFSET, FOLLOW_ZOOM, MAX_ZOOM, MIN_ZOOM, applyFrame, computeFrame, followZoom, setFrustum, type Insets } from './framing';
 import {
   COLORS,
@@ -94,7 +96,6 @@ export class CityScene {
   private readonly controls: OrbitControls;
   private readonly resizeObserver: ResizeObserver;
   private readonly sun: THREE.DirectionalLight;
-  private readonly hemi: THREE.HemisphereLight;
   private readonly ground: THREE.Mesh;
 
   private cityGroup = new THREE.Group();
@@ -103,6 +104,11 @@ export class CityScene {
   private readonly effects: Effects;
   private readonly speed = new SpeedMeter();
   private readonly halo: THREE.Mesh;
+  /** The courier's night glow (halo on the street, headlight beam); hidden with the halo when the courier fades. */
+  private readonly glowHolder = new THREE.Group();
+  private readonly courierGlow = makeCourierGlow();
+  /** Set at the end of the constructor (the first theme, at once). */
+  private themeFade: ThemeFade | null = null;
   private readonly routeActive: THREE.Mesh;
   private readonly routeNext: THREE.Mesh;
   private readonly routeActiveXray: THREE.Mesh;
@@ -196,26 +202,12 @@ export class CityScene {
     this.renderer.domElement.className = 'scene-canvas';
     container.appendChild(this.renderer.domElement);
 
-    this.scene.background = new THREE.Color(COLORS.ground);
+    this.scene.background = new THREE.Color(DAY.sky);
 
-    // lights
-    this.hemi = new THREE.HemisphereLight(0xffffff, 0xb9c6e6, 1.5);
-    this.scene.add(this.hemi);
-    const sun = new THREE.DirectionalLight(0xffffff, 2.4);
+    // lights: the hemisphere and the sun (the moon at night); the only real-time lights, by day and by night
+    const { hemi, sun } = createLights();
     this.sun = sun;
-    sun.position.set(-260, 420, 180);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    const sc = sun.shadow.camera;
-    sc.left = -520;
-    sc.right = 520;
-    sc.top = 520;
-    sc.bottom = -520;
-    sc.near = 10;
-    sc.far = 1400;
-    sun.shadow.bias = -0.0006;
-    sun.shadow.normalBias = 0.6;
-    this.scene.add(sun, sun.target);
+    this.scene.add(hemi, sun, sun.target);
 
     // the ground the city stands on (the tile city's blocks are raised slabs on it)
     this.ground = new THREE.Mesh(new THREE.PlaneGeometry(60000, 60000), mat(COLORS.ground, { roughness: 1 }));
@@ -254,7 +246,10 @@ export class CityScene {
     );
     this.halo.rotation.x = -Math.PI / 2;
     this.halo.position.y = 0.1;
+    (this.halo.material as THREE.Material).userData.dtColor = false;
     this.courierRoot.add(this.halo);
+    this.glowHolder.add(this.courierGlow);
+    this.courierRoot.add(this.glowHolder);
     this.scene.add(this.courierRoot);
     this.halo.layers.enable(XRAY_LAYER);
     this.mountCourier(this.courier);
@@ -262,8 +257,8 @@ export class CityScene {
     this.clock = opts.clock ?? (() => performance.now());
 
     // route ribbons
-    const ribbonMat = (color: number, opacity: number) =>
-      new THREE.MeshBasicMaterial({
+    const ribbonMat = (color: number, opacity: number) => {
+      const m = new THREE.MeshBasicMaterial({
         color,
         transparent: true,
         opacity,
@@ -272,6 +267,9 @@ export class CityScene {
         polygonOffsetFactor: -2,
         polygonOffsetUnits: -2,
       });
+      m.userData.dtColor = false; // the route is the partner's, by day and by night
+      return m;
+    };
     // The next leg: the route blue, half transparent (blueLight alone vanished against the real canals).
     this.routeNext = new THREE.Mesh(new THREE.BufferGeometry(), ribbonMat(COLORS.blue, 0.5));
     this.routeActive = new THREE.Mesh(new THREE.BufferGeometry(), ribbonMat(this.accent ?? ROUTE_ACTIVE, 0.95));
@@ -283,7 +281,7 @@ export class CityScene {
     this.routeActive.frustumCulled = false;
     // The route reads in every view: where buildings hide it, a see-through copy of each ribbon shows through.
     const xrayRibbon = (src: THREE.Mesh, opacity: number) => {
-      const m = (src.material as THREE.MeshBasicMaterial).clone();
+      const m = (src.material as THREE.MeshBasicMaterial).clone(); // keeps `dtColor = false`
       m.opacity = opacity;
       m.depthWrite = false;
       m.depthFunc = THREE.GreaterDepth;
@@ -314,6 +312,10 @@ export class CityScene {
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
     this.resize();
+
+    this.storeAccent.userData.dtColor = false;
+    // the first theme is there at once
+    this.themeFade = applyTheme(this.scene, this.theme, { fadeMs: 0 });
   }
 
   // ---------------------------------------------------------------------------
@@ -350,6 +352,7 @@ export class CityScene {
   setReducedMotion(on: boolean): void {
     this.effects.setReducedMotion(on);
     if (on && (this.goal || this.introLeft > 0)) this.finishCameraMove();
+    if (on) this.themeFade?.finish(); // no day/night fade under reduced motion
   }
 
   get reducedMotion(): boolean {
@@ -361,13 +364,15 @@ export class CityScene {
     this.insets = { ...i };
   }
 
+  /** Day (`light`) or night (`dark`): fades, or switches at once under reduced motion. */
   setTheme(t: TileTheme): void {
     if (t === this.theme) return;
     this.theme = t;
-    const c = t === 'dark' ? CITY_NIGHT : CITY_DAY;
-    (this.scene.background as THREE.Color).setHex(c.ground);
-    (this.ground.material as THREE.MeshStandardMaterial).color.setHex(c.ground);
-    this.tileCity?.setTheme(t);
+    this.themeFade = applyTheme(this.scene, t, { fadeMs: this.effects.reducedMotion ? 0 : THEME_FADE_MS });
+  }
+
+  get currentTheme(): TileTheme {
+    return this.theme;
   }
 
   onSnapshot(s: TrackingSnapshot): void {
@@ -452,6 +457,7 @@ export class CityScene {
     this.time += dt;
     const fx = this.effects;
     fx.frame(dt);
+    this.themeFade?.step(dt * 1000);
 
     // courier smoothing (also makes sparse real-world GPS fixes look fluid)
     const m = this.motion.frame(dt * 1000, this.clock());
@@ -532,7 +538,8 @@ export class CityScene {
 
     // the sun's shadow box follows what the camera looks at
     const tgt = this.controls.target;
-    this.sun.position.set(tgt.x - 260, 420, tgt.z + 180);
+    const off = this.sun.userData.offset as THREE.Vector3; // the sun's, or at night the moon's, place in the sky
+    this.sun.position.set(tgt.x + off.x, off.y, tgt.z + off.z);
     this.sun.target.position.copy(tgt);
 
     if (this.tileCity) {
@@ -593,6 +600,7 @@ export class CityScene {
     this.xray.dispose();
     this.xrayRibbonMats.forEach((m) => m.dispose());
     this.courierMats.forEach((m) => m.dispose());
+    (this.courierGlow.material as THREE.Material).dispose();
     this.storeAccent.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
@@ -703,6 +711,7 @@ export class CityScene {
     // the see-through silhouette fades with it, and the halo goes (also from the x-ray pass)
     this.xray.opacity = on ? XRAY_OPACITY * FADED_OPACITY : XRAY_OPACITY;
     this.halo.visible = !on;
+    this.glowHolder.visible = !on;
   }
 
   /**
@@ -731,6 +740,8 @@ export class CityScene {
     this.courierRoot.add(model.root);
     if (this.snap) model.parcel.visible = this.snap.status !== 'delivered';
     this.applyFade();
+    // lamps and tail lights glow at night, on every model (a theme set before the first mount applies in the constructor)
+    if (this.themeFade) refreshTheme(this.scene, model.root);
   }
 
   /** The camera's gentle intro: from a little further out and turned aside, it settles on the frame. */
@@ -820,7 +831,11 @@ export class CityScene {
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose();
         const ms = Array.isArray(o.material) ? o.material : [o.material];
-        for (const m of ms) if (m instanceof THREE.MeshStandardMaterial && m.map && m.map.image) m.map.dispose();
+        for (const m of ms) {
+          if (!(m instanceof THREE.MeshStandardMaterial)) continue;
+          if (m.map && m.map.image) m.map.dispose();
+          if (m.emissiveMap && m.emissiveMap !== m.map && m.emissiveMap.image) m.emissiveMap.dispose();
+        }
       }
     });
     this.cityGroup = new THREE.Group();
@@ -843,11 +858,16 @@ export class CityScene {
     this.storePin.position.set(store.center.x, store.top + 8, store.center.z);
     this.homePin = makePin(COLORS.coral);
     this.homePin.position.set(home.center.x, home.top + 8, home.center.z);
-    // the pins share cached materials; give them their own so accent and delivered can recolor them
-    this.homePinMat = ((this.homePin.children[1] as THREE.Mesh).material as THREE.MeshStandardMaterial).clone();
+    // the pins share cached materials; give them their own so accent and delivered can recolor them (their color is
+    // the partner's or the home's: the theme only makes them glow brighter at night)
+    const own = (m: THREE.MeshStandardMaterial) => {
+      m.userData = { dtColor: false, dtGlow: 'pin' };
+      return m;
+    };
+    this.homePinMat = own(((this.homePin.children[1] as THREE.Mesh).material as THREE.MeshStandardMaterial).clone());
     (this.homePin.children[0] as THREE.Mesh).material = this.homePinMat;
     (this.homePin.children[1] as THREE.Mesh).material = this.homePinMat;
-    this.storePinMat = ((this.storePin.children[1] as THREE.Mesh).material as THREE.MeshStandardMaterial).clone();
+    this.storePinMat = own(((this.storePin.children[1] as THREE.Mesh).material as THREE.MeshStandardMaterial).clone());
     (this.storePin.children[0] as THREE.Mesh).material = this.storePinMat;
     (this.storePin.children[1] as THREE.Mesh).material = this.storePinMat;
     this.cityGroup.add(this.storePin, this.homePin);
@@ -860,6 +880,7 @@ export class CityScene {
         new THREE.RingGeometry(5, 6.4, 40),
         new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }),
       );
+      (ring.material as THREE.Material).userData.dtColor = false; // recolored on delivered
       ring.rotation.x = -Math.PI / 2;
       ring.position.set(p.x, this.ribbonY + 0.1, p.z);
       this.cityGroup.add(ring);
@@ -868,6 +889,7 @@ export class CityScene {
     this.setLabelsVisible(true);
     this.applyAccent();
     this.applyHomePin();
+    refreshTheme(this.scene, this.cityGroup); // the store, home and pins built now take the current theme
   }
 
   // ---------------------------------------------------------------------------
@@ -884,8 +906,9 @@ export class CityScene {
     void this.tileSource!.then(async (source) => {
       if (gen !== this.generation) return;
       this.builder ??= createWorkerBuilder();
-      const city = new TileCity(group, source, this.projection, this.theme, { builder: this.builder });
+      const city = new TileCity(group, source, this.projection, { builder: this.builder });
       this.tileCity = city;
+      city.setNight(nightMix(this.scene));
       const { bytes } = await city.loadFirst(s);
       if (gen !== this.generation) return;
       this.onTiles?.({ bytes, ms: performance.now() - started, tiles: city.loadedTiles });

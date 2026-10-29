@@ -24,8 +24,11 @@ const sim = new DeliverySimulator(tiles ? amsterdamWorld() : GRID_WORLD);
 const sceneEl = $('scene');
 // ?reduced=1|0 forces reduced motion on or off (default: the system setting).
 const reducedParam = query.get('reduced');
+// ?theme=dark starts at night (light | dark | auto).
+const themeParam = query.get('theme') as 'light' | 'dark' | 'auto' | null;
 const scene = createRenderer(sceneEl, {
   tiles,
+  theme: themeParam ?? undefined,
   reducedMotion: reducedParam === null ? undefined : reducedParam !== '0',
   onTiles: (t) => {
     // Read by the screenshot / budget scripts.
@@ -169,6 +172,17 @@ const setVehicle = (v: Vehicle) => {
 vehicleButtons.forEach((b) => b.addEventListener('click', () => setVehicle(b.dataset.v as Vehicle)));
 const vehicleParam = query.get('vehicle') as Vehicle | null;
 if (vehicleParam && vehicleParam in VEHICLES) setVehicle(vehicleParam);
+
+// --- day / night ------------------------------------------------------------
+const themeButtons = Array.from($('p-theme').querySelectorAll<HTMLButtonElement>('button'));
+const showTheme = (t: string) => themeButtons.forEach((o) => o.classList.toggle('on', o.dataset.v === t));
+if (themeParam === 'dark' || themeParam === 'light') showTheme(themeParam);
+themeButtons.forEach((b) =>
+  b.addEventListener('click', () => {
+    scene.setTheme(b.dataset.v as 'light' | 'dark');
+    showTheme(b.dataset.v!);
+  }),
+);
 
 // --- reduced motion: system -> on -> off ------------------------------------
 const motionBtn = $('btn-motion');

@@ -1,4 +1,5 @@
 import {
+  LIT_CELLS,
   MeshBuilder,
   classifyRings,
   insideRing,
@@ -9,9 +10,9 @@ import {
   triangulate,
   type Feature,
   type MeshBuffers,
-  type Palette,
+  type TilePalette,
   type Projector,
-  type RGB,
+  type Paint,
 } from './common';
 
 /**
@@ -51,16 +52,16 @@ const PLAIN_U = 0.04;
 const PLAIN_V = 0.04;
 
 /** Stable per-building tint, seeded from the building polygon. */
-export function buildingTint(seed: number, palette: Palette): RGB {
+export function buildingTint(seed: number, palette: TilePalette): Paint {
   const rnd = mulberry32(seed);
   const base = palette.walls[Math.floor(rnd() * palette.walls.length)]!;
   const k = 0.96 + rnd() * 0.06;
-  return [Math.min(1, base[0] * k), Math.min(1, base[1] * k), Math.min(1, base[2] * k)];
+  return base.map((c) => Math.min(1, c * k)) as unknown as Paint;
 }
 
 class UvMesh extends MeshBuilder {
   readonly uv: number[] = [];
-  v(x: number, y: number, z: number, n: [number, number, number], c: RGB, u: number, w: number): number {
+  v(x: number, y: number, z: number, n: [number, number, number], c: Paint, u: number, w: number): number {
     this.uv.push(u, w);
     return this.vertex(x, y, z, n, c);
   }
@@ -78,7 +79,7 @@ class UvMesh extends MeshBuilder {
 export function buildBuildings(
   features: Feature[],
   proj: Projector,
-  palette: Palette,
+  palette: TilePalette,
 ): BuildingBuffers & { footprints: FootprintBuffers } {
   const mesh = new UvMesh();
   const coords: number[] = [];
@@ -95,7 +96,8 @@ export function buildBuildings(
       const projected = projectPolygon(poly, proj);
       if (projected[0]!.length < 3) continue;
       const first = mesh.vertices;
-      addBuilding(mesh, projected, h, minH, mulberry32(polygonSeed(poly)), palette);
+      const seed = polygonSeed(poly);
+      addBuilding(mesh, projected, h, minH, mulberry32(seed), mulberry32(seed ^ 0x51ed27), palette);
       const b = info.length / 4;
       projected.forEach((ring, ri) => {
         rings.push(coords.length / 2, ring.length, b, ri === 0 ? 0 : 1);
@@ -121,12 +123,26 @@ function ringArea(ring: [number, number][]): number {
   return a / 2;
 }
 
-function addBuilding(mesh: UvMesh, rings: [number, number][][], h: number, minH: number, rnd: () => number, palette: Palette): void {
+/**
+ * `lit` picks where each wall starts in the lit-window pattern (whole cells, so the day's one-cell window texture is
+ * unchanged): neighbouring walls and buildings light different windows. Its own sequence, so the day look's seeded
+ * choices (`rnd`) stay what they were.
+ */
+function addBuilding(
+  mesh: UvMesh,
+  rings: [number, number][][],
+  h: number,
+  minH: number,
+  rnd: () => number,
+  lit: () => number,
+  palette: TilePalette,
+): void {
   const tint = buildingTint(Math.floor(rnd() * 2 ** 32), palette);
   const accent = rnd() < ACCENT_SHARE;
   const roof = accent ? palette.roofAccent : palette.roof;
   const rim = accent ? palette.roofAccentRim : palette.roofRim;
   const rows = h - minH >= 4 ? Math.max(1, Math.round((h - minH) / WINDOW_M)) : 0;
+  const row0 = Math.floor(lit() * LIT_CELLS);
 
   // Walls: every edge of every ring, facing away from the polygon interior, with whole windows.
   rings.forEach((ring, ri) => {
@@ -140,10 +156,11 @@ function addBuilding(mesh: UvMesh, rings: [number, number][][], h: number, minH:
       if (l < 1e-4) continue;
       const n: [number, number, number] = [(dz / l) * outward, 0, (-dx / l) * outward];
       const cols = l >= 3 && rows > 0 ? Math.max(1, Math.round(l / WINDOW_M)) : 0;
-      const u1 = cols > 0 ? cols : PLAIN_U;
-      const v1 = rows > 0 ? rows : PLAIN_V;
-      const u0 = cols > 0 ? 0 : PLAIN_U;
-      const v0 = rows > 0 ? 0 : PLAIN_V;
+      const col0 = Math.floor(lit() * LIT_CELLS);
+      const u1 = cols > 0 ? col0 + cols : PLAIN_U;
+      const v1 = rows > 0 ? row0 + rows : PLAIN_V;
+      const u0 = cols > 0 ? col0 : PLAIN_U;
+      const v0 = rows > 0 ? row0 : PLAIN_V;
       const w0 = mesh.v(a[0], minH, a[1], n, tint, u0, v0);
       const w1 = mesh.v(b[0], minH, b[1], n, tint, u1, v0);
       const w2 = mesh.v(b[0], h, b[1], n, tint, u1, v1);
@@ -181,7 +198,7 @@ function addBuilding(mesh: UvMesh, rings: [number, number][][], h: number, minH:
   }
 }
 
-function roofUnit(mesh: UvMesh, cx: number, cz: number, s: number, y: number, uh: number, c: RGB): void {
+function roofUnit(mesh: UvMesh, cx: number, cz: number, s: number, y: number, uh: number, c: Paint): void {
   const top = y + uh;
   const q = (pts: [number, number, number][], n: [number, number, number]) => {
     const ids = pts.map((p) => mesh.v(p[0], p[1], p[2], n, c, PLAIN_U, PLAIN_V));

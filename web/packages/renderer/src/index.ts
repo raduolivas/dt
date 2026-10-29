@@ -8,9 +8,13 @@ export type { Insets } from './view/framing';
 import type { Insets } from './view/framing';
 export { activeLeg, activeLegKind, toLatLng, viewKind, type ViewKind } from './snapshot';
 
+/** `light` is the day city, `dark` the night city; `auto` (partner branding) follows `prefers-color-scheme`. */
+export type RendererTheme = 'light' | 'dark' | 'auto';
+
 export interface RendererOptions {
   mode?: '3d' | '2d';
-  theme?: 'light' | 'dark';
+  /** Default `light`. Changing it later fades between day and night (at once under reduced motion). */
+  theme?: RendererTheme;
   /** No camera moves, bounces, sway, shimmer or pulses (the courier still moves). Unset: `prefers-reduced-motion`. */
   reducedMotion?: boolean;
   /** Absent = the procedural grid city (dev only). */
@@ -27,7 +31,8 @@ export interface RendererOptions {
 export interface Renderer {
   update(s: TrackingSnapshot): void;
   setMode(m: '3d' | '2d'): void;
-  setTheme(t: 'light' | 'dark'): void;
+  /** Day or night: a short fade, or at once under reduced motion. */
+  setTheme(t: RendererTheme): void;
   setAccent(c: string | null): void;
   overview(): void;
   setFollow(on: boolean): void;
@@ -42,6 +47,9 @@ export interface Renderer {
  * Draws a `TrackingSnapshot` in `container`. The snapshot is the only input: the renderer never
  * infers a hidden courier, never shows the courier photo and never shows the dropoff label.
  */
+const resolveTheme = (t: RendererTheme | undefined): 'light' | 'dark' =>
+  t === 'auto' ? (typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : (t ?? 'light');
+
 export function createRenderer(container: HTMLElement, o: RendererOptions = {}): Renderer {
   const clock = o.clock ?? (() => performance.now());
   // Reduced motion: the option when given, else the system setting (followed while it changes).
@@ -50,7 +58,7 @@ export function createRenderer(container: HTMLElement, o: RendererOptions = {}):
   const scene = new CityScene(container, {
     accent: o.accent,
     tiles: o.tiles,
-    theme: o.theme,
+    theme: resolveTheme(o.theme),
     onTiles: o.onTiles,
     clock: o.clock,
     reducedMotion: o.reducedMotion ?? media?.matches ?? false,
@@ -61,7 +69,7 @@ export function createRenderer(container: HTMLElement, o: RendererOptions = {}):
   media?.addEventListener?.('change', onMedia);
   const gate = new SnapshotGate();
   // `mode` is accepted now and used by the 2D task.
-  const state = { mode: o.mode ?? '3d', theme: o.theme ?? 'light' };
+  const state = { mode: o.mode ?? '3d' };
   void state;
 
   let raf = 0;
@@ -94,8 +102,7 @@ export function createRenderer(container: HTMLElement, o: RendererOptions = {}):
       state.mode = m;
     },
     setTheme(t) {
-      state.theme = t;
-      scene.setTheme(t);
+      scene.setTheme(resolveTheme(t));
     },
     setAccent(c) {
       scene.setAccent(c);

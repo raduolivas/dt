@@ -65,7 +65,7 @@ function devSnap(preset: keyof typeof AMS_HOMES): TrackingSnapshot {
 
 async function cityFor(s: TrackingSnapshot) {
   const group = new THREE.Group();
-  const city = new TileCity(group, await fixture(), new GeoProjection(s.pickup.location), 'light', { builder });
+  const city = new TileCity(group, await fixture(), new GeoProjection(s.pickup.location), { builder });
   const first = await city.loadFirst(s);
   return { group, city, first };
 }
@@ -132,7 +132,7 @@ describe('TileCity', { timeout: 30_000 }, () => {
     const inner = await fixture();
     const requested: string[] = [];
     const source: TileSource = { zoom: inner.zoom, get: (z, x, y, sig) => (requested.push(`${z}/${x}/${y}`), inner.get(z, x, y, sig)) };
-    const city = new TileCity(new THREE.Group(), source, new GeoProjection(s.pickup.location), 'light', { builder });
+    const city = new TileCity(new THREE.Group(), source, new GeoProjection(s.pickup.location), { builder });
     const first = city.loadFirst(s);
     // The camera is already pulled back over the whole route while the first tiles load.
     city.loadMore(new THREE.Vector3(0, 0, 0), 10_000);
@@ -167,7 +167,7 @@ describe('TileCity', { timeout: 30_000 }, () => {
       },
     };
     const group = new THREE.Group();
-    const city = new TileCity(group, await fixture(), new GeoProjection(s.pickup.location), 'light', { builder: flaky });
+    const city = new TileCity(group, await fixture(), new GeoProjection(s.pickup.location), { builder: flaky });
     const warn = console.warn;
     console.warn = () => {};
     try {

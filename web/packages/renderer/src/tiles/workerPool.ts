@@ -55,7 +55,7 @@ export function createWorkerBuilder(size = defaultSize()): TileBuilder {
         const id = nextId++;
         pending.set(id, { resolve, reject, w });
         busy.set(w, busy.get(w)! + 1);
-        const msg: WorkerIn = { type: 'build', id, tile: req.tile, data: req.data, origin: req.origin, theme: req.theme };
+        const msg: WorkerIn = { type: 'build', id, tile: req.tile, data: req.data, origin: req.origin };
         w.postMessage(msg); // the raw tile is copied, the caller keeps it for re-theming
       });
     },

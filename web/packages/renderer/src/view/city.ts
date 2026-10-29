@@ -3,11 +3,12 @@ import type { LatLng, TrackingSnapshot } from '@dt/contract';
 import type { GeoProjection, Vec2 } from '../engine/geo';
 import { toLatLng } from '../snapshot';
 import { GROUND_Y } from '../tiles/build/common';
-import type { BuildLayers, FootprintBuffers, TileTheme } from '../tiles/build/decode';
+import type { BuildLayers, FootprintBuffers } from '../tiles/build/decode';
 import { boxTiles, corridorTiles, distanceToTileM, type TileXY } from '../tiles/corridor';
 import type { TileSource } from '../tiles/source';
 import { createWorkerBuilder, type TileBuilder } from '../tiles/workerPool';
-import { COLORS } from './colors';
+import { COLORS, NIGHT } from './colors';
+import { Streetlights, isStreetlight, litWindowTexture } from './night';
 import {
   HOUSE_HEIGHT,
   STORE_HEIGHT,
@@ -26,8 +27,11 @@ import {
 
 export type { TileBuilder } from '../tiles/workerPool';
 
-/** Scene layers of one tile; each is at most one draw call (one merged mesh, trees one instanced mesh). */
-export const TILE_LAYERS = ['landuse', 'parks', 'water', 'roads', 'buildings', 'trees'] as const;
+/**
+ * Scene layers of one tile; each is at most one draw call (one merged mesh, trees and streetlights one instanced mesh
+ * each). The streetlights and their light pools are drawn only at night.
+ */
+export const TILE_LAYERS = ['landuse', 'parks', 'water', 'roads', 'buildings', 'trees', 'streetlights', 'lightPools'] as const;
 export type TileLayer = (typeof TILE_LAYERS)[number];
 
 /** Plan P9: the first load is a corridor along the legs plus the store and home surroundings. */
@@ -51,7 +55,6 @@ export interface Footprint extends FootprintShape {
 interface LoadedTile {
   xy: TileXY;
   group: THREE.Group;
-  /** Raw tile, kept to rebuild on a theme change. */
   data: ArrayBuffer | null;
   footprints: FootprintBuffers | null;
   buildings: THREE.Mesh | null;
@@ -73,9 +76,13 @@ export class TileCity {
   private readonly abort = new AbortController();
   private readonly builder: TileBuilder;
   private readonly ownsBuilder: boolean;
-  private readonly materials: Record<Exclude<TileLayer, 'trees'> | 'trees', THREE.Material>;
+  private readonly materials: Record<Exclude<TileLayer, 'streetlights' | 'lightPools'>, THREE.Material>;
   private readonly treeGeo = treeGeometry();
+  private readonly streetlights = new Streetlights();
   private readonly shimmer = { value: 0 };
+  /** 0 = day, 1 = night: every tile carries both paints and the shaders blend them. */
+  private readonly night = { value: 0 };
+  private readonly treeNight = new THREE.Color(1, 1, 1);
   private readonly cut: Cutaway = {
     uDtFocus: { value: new THREE.Vector3() },
     uDtToCamera: { value: new THREE.Vector3(0, 1, 0) },
@@ -95,22 +102,29 @@ export class TileCity {
     private readonly root: THREE.Group,
     private readonly source: TileSource,
     readonly projection: GeoProjection,
-    private theme: TileTheme,
     opts: { builder?: TileBuilder } = {},
   ) {
     this.ownsBuilder = !opts.builder;
     this.builder = opts.builder ?? createWorkerBuilder();
-    const flat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 });
+    const flat = withNightPaint(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 }), this.night);
+    flat.customProgramCacheKey = () => 'dt-flat';
+    // The lit windows: an emissive map that only glows at night (`applyTheme` raises the `windows` glow).
+    const walls = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      map: windowTexture(),
+      emissive: 0xffffff,
+      emissiveMap: litWindowTexture(),
+      emissiveIntensity: 0,
+      roughness: 0.75,
+      metalness: 0.02,
+    });
+    walls.userData.dtGlow = 'windows';
     this.materials = {
       landuse: flat,
       parks: flat,
       roads: flat,
-      water: waterMaterial(this.shimmer),
-      buildings: withCutaway(
-        new THREE.MeshStandardMaterial({ vertexColors: true, map: windowTexture(), roughness: 0.75, metalness: 0.02 }),
-        this.cut,
-        'buildings',
-      ),
+      water: waterMaterial(this.shimmer, this.night),
+      buildings: withCutaway(withNightPaint(walls, this.night), this.cut, 'buildings'),
       trees: withCutaway(
         new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.8, metalness: 0.02 }),
         this.cut,
@@ -118,6 +132,28 @@ export class TileCity {
         this.shimmer,
       ),
     };
+    // `applyTheme` finds the city through its root.
+    root.userData.dtNight = (k: number) => this.setNight(k);
+  }
+
+  /** Streetlights standing in the loaded tiles. */
+  get streetlightCount(): number {
+    let n = 0;
+    for (const t of this.tiles.values()) {
+      for (const o of t.group.children) if (isStreetlight(o) && o.userData.layer === 'streetlights') n += o.count;
+    }
+    return n;
+  }
+
+  /** 0 = day, 1 = night: blends the tiles' paints, tints the trees and shows the streetlights (only at night). */
+  setNight(k: number): void {
+    this.night.value = k;
+    const leaf = new THREE.Color(COLORS.leaf);
+    const nightLeaf = new THREE.Color(NIGHT.leaf);
+    this.treeNight.setRGB(1, 1, 1).lerp(new THREE.Color(nightLeaf.r / leaf.r, nightLeaf.g / leaf.g, nightLeaf.b / leaf.b), k);
+    (this.materials.trees as THREE.MeshStandardMaterial).color.copy(this.treeNight);
+    this.streetlights.setNight(k);
+    for (const t of this.tiles.values()) for (const o of t.group.children) if (isStreetlight(o)) o.visible = k > 0;
   }
 
   get loadedTiles(): number {
@@ -198,13 +234,6 @@ export class TileCity {
     while (this.inflight.size > 0) await Promise.allSettled([...this.inflight]);
   }
 
-  /** Rebuilds the loaded tiles with the other palette. */
-  setTheme(t: TileTheme): void {
-    if (t === this.theme) return;
-    this.theme = t;
-    for (const tile of this.tiles.values()) void this.build(tile);
-  }
-
   /** Per-frame: the water shimmer and the trees' sway (`time` in seconds; pass a constant to stop both). */
   frame(time: number): void {
     this.shimmer.value = time;
@@ -247,6 +276,8 @@ export class TileCity {
     this.pending.clear();
     for (const m of new Set(Object.values(this.materials))) m.dispose();
     this.treeGeo.dispose();
+    this.streetlights.dispose();
+    if (this.root.userData.dtNight) delete this.root.userData.dtNight;
     if (this.ownsBuilder) this.builder.dispose?.();
   }
 
@@ -294,12 +325,8 @@ export class TileCity {
 
   private async build(tile: LoadedTile): Promise<void> {
     if (!tile.data) return;
-    const theme = this.theme;
-    const layers = await this.builder.build(
-      { tile: tile.xy, data: tile.data, origin: this.projection.origin, theme },
-      this.abort.signal,
-    );
-    if (this.disposed || theme !== this.theme || this.tiles.get(key(tile.xy)) !== tile) return;
+    const layers = await this.builder.build({ tile: tile.xy, data: tile.data, origin: this.projection.origin }, this.abort.signal);
+    if (this.disposed || this.tiles.get(key(tile.xy)) !== tile) return;
     disposeGroup(tile.group);
     tile.group.clear();
     this.addMeshes(tile, layers);
@@ -349,6 +376,11 @@ export class TileCity {
       trees.castShadow = true;
       trees.receiveShadow = false;
       add('trees', trees);
+    }
+    const lights = this.streetlights.build(l.roads.lights, GROUND_Y);
+    if (lights) {
+      add('streetlights', lights.poles);
+      add('lightPools', lights.glow);
     }
   }
 
@@ -512,7 +544,14 @@ function legsOf(s: TrackingSnapshot): LatLng[][] {
 }
 
 function mesh(
-  b: { positions: Float32Array; normals: Float32Array; colors: Float32Array; indices: Uint32Array; uvs?: Float32Array },
+  b: {
+    positions: Float32Array;
+    normals: Float32Array;
+    colors: Float32Array;
+    colorsNight: Float32Array;
+    indices: Uint32Array;
+    uvs?: Float32Array;
+  },
   material: THREE.Material,
   shadows: boolean,
 ): THREE.Mesh | null {
@@ -521,6 +560,7 @@ function mesh(
   g.setAttribute('position', new THREE.BufferAttribute(b.positions, 3));
   g.setAttribute('normal', new THREE.BufferAttribute(b.normals, 3));
   g.setAttribute('color', new THREE.BufferAttribute(b.colors, 3));
+  g.setAttribute('colorNight', new THREE.BufferAttribute(b.colorsNight, 3));
   if (b.uvs) g.setAttribute('uv', new THREE.BufferAttribute(b.uvs, 2));
   g.setIndex(new THREE.BufferAttribute(b.indices, 1));
   g.computeBoundingSphere();
@@ -645,7 +685,9 @@ function withCutaway(
   name: string,
   sway?: { value: number },
 ): THREE.MeshStandardMaterial {
-  m.onBeforeCompile = (shader) => {
+  const before = m.onBeforeCompile; // the night paint, when the material has one
+  m.onBeforeCompile = (shader, renderer) => {
+    before.call(m, shader, renderer);
     Object.assign(shader.uniforms, cut);
     if (sway) shader.uniforms.uDtSway = sway;
     // Trees sway in the wind: the crown moves, the trunk's foot stays put; each tree on its own phase.
@@ -697,10 +739,26 @@ function withCutaway(
   return m;
 }
 
-/** The water: vertex colored, slightly glossy, with a gentle moving shimmer (shader tweak, no extra pass). */
-function waterMaterial(time: { value: number }): THREE.MeshStandardMaterial {
-  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.05 });
+/**
+ * Tile vertex colors carry a day and a night paint (`color`, `colorNight`): the vertex shader blends them by
+ * `night` (0 = day, 1 = night), so a theme fade is one uniform and no tile is rebuilt. Chains any later hook.
+ */
+function withNightPaint<M extends THREE.Material>(m: M, night: { value: number }): M {
   m.onBeforeCompile = (shader) => {
+    shader.uniforms.uDtNight = night;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec3 colorNight;\nuniform float uDtNight;')
+      .replace('#include <color_vertex>', '#include <color_vertex>\nvColor.rgb = mix(color.rgb, colorNight, uDtNight);');
+  };
+  return m;
+}
+
+/** The water: vertex colored, slightly glossy, with a gentle moving shimmer (shader tweak, no extra pass). */
+function waterMaterial(time: { value: number }, night: { value: number }): THREE.MeshStandardMaterial {
+  const m = withNightPaint(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.05 }), night);
+  const paint = m.onBeforeCompile;
+  m.onBeforeCompile = (shader, renderer) => {
+    paint.call(m, shader, renderer);
     shader.uniforms.uDtTime = time;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec2 vDtWater;')
