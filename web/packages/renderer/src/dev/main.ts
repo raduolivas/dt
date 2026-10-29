@@ -1,25 +1,27 @@
 import './style.css';
-import { DeliverySimulator } from './engine/simulator';
-import type { DestinationPreset } from './engine/types';
-import { CityScene } from './view/CityScene';
+import { createRenderer } from '../index';
+import { DeliverySimulator } from './simulator';
+import type { DestinationPreset } from './world';
 import { Hud, courierLabel } from './ui';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const sim = new DeliverySimulator();
-const scene = new CityScene($('scene'));
+const sceneEl = $('scene');
+const scene = createRenderer(sceneEl, {});
 const hud = new Hud();
+const courierTag = () => sceneEl.querySelector<HTMLElement>('.scene-label.courier');
+const devState = () => ({ running: sim.isRunning, phase: sim.currentStatus, elapsedSec: sim.elapsedSec });
 
-scene.setDestination(sim.params.destination);
-
-// engine -> view + HUD. Swap `sim` for any other TrackingSource (WebSocket, polling...) and nothing else changes.
+// engine -> view + HUD. Swap `sim` for any other snapshot source (WebSocket, polling...) and nothing else changes.
 sim.subscribe((snap) => {
-  scene.onSnapshot(snap);
-  scene.setCourierLabel(courierLabel(snap));
-  hud.update(snap, sim.isRunning);
+  scene.update(snap);
+  const tag = courierTag();
+  if (tag) tag.textContent = courierLabel(snap, sim.currentStatus);
+  hud.update(snap, devState());
 });
 
-const refresh = () => hud.update(sim.snapshot(), sim.isRunning);
+const refresh = () => hud.update(sim.snapshot(), devState());
 
 // --- toolbar --------------------------------------------------------------
 const runOrPause = () => {
@@ -39,12 +41,15 @@ $('btn-reset').addEventListener('click', () => {
   refresh();
 });
 const followBtn = $('btn-follow');
+let following = true;
 followBtn.addEventListener('click', () => {
-  scene.setFollow(!scene.isFollowing);
-  followBtn.classList.toggle('on', scene.isFollowing);
+  following = !following;
+  scene.setFollow(following);
+  followBtn.classList.toggle('on', following);
 });
 $('btn-overview').addEventListener('click', () => {
   scene.overview();
+  following = false;
   followBtn.classList.remove('on');
 });
 const params = $('params');
@@ -78,19 +83,34 @@ destButtons.forEach((b) =>
     const v = b.dataset.v as DestinationPreset;
     destButtons.forEach((o) => o.classList.toggle('on', o === b));
     sim.setParams({ destination: v });
-    scene.setDestination(v);
     sim.reset();
     refresh();
   }),
 );
 
-// --- main loop ------------------------------------------------------------
+const modeButtons = Array.from($('p-model').querySelectorAll<HTMLButtonElement>('button'));
+modeButtons.forEach((b) =>
+  b.addEventListener('click', () => {
+    modeButtons.forEach((o) => o.classList.toggle('on', o === b));
+    sim.setParams({ model: b.dataset.v as 'direct' | 'end_to_end' });
+    sim.reset();
+    refresh();
+  }),
+);
+const signalBtn = $('btn-signal');
+signalBtn.addEventListener('click', () => {
+  const live = sim.courierSignal === 'live';
+  sim.setSignal(live ? 'lost' : 'live');
+  signalBtn.textContent = live ? 'Restore signal' : 'Drop signal';
+  refresh();
+});
+
+// --- simulator loop (the renderer runs its own frame loop) ------------------
 let last = performance.now();
 const loop = (now: number) => {
   const dt = (now - last) / 1000;
   last = now;
   sim.update(dt);
-  scene.frame(dt);
   requestAnimationFrame(loop);
 };
 requestAnimationFrame(loop);

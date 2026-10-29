@@ -94,12 +94,24 @@
           </div>
           <small>Changing the distance restarts the order.</small>
         </div>
+        <div class="field">
+          <span>Delivery model</span>
+          <div class="seg" id="p-model">
+            <button data-v="end_to_end" class="on">End to end</button>
+            <button data-v="direct">Direct</button>
+          </div>
+          <small>Direct hides the courier until pickup. Changing the model restarts the order.</small>
+        </div>
+        <div class="field">
+          <span>Courier signal</span>
+          <button id="btn-signal">Drop signal</button>
+        </div>
         <details>
           <summary>Live snapshot (the integration contract)</summary>
           <pre id="json"></pre>
         </details>
       </section>
     </div>
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="./main.ts"></script>
   </body>
 </html>

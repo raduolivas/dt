@@ -1,15 +1,59 @@
-import { Path } from './path';
-import { routeBetween } from './router';
-import { COURIER_START, DESTINATIONS, STORE, projection } from './world';
-import type { Vec2 } from './geo';
-import {
-  DEFAULT_PARAMS,
-  type OrderStatus,
-  type SimParams,
-  type SnapshotListener,
-  type TrackingSnapshot,
-  type TrackingSource,
-} from './types';
+import type { CourierSignal, DeliveryStatus, TrackingSnapshot } from '@dt/contract';
+
+type DeliveryModel = TrackingSnapshot['delivery_model'];
+import { Path } from '../engine/path';
+import { routeBetween } from '../engine/router';
+import type { Vec2 } from '../engine/geo';
+import { COURIER_START, DESTINATIONS, STORE, projection, type DestinationPreset } from './world';
+
+/** The simulator's own finer-grained phases; the v1 `DeliveryStatus` is derived from them. */
+export type OrderStatus =
+  | 'requested'
+  | 'accepted'
+  | 'to_store'
+  | 'at_store'
+  | 'picked_up'
+  | 'on_the_way'
+  | 'arriving'
+  | 'delivered';
+
+export type SnapshotListener = (snapshot: TrackingSnapshot) => void;
+
+export interface SimParams {
+  /** Cruising speed of the bicycle. */
+  courierSpeedKmh: number;
+  /** How long the store needs to prepare the order once the courier arrived. */
+  prepTimeSec: number;
+  /** Simulated seconds per real second. */
+  timeScale: number;
+  destination: DestinationPreset;
+  /** `direct` hides the courier until `picked_up`; `end_to_end` shows it from `courier_assigned`. */
+  model: DeliveryModel;
+}
+
+export const DEFAULT_PARAMS: SimParams = {
+  courierSpeedKmh: 18,
+  prepTimeSec: 25,
+  timeScale: 4,
+  destination: 'medium',
+  model: 'end_to_end',
+};
+
+const V1_STATUS: Record<OrderStatus, DeliveryStatus> = {
+  requested: 'confirmed',
+  accepted: 'courier_assigned',
+  to_store: 'courier_assigned',
+  at_store: 'at_pickup',
+  picked_up: 'picked_up',
+  on_the_way: 'picked_up',
+  arriving: 'arriving',
+  delivered: 'delivered',
+};
+
+const ISO = (ms: number) => new Date(ms).toISOString();
+
+// Versions only ever grow, also across restarts: a new order is a new delivery id anyway.
+let nextVersion = 1;
 
 const CONFIRM_SEC = 3; // order confirmed -> courier assigned
 const ASSIGN_SEC = 3; // courier assigned -> starts riding
@@ -20,12 +64,13 @@ const DECEL = 2.8; // m/s²
 const MAX_STEP_SEC = 0.25;
 
 const toKmh = (ms: number) => ms * 3.6;
+const pair = (ll: { lat: number; lng: number }): number[] => [ll.lat, ll.lng];
 
 /**
  * Fake GPS + order state machine. It plays the role of the backend: in a real
  * app you replace this class with a client that emits the same snapshots.
  */
-export class DeliverySimulator implements TrackingSource {
+export class DeliverySimulator {
   params: SimParams = { ...DEFAULT_PARAMS };
 
   private listeners = new Set<SnapshotListener>();
@@ -40,6 +85,9 @@ export class DeliverySimulator implements TrackingSource {
   private leg1!: Path;
   private leg2!: Path;
   private orderId = '';
+  private signal: CourierSignal = 'live';
+  private frozen: { lat: number; lng: number } | null = null; // last known position while the signal is down
+  private timeline: { status: DeliveryStatus; at: string }[] = [];
 
   constructor() {
     this.reset();
@@ -57,6 +105,21 @@ export class DeliverySimulator implements TrackingSource {
 
   get currentStatus(): OrderStatus {
     return this.status;
+  }
+
+  get elapsedSec(): number {
+    return this.elapsed;
+  }
+
+  /** Simulate the courier's phone losing (or regaining) its connection. */
+  setSignal(signal: CourierSignal): void {
+    if (signal !== 'live' && this.signal === 'live') this.frozen = projection.toLatLng(this.courierLocal());
+    this.signal = signal;
+    this.emit();
+  }
+
+  get courierSignal(): CourierSignal {
+    return this.signal;
   }
 
   setParams(patch: Partial<SimParams>): void {
@@ -77,6 +140,9 @@ export class DeliverySimulator implements TrackingSource {
     this.bearing = this.leg1.at(0).bearing;
     this.running = false;
     this.orderId = `#DLV-${Math.floor(10000 + Math.random() * 89999)}`;
+    this.signal = 'live';
+    this.frozen = null;
+    this.timeline = [{ status: 'confirmed', at: ISO(Date.now()) }];
     this.emit();
   }
 
@@ -104,8 +170,10 @@ export class DeliverySimulator implements TrackingSource {
   // ---------------------------------------------------------------------------
 
   private go(next: OrderStatus): void {
+    const before = V1_STATUS[this.status];
     this.status = next;
     this.stateTime = 0;
+    if (V1_STATUS[next] !== before) this.timeline.push({ status: V1_STATUS[next], at: ISO(Date.now()) });
     if (next === 'to_store') this.legDist = 0;
     if (next === 'picked_up') this.bearing = this.leg2.at(0).bearing;
     if (next === 'on_the_way') this.legDist = 0;
@@ -240,29 +308,57 @@ export class DeliverySimulator implements TrackingSource {
     return this.params.prepTimeSec + HANDOFF_SEC + this.leg2.length / v;
   }
 
+  private courierVisible(): boolean {
+    if (this.params.model === 'end_to_end') return this.status !== 'requested';
+    return this.status === 'picked_up' || this.status === 'on_the_way' || this.status === 'arriving' || this.status === 'delivered';
+  }
+
   snapshot(): TrackingSnapshot {
-    const dest = DESTINATIONS[this.params.destination];
     const total = this.leg1.length + this.leg2.length;
-    const toLL = (pts: Vec2[]) => pts.map((p) => projection.toLatLng(p));
+    const toLL = (pts: Vec2[]) => pts.map((p) => pair(projection.toLatLng(p)));
     let bearingDeg = (this.bearing * 180) / Math.PI;
     bearingDeg = ((bearingDeg % 360) + 360) % 360;
 
+    const direct = this.params.model === 'direct';
+    const beforePickup = this.status === 'requested' || this.status === 'accepted' || this.status === 'to_store' || this.status === 'at_store';
+    const eta = this.eta();
+    const now = Date.now();
+    const lost = this.signal === 'lost' || this.signal === 'stale';
+
+    const courier: TrackingSnapshot['courier'] = this.courierVisible()
+      ? {
+          display_name: 'Lucas M.',
+          vehicle: 'bicycle',
+          photo_url: null,
+          position: lost && this.frozen ? this.frozen : projection.toLatLng(this.courierLocal()),
+          heading_deg: bearingDeg,
+          speed_kmh: lost ? 0 : toKmh(this.speedMs),
+          position_at: ISO(now),
+          signal: this.signal,
+        }
+      : null;
+
     return {
-      orderId: this.orderId,
-      status: this.status,
-      courier: {
-        position: projection.toLatLng(this.courierLocal()),
-        heading: bearingDeg,
-        speedKmh: toKmh(this.speedMs),
+      delivery_id: this.orderId,
+      delivery_model: this.params.model,
+      status: V1_STATUS[this.status],
+      courier,
+      pickup: { location: projection.toLatLng(STORE.stop), name: STORE.label },
+      dropoff: { location: projection.toLatLng(DESTINATIONS[this.params.destination].stop), label: 'Home' },
+      route: {
+        // Direct has no courier leg; after pickup the leg is gone in both models.
+        to_pickup: direct || !beforePickup ? null : toLL(this.leg1.points),
+        to_dropoff: toLL(this.leg2.points),
       },
-      store: projection.toLatLng(STORE.stop),
-      destination: projection.toLatLng(dest.stop),
-      route: { toStore: toLL(this.leg1.points), toCustomer: toLL(this.leg2.points) },
-      etaSeconds: this.eta(),
-      distanceRemainingM: this.distanceRemaining(),
+      eta_seconds: eta,
+      eta_window: beforePickup && eta !== null ? { min_seconds: Math.round(eta * 0.85), max_seconds: Math.round(eta * 1.15) } : null,
+      eta_state: eta === null ? 'calculating' : beforePickup ? 'estimated' : 'live',
+      eta_quality: lost ? 'estimated' : 'osrm',
+      distance_remaining_m: this.distanceRemaining(),
       progress: total > 0 ? Math.min(1, this.traveled / total) : 0,
-      elapsedSec: this.elapsed,
-      updatedAt: Date.now(),
+      timeline: this.timeline.slice(),
+      updated_at: ISO(now),
+      version: nextVersion++,
     };
   }
 

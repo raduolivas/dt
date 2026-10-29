@@ -1,4 +1,12 @@
-import type { OrderStatus, TrackingSnapshot } from './engine/types';
+import type { TrackingSnapshot } from '@dt/contract';
+import type { OrderStatus } from './simulator';
+
+/** What the dev page knows beyond the snapshot: the simulator's finer phase and run state. */
+export interface DevState {
+  running: boolean;
+  phase: OrderStatus;
+  elapsedSec: number;
+}
 
 export interface StatusCopy {
   title: string;
@@ -31,10 +39,10 @@ export function formatDistance(m: number): string {
   return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
 }
 
-export function courierLabel(s: TrackingSnapshot): string {
-  if (s.status === 'delivered') return 'Delivered ✓';
-  if (s.status === 'requested') return 'Courier on standby';
-  return `${STATUS[s.status].title} · ${formatEta(s.etaSeconds)}`;
+export function courierLabel(s: TrackingSnapshot, phase: OrderStatus): string {
+  if (phase === 'delivered') return 'Delivered ✓';
+  if (phase === 'requested') return 'Courier on standby';
+  return `${STATUS[phase].title} · ${formatEta(s.eta_seconds)}`;
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -62,59 +70,63 @@ export class Hud {
   };
   private lastJson = 0;
 
-  update(s: TrackingSnapshot, running: boolean): void {
-    const copy = STATUS[s.status];
-    setText(this.el.eta, formatEta(s.etaSeconds));
-    setText(this.el.dist, formatDistance(s.distanceRemainingM));
-    setText(this.el.speed, `${Math.round(s.courier.speedKmh)} km/h`);
-    setText(this.el.orderId, s.orderId);
+  update(s: TrackingSnapshot, dev: DevState): void {
+    const { running, phase, elapsedSec } = dev;
+    const delivered = phase === 'delivered';
+    const copy = STATUS[phase];
+    setText(this.el.eta, formatEta(s.eta_seconds));
+    setText(this.el.dist, formatDistance(s.distance_remaining_m ?? 0));
+    setText(this.el.speed, `${Math.round(s.courier?.speed_kmh ?? 0)} km/h`);
+    setText(this.el.orderId, s.delivery_id);
     setText(this.el.title, copy.title);
     setText(this.el.sub, copy.sub);
 
     this.el.timeline.forEach((li, i) => {
-      li.classList.toggle('done', i < copy.timeline || s.status === 'delivered');
-      li.classList.toggle('active', i === copy.timeline && s.status !== 'delivered');
+      li.classList.toggle('done', i < copy.timeline || delivered);
+      li.classList.toggle('active', i === copy.timeline && !delivered);
     });
     this.el.steps.forEach((st, i) => {
-      st.classList.toggle('done', i < copy.step || s.status === 'delivered');
-      st.classList.toggle('active', i === copy.step && s.status !== 'delivered');
+      st.classList.toggle('done', i < copy.step || delivered);
+      st.classList.toggle('active', i === copy.step && !delivered);
     });
     // bar spans from the first to the last dot (80% of the width)
-    const fill = s.status === 'delivered' ? 1 : copy.step / 4;
+    const fill = delivered ? 1 : copy.step / 4;
     this.el.barFill.style.width = `${(fill * 100).toFixed(1)}%`;
-    setText(this.el.progress, `${Math.round(s.progress * 100)}%`);
+    setText(this.el.progress, `${Math.round((s.progress ?? 0) * 100)}%`);
 
     this.el.live.classList.toggle('running', running);
-    this.el.live.classList.toggle('done', s.status === 'delivered');
+    this.el.live.classList.toggle('done', delivered);
     setText(
       this.el.liveText,
-      s.status === 'delivered' ? 'Delivered' : running ? 'Live' : s.status === 'requested' ? 'Ready' : 'Paused',
+      delivered ? 'Delivered' : running ? 'Live' : phase === 'requested' ? 'Ready' : 'Paused',
     );
 
     let runLabel = 'Pause';
-    if (s.status === 'delivered') runLabel = 'New order';
-    else if (!running) runLabel = s.status === 'requested' && s.elapsedSec === 0 ? 'Request order' : 'Resume';
+    if (delivered) runLabel = 'New order';
+    else if (!running) runLabel = phase === 'requested' && elapsedSec === 0 ? 'Request order' : 'Resume';
     setText(this.el.run, runLabel);
 
     const now = performance.now();
     if (now - this.lastJson > 250) {
       this.lastJson = now;
+      const ll = (p: { lat: number; lng: number }) => ({ lat: +p.lat.toFixed(6), lng: +p.lng.toFixed(6) });
+      const c = s.courier;
       const compact = {
         ...s,
-        courier: {
-          position: { lat: +s.courier.position.lat.toFixed(6), lng: +s.courier.position.lng.toFixed(6) },
-          heading: +s.courier.heading.toFixed(1),
-          speedKmh: +s.courier.speedKmh.toFixed(1),
+        courier: c && {
+          ...c,
+          position: c.position && ll(c.position),
+          heading_deg: c.heading_deg === null ? null : +c.heading_deg.toFixed(1),
+          speed_kmh: c.speed_kmh === null ? null : +c.speed_kmh.toFixed(1),
         },
-        etaSeconds: s.etaSeconds === null ? null : Math.round(s.etaSeconds),
-        distanceRemainingM: Math.round(s.distanceRemainingM),
-        progress: +s.progress.toFixed(3),
-        elapsedSec: Math.round(s.elapsedSec),
-        route: `{ toStore: ${s.route.toStore.length} pts, toCustomer: ${s.route.toCustomer.length} pts }`,
-        store: { lat: +s.store.lat.toFixed(6), lng: +s.store.lng.toFixed(6) },
-        destination: { lat: +s.destination.lat.toFixed(6), lng: +s.destination.lng.toFixed(6) },
+        pickup: { ...s.pickup, location: ll(s.pickup.location) },
+        dropoff: { ...s.dropoff, location: ll(s.dropoff.location) },
+        eta_seconds: s.eta_seconds === null ? null : Math.round(s.eta_seconds),
+        distance_remaining_m: s.distance_remaining_m === null ? null : Math.round(s.distance_remaining_m),
+        progress: s.progress === null ? null : +s.progress.toFixed(3),
+        route: `{ to_pickup: ${s.route.to_pickup ? `${s.route.to_pickup.length} pts` : 'null'}, to_dropoff: ${s.route.to_dropoff.length} pts }`,
       };
-      this.el.json.textContent = JSON.stringify(compact, null, 2).replace(/"(\{ toStore.*?\})"/, '$1');
+      this.el.json.textContent = JSON.stringify(compact, null, 2).replace(/"(\{ to_pickup.*?\})"/, '$1');
     }
   }
 }

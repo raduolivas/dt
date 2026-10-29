@@ -1,10 +1,11 @@
-import { GeoProjection, type Vec2 } from './geo';
-import type { DestinationPreset, LatLng } from './types';
+import type { LatLng } from '@dt/contract';
+import { GeoProjection, type Vec2 } from '../engine/geo';
 
 /**
- * The prototype city: a regular street lattice. Everything is defined in local
+ * The procedural city: a regular street lattice. Everything is defined in local
  * meters and converted to lat/lng through `projection`, so the rest of the app
- * only ever deals with real geographic coordinates.
+ * only ever deals with real geographic coordinates. Dev only: real map tiles
+ * replace it (spec §5.2).
  */
 export const BLOCK = 110; // distance between two parallel streets (m)
 export const ROAD_W = 20; // street width (m)
@@ -27,7 +28,7 @@ export interface Place {
   cell: { i: number; j: number };
 }
 
-function placeOnStreet(id: string, label: string, i: number, j: number, side: 1 | -1): Place {
+export function placeOnStreet(id: string, label: string, i: number, j: number, side: 1 | -1): Place {
   const stop = { x: i * BLOCK + BLOCK / 2, z: j * BLOCK };
   return {
     id,
@@ -39,13 +40,10 @@ function placeOnStreet(id: string, label: string, i: number, j: number, side: 1 
   };
 }
 
-export const STORE: Place = placeOnStreet('store', 'Food Hub', -2, -2, -1);
-
-export const DESTINATIONS: Record<DestinationPreset, Place> = {
-  near: placeOnStreet('home', 'Home', -1, 0, -1),
-  medium: placeOnStreet('home', 'Home', 1, 1, -1),
-  far: placeOnStreet('home', 'Home', 2, 3, -1),
-};
-
-/** Where the courier starts the shift. */
-export const COURIER_START: Vec2 = { x: 1 * BLOCK + BLOCK / 2, z: -BLOCK };
+/** The grid place whose curb point is nearest to `ll` (the building stands on the north side of its street). */
+export function placeNear(id: string, label: string, ll: LatLng): Place {
+  const p = projection.toLocal(ll);
+  const i = Math.round((p.x - BLOCK / 2) / BLOCK);
+  const j = Math.round(p.z / BLOCK);
+  return placeOnStreet(id, label, i, j, -1);
+}

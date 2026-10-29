@@ -1,16 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import type { TrackingSnapshot } from '@dt/contract';
 import type { Vec2 } from '../engine/geo';
-import type { DestinationPreset, TrackingSnapshot } from '../engine/types';
-import {
-  BLOCK,
-  DESTINATIONS,
-  GRID,
-  ROAD_W,
-  STORE,
-  projection,
-  type Place,
-} from '../engine/world';
+import { BLOCK, GRID, ROAD_W, placeNear, projection, type Place } from './grid';
+import { activeLeg, isFinal, toLatLng } from '../snapshot';
+import './scene.css';
 import {
   Bicycle,
   COLORS,
@@ -26,6 +20,10 @@ import {
   type HouseModel,
 } from './models';
 import { buildRibbon, trimRouteFrom } from './ribbon';
+
+/** The dropoff is private to the customer's own view; the label is never the address from the snapshot. */
+const HOME_LABEL = 'Your address';
+const ROUTE_ACTIVE = 0x2f6bff;
 
 const BIKE_SCALE = 6; // visual scale of the courier (toy city)
 const ROAD_TOP = 0.4;
@@ -53,12 +51,16 @@ export class CityScene {
   private readonly routeActive: THREE.Mesh;
   private readonly routeNext: THREE.Mesh;
 
+  private storePinMat: THREE.MeshStandardMaterial | null = null;
+  private accent: number | null = null;
   private storePin: THREE.Group | null = null;
   private homePin: THREE.Group | null = null;
   private homePinMat: THREE.MeshStandardMaterial | null = null;
   private rings: THREE.Mesh[] = [];
   private house: HouseModel | null = null;
-  private destination: Place = DESTINATIONS.medium;
+  private store: Place | null = null;
+  private destination: Place | null = null;
+  private placesKey = '';
 
   private readonly labels: { store: HTMLElement; home: HTMLElement; courier: HTMLElement };
 
@@ -77,7 +79,8 @@ export class CityScene {
   private height = 1;
   private readonly tmp = new THREE.Vector3();
 
-  constructor(private readonly container: HTMLElement) {
+  constructor(private readonly container: HTMLElement, opts: { accent?: string } = {}) {
+    if (opts.accent) this.accent = new THREE.Color(opts.accent).getHex();
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
@@ -120,6 +123,7 @@ export class CityScene {
     this.controls.addEventListener('start', () => (this.goal = null));
 
     // courier
+    this.courierRoot.visible = false; // until a snapshot says there is a courier
     this.courierRoot.scale.setScalar(BIKE_SCALE);
     this.courierRoot.add(this.bicycle.group);
     this.halo = new THREE.Mesh(
@@ -143,7 +147,7 @@ export class CityScene {
         polygonOffsetUnits: -2,
       });
     this.routeNext = new THREE.Mesh(new THREE.BufferGeometry(), ribbonMat(COLORS.blueLight, 0.75));
-    this.routeActive = new THREE.Mesh(new THREE.BufferGeometry(), ribbonMat(0x2f6bff, 0.95));
+    this.routeActive = new THREE.Mesh(new THREE.BufferGeometry(), ribbonMat(this.accent ?? ROUTE_ACTIVE, 0.95));
     this.routeNext.renderOrder = 1;
     this.routeActive.renderOrder = 2;
     this.scene.add(this.routeNext, this.routeActive);
@@ -156,10 +160,9 @@ export class CityScene {
       return el;
     };
     this.labels = { store: mkLabel('store'), home: mkLabel('home'), courier: mkLabel('courier') };
-    this.labels.store.textContent = STORE.label;
-    this.labels.home.textContent = this.destination.label;
-
-    this.buildCity();
+    this.labels.home.textContent = HOME_LABEL;
+    // the city is built from the first snapshot: the places come from it
+    this.setLabelsVisible(false);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -170,11 +173,10 @@ export class CityScene {
   // public API
   // ---------------------------------------------------------------------------
 
-  setDestination(preset: DestinationPreset): void {
-    this.destination = DESTINATIONS[preset];
-    this.labels.home.textContent = this.destination.label;
-    this.buildCity();
-    this.hasPos = false; // snap courier on the next snapshot
+  /** `null` goes back to the default blue. */
+  setAccent(color: string | null): void {
+    this.accent = color ? new THREE.Color(color).getHex() : null;
+    this.applyAccent();
   }
 
   setFollow(on: boolean): void {
@@ -193,18 +195,32 @@ export class CityScene {
     this.goal = { target: new THREE.Vector3(0, 0, 0), zoom: 0.85 };
   }
 
-  setCourierLabel(text: string): void {
-    this.labels.courier.textContent = text;
-  }
-
   onSnapshot(s: TrackingSnapshot): void {
     const prev = this.snap;
     this.snap = s;
 
-    const p = projection.toLocal(s.courier.position);
-    this.targetPos.set(p.x, 0, p.z);
-    this.targetYaw = Math.PI - (s.courier.heading * Math.PI) / 180;
-    this.speedMs = s.courier.speedKmh / 3.6;
+    const store = placeNear('store', s.pickup.name, s.pickup.location);
+    const home = placeNear('home', HOME_LABEL, s.dropoff.location);
+    const key = `${store.cell.i},${store.cell.j}|${home.cell.i},${home.cell.j}`;
+    if (key !== this.placesKey) {
+      this.placesKey = key;
+      this.store = store;
+      this.destination = home;
+      this.buildCity();
+      this.hasPos = false; // snap courier on the next snapshot
+    }
+    if (this.store) this.store.label = s.pickup.name;
+    this.labels.store.textContent = s.pickup.name;
+
+    // The server decides who is visible: no courier (or no position yet) means nothing is drawn.
+    const c = s.courier;
+    const pos = !isFinal(s.status) && c?.position ? projection.toLocal(c.position) : null;
+    this.courierRoot.visible = pos !== null;
+    this.labels.courier.style.display = pos !== null ? '' : 'none';
+    const at = pos ?? projection.toLocal(s.pickup.location);
+    this.targetPos.set(at.x, 0, at.z);
+    if (c?.position && c.heading_deg !== null) this.targetYaw = Math.PI - (c.heading_deg * Math.PI) / 180;
+    this.speedMs = (c?.speed_kmh ?? 0) / 3.6;
 
     if (!this.hasPos || this.curPos.distanceTo(this.targetPos) > 60) {
       this.curPos.copy(this.targetPos);
@@ -287,6 +303,10 @@ export class CityScene {
     this.renderer.render(this.scene, this.camera);
   }
 
+  get drawCalls(): number {
+    return this.renderer.info.render.calls;
+  }
+
   dispose(): void {
     this.resizeObserver.disconnect();
     this.controls.dispose();
@@ -326,33 +346,46 @@ export class CityScene {
   }
 
   private updateRoutes(s: TrackingSnapshot) {
-    const toStore = s.route.toStore.map((p) => projection.toLocal(p));
-    const toCust = s.route.toCustomer.map((p) => projection.toLocal(p));
+    const toDropoff = s.route.to_dropoff.map((p) => projection.toLocal(toLatLng(p)));
+    const leg = activeLeg(s).map((p) => projection.toLocal(p));
+    const courierShown = this.courierRoot.visible;
     const here: Vec2 = { x: this.targetPos.x, z: this.targetPos.z };
     let active: Vec2[] = [];
     let next: Vec2[] = [];
     switch (s.status) {
-      case 'requested':
-      case 'accepted':
-      case 'to_store':
-        active = trimRouteFrom(toStore, here);
-        next = toCust;
+      case 'confirmed':
+      case 'courier_assigned':
+        // the courier's way to the pickup (when the snapshot has it), then the delivery leg
+        active = courierShown ? trimRouteFrom(leg, here) : leg;
+        next = s.route.to_pickup ? toDropoff : [];
         break;
-      case 'at_store':
+      case 'at_pickup':
+        active = toDropoff;
+        break;
       case 'picked_up':
-        active = toCust;
-        break;
-      case 'on_the_way':
       case 'arriving':
-        active = trimRouteFrom(toCust, here);
+        active = courierShown ? trimRouteFrom(toDropoff, here) : toDropoff;
         break;
       case 'delivered':
+      case 'cancelled':
+      case 'failed':
         break;
     }
     this.routeActive.geometry.dispose();
     this.routeActive.geometry = buildRibbon(active, 4.6, ROAD_TOP + 0.15);
     this.routeNext.geometry.dispose();
     this.routeNext.geometry = buildRibbon(next, 3.2, ROAD_TOP + 0.1);
+  }
+
+  private setLabelsVisible(on: boolean) {
+    this.labels.store.style.visibility = on ? '' : 'hidden';
+    this.labels.home.style.visibility = on ? '' : 'hidden';
+  }
+
+  private applyAccent() {
+    (this.routeActive.material as THREE.MeshBasicMaterial).color.setHex(this.accent ?? ROUTE_ACTIVE);
+    this.storePinMat?.color.setHex(this.accent ?? COLORS.blue);
+    this.storePinMat?.emissive.setHex(this.accent ?? COLORS.blue);
   }
 
   private updateLabels() {
@@ -363,7 +396,8 @@ export class CityScene {
       el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`;
       el.style.opacity = Math.abs(v.x) < 1.1 && Math.abs(v.y) < 1.1 ? '1' : '0';
     };
-    const sb = STORE.building;
+    if (!this.store || !this.destination) return;
+    const sb = this.store.building;
     const hb = this.destination.building;
     place(this.labels.store, new THREE.Vector3(sb.x, STORE_HEIGHT + 24, sb.z));
     place(this.labels.home, new THREE.Vector3(hb.x, HOUSE_HEIGHT + 24, hb.z));
@@ -383,9 +417,11 @@ export class CityScene {
     this.cityGroup = city;
     this.rings = [];
 
+    const STORE = this.store!;
+    const dest = this.destination!;
     const reserved = new Set<string>([
       `${STORE.cell.i},${STORE.cell.j}`,
-      `${this.destination.cell.i},${this.destination.cell.j}`,
+      `${dest.cell.i},${dest.cell.j}`,
     ]);
 
     // ground
@@ -484,7 +520,7 @@ export class CityScene {
         for (const [ex, ez] of edges) {
           if (isReserved && Math.abs(ez) === 1) {
             // only keep trees at the back of the plot
-            const place = i === STORE.cell.i && j === STORE.cell.j ? STORE : this.destination;
+            const place = i === STORE.cell.i && j === STORE.cell.j ? STORE : dest;
             if (ez === -place.side) continue;
           }
           const tree = makeTree(rand);
@@ -503,7 +539,7 @@ export class CityScene {
     // house
     const house = makeHouse();
     this.house = house;
-    const hp = this.destination;
+    const hp = dest;
     house.group.position.set(hp.building.x, BLOCK_TOP, hp.building.z - hp.side * 6);
     house.group.rotation.y = hp.side === 1 ? Math.PI : 0;
     city.add(house.group);
@@ -518,6 +554,10 @@ export class CityScene {
     this.homePinMat = this.homePinMat.clone();
     (this.homePin.children[0] as THREE.Mesh).material = this.homePinMat;
     (this.homePin.children[1] as THREE.Mesh).material = this.homePinMat;
+    // same for the store pin, so the partner's accent can recolor it
+    this.storePinMat = ((this.storePin.children[1] as THREE.Mesh).material as THREE.MeshStandardMaterial).clone();
+    (this.storePin.children[0] as THREE.Mesh).material = this.storePinMat;
+    (this.storePin.children[1] as THREE.Mesh).material = this.storePinMat;
     city.add(this.storePin, this.homePin);
 
     for (const [p, color] of [
@@ -535,6 +575,7 @@ export class CityScene {
     }
 
     this.scene.add(city);
-    if (this.snap) this.onSnapshot(this.snap);
+    this.setLabelsVisible(true);
+    this.applyAccent();
   }
 }
