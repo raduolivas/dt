@@ -334,3 +334,68 @@ describe('link token secrecy', () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe('resume', () => {
+  const visible = () => document.dispatchEvent(new Event('visibilitychange'));
+  const routes = (extra: Record<string, () => Response> = {}) => ({
+    'POST /tracking/session': () => session('VT1', T0 + 900_000),
+    'GET /tracking/snapshot': () => json(snap(1)),
+    ...extra,
+  });
+
+  it('opens exactly one stream when the tab becomes visible during backoff', async () => {
+    const { viewer } = make(routes());
+    viewer.start();
+    await tick();
+    const first = FakeWS.instances[0]!;
+    first.open();
+    first.closeWith(1013); // backoff 250 ms pending
+    visible();
+    await tick();
+    expect(FakeWS.instances).toHaveLength(1);
+    await tick(300);
+    expect(FakeWS.instances).toHaveLength(2);
+    expect(FakeWS.instances.filter((w) => w.readyState !== 3)).toHaveLength(1);
+  });
+
+  it('closes the previous stream when it opens a new one', async () => {
+    const { viewer } = make(routes());
+    viewer.start();
+    await tick();
+    const first = FakeWS.instances[0]!;
+    first.open();
+    visible(); // transport is ws and the stream is open: nothing new
+    await tick();
+    expect(FakeWS.instances).toHaveLength(1);
+    expect(first.readyState).toBe(1);
+  });
+
+  it('does nothing while the first session is still warming', async () => {
+    let n = 0;
+    const { viewer, calls } = make({
+      'POST /tracking/session': () =>
+        ++n < 3 ? new Response('{}', { status: 503, headers: { 'Retry-After': '1' } }) : session('VT1', T0 + 900_000),
+    });
+    viewer.start();
+    await tick();
+    visible();
+    await tick();
+    expect(calls.filter((c) => c.path === '/tracking/session/refresh')).toHaveLength(0);
+    expect(calls.filter((c) => c.path === '/tracking/session')).toHaveLength(1);
+    await tick(2000);
+    expect(calls.filter((c) => c.path === '/tracking/session')).toHaveLength(3);
+  });
+
+  it('tries the WebSocket again on return after an SSE fallback', async () => {
+    const sse = () => new Response(new ReadableStream<Uint8Array>({ start() {} }));
+    const { viewer } = make(routes({ 'GET /tracking/stream/sse': sse }));
+    viewer.start();
+    await tick();
+    FakeWS.instances[0]!.closeWith(1006); // never opened: SSE
+    await tick();
+    expect(FakeWS.instances).toHaveLength(1);
+    visible();
+    await tick();
+    expect(FakeWS.instances).toHaveLength(2);
+  });
+});

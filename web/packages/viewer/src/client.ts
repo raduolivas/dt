@@ -31,6 +31,7 @@ export function createViewer(o: ViewerOptions): ViewerClient {
   let attempt = 0;
   let recovering: Promise<boolean> | null = null;
   let refreshSeq = 0;
+  let reconnecting = false; // a backoff sleep is pending; only reconnect() may open the next stream
 
   const setState = (s: ViewerState) => {
     for (const cb of [...stateCbs]) cb(s);
@@ -58,6 +59,7 @@ export function createViewer(o: ViewerOptions): ViewerClient {
     conn?.close();
     conn = null;
     recovering = null;
+    reconnecting = false;
     for (const t of timers) {
       clearTimeout(t.id);
       t.resolve(false);
@@ -161,6 +163,7 @@ export function createViewer(o: ViewerOptions): ViewerClient {
   }
 
   function openStream(g: number) {
+    conn?.close(); // single-flight: never leave an older stream open
     const url = `${api}/tracking/stream`;
     const handlers = {
       onOpen: () => void resync(g),
@@ -189,11 +192,15 @@ export function createViewer(o: ViewerOptions): ViewerClient {
   }
 
   async function reconnect(g: number) {
-    if (!(await sleep(backoff(), g))) return;
+    reconnecting = true;
+    const proceed = await sleep(backoff(), g);
+    if (!proceed) return void (reconnecting = false);
     if (now() >= expiresAt && !(await recover(g))) {
+      reconnecting = false;
       if (g === gen) void reconnect(g);
       return;
     }
+    reconnecting = false;
     if (g === gen) openStream(g);
   }
 
@@ -202,12 +209,16 @@ export function createViewer(o: ViewerOptions): ViewerClient {
   }
 
   async function onVisible() {
-    if (!running || globalThis.document?.visibilityState === 'hidden') return;
+    // Nothing to resume until the first session was adopted (begin owns that).
+    if (!running || !viewerToken || globalThis.document?.visibilityState === 'hidden') return;
     const g = gen;
+    const wasSse = transport === 'sse';
+    transport = 'ws'; // back in view: try the WebSocket again
     if (now() >= expiresAt && !(await recover(g))) return;
     if (g !== gen) return;
     await resync(g);
-    if (g === gen && !conn) openStream(g);
+    if (g !== gen || reconnecting) return; // a pending reconnect opens the stream itself
+    if (!conn || wasSse) openStream(g);
   }
 
   const visibility = () => void onVisible();
@@ -218,6 +229,8 @@ export function createViewer(o: ViewerOptions): ViewerClient {
       teardown();
       running = true;
       lastSnapshot = null;
+      viewerToken = '';
+      reconnecting = false;
       transport = 'ws';
       attempt = 0;
       setState({ kind: 'connecting' });
