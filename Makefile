@@ -55,8 +55,9 @@ web-assets: ## Build the hosted page, the SDK and the courier page into build/ (
 	cp -R web/packages/tracking/dist $(CDN_DIR)/sdk/tracking/dev
 	cp web/packages/renderer/fixtures/amsterdam-z14.pmtiles $(CDN_DIR)/tiles/
 	$(LOCAL_COURIER_ENV) pnpm -C web --filter @dt/courier-page build
-	rm -rf $(COURIER_DIR)
-	cp -R web/apps/courier-page/dist $(COURIER_DIR)
+	mkdir -p $(COURIER_DIR)
+	rm -rf $(COURIER_DIR)/*
+	cp -R web/apps/courier-page/dist/. $(COURIER_DIR)/
 
 e2e: dtctl ## Run the Playwright end-to-end tests against the running stack (after make dev and make web-assets)
 	DTCTL=$(CURDIR)/$(DTCTL) pnpm -C web --filter @dt/e2e e2e $(E2E_ARGS)

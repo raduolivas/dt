@@ -2,6 +2,7 @@
 # Prints a courier link (for the phone) and a tracking link (for the laptop) for a fresh test delivery: a tenant with
 # direct deliveries and pickup policy "any", a test courier (dev-courier), a direct delivery, the assignment and a
 # link-mode courier session. The courier link works once and for 15 minutes; run this again for a new one.
+# Each run creates a new tenant (and key) unless DT_API_KEY is set.
 # Usage: make courier-link   (after make dev; add make lan-https first to use the link on a phone)
 #
 # Env: DTCTL (default backend/bin/dtctl), DT_GATEWAY_URL (default http://127.0.0.1:8080), DT_API_KEY (an existing test
@@ -14,7 +15,7 @@ GATEWAY="${DT_GATEWAY_URL:-http://127.0.0.1:8080}"
 export DT_INTERNAL_RPC_TOKEN="${DT_INTERNAL_RPC_TOKEN:-dev-only-not-a-secret-internal-token-0000}"
 pickup="${DT_PICKUP:-52.3731,4.8922}"
 [[ "$pickup" =~ ^-?[0-9]+(\.[0-9]+)?,-?[0-9]+(\.[0-9]+)?$ ]] || { echo "DT_PICKUP must be lat,lng" >&2; exit 1; }
-dropoff="$(awk -F, '{printf "%.5f,%.5f", $1 - 0.0131, $2 - 0.0070}' <<<"$pickup")"
+dropoff="$(LC_ALL=C awk -F, '{printf "%.5f,%.5f", $1 - 0.0131, $2 - 0.0070}' <<<"$pickup")"
 
 body="$(mktemp)"
 trap 'rm -f "$body"' EXIT

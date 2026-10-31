@@ -33,7 +33,7 @@ mkdir -p "$ca_dir"
 # (cheap, and it follows the LAN address when DHCP hands out a new one).
 if command -v mkcert >/dev/null 2>&1; then
   echo "==> certificates with mkcert (CA in ${ca_dir}; the system trust store is not touched)" >&2
-  CAROOT="$(pwd)/${ca_dir}" mkcert -cert-file "${lan}/server.pem" -key-file "${lan}/server.key" "$ip" localhost 127.0.0.1 >/dev/null 2>&1
+  CAROOT="$(pwd)/${ca_dir}" mkcert -cert-file "${lan}/server.pem" -key-file "${lan}/server.key" "$ip" localhost 127.0.0.1 >/dev/null
   cp "${ca_dir}/rootCA.pem" "${ca_dir}/ca.pem"
 else
   echo "==> certificates with openssl (CA in ${ca_dir})" >&2

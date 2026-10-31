@@ -141,14 +141,14 @@ field ".deliveries | map(select(.id == \"${delivery}\")) | length" 1
 
 step "5. three fixes are accepted"
 # The assignment reaches the tracking service through NATS a moment after it is made; until then the fixes are
-# dropped (no assigned delivery yet), so post again with fresh timestamps for up to 10 s.
+# dropped (no assigned delivery yet), so post again with fresh timestamps for up to ~22 s.
 for _ in $(seq 1 20); do
   now="$(date +%s)"
   fixes="$(jq -nc --argjson n "$now" '{fixes: [range(0; 3) | {
     t: (($n - 3 + .) | todate), lat: (52.3731 + . * 0.0001), lng: 4.8922, accuracy_m: 6.5, speed_mps: 4.8, heading_deg: 84}]}')"
   cexpect 200 POST /locations "$fixes"
   [[ "$(jq -r .accepted <"$body")" == 3 ]] && break
-  sleep 0.5
+  sleep 1.1 # the location limit is 1 batch/s
 done
 field .accepted 3
 field .dropped 0
