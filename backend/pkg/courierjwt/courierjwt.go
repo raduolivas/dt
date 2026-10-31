@@ -148,6 +148,24 @@ func (c signedClaims) GetAudience() (jwt.ClaimStrings, error) {
 // current key (its id in the kid header). It returns the token and its
 // expiry.
 func (s *Signer) Sign(c Claims, now time.Time) (string, time.Time, error) {
+	return s.sign(c, now, now.Add(TTL))
+}
+
+// SignUntil is Sign with exp capped at notAfter: a token for a session that
+// ends sooner than TTL expires with the session. A notAfter that is not after
+// now is an error.
+func (s *Signer) SignUntil(c Claims, now, notAfter time.Time) (string, time.Time, error) {
+	if !notAfter.After(now) {
+		return "", time.Time{}, errors.New("courierjwt: not-after bound is not after now")
+	}
+	exp := now.Add(TTL)
+	if notAfter.Before(exp) {
+		exp = notAfter
+	}
+	return s.sign(c, now, exp)
+}
+
+func (s *Signer) sign(c Claims, now, exp time.Time) (string, time.Time, error) {
 	if err := c.check(); err != nil {
 		return "", time.Time{}, err
 	}
@@ -156,7 +174,7 @@ func (s *Signer) Sign(c Claims, now time.Time) (string, time.Time, error) {
 		return "", time.Time{}, fmt.Errorf("courierjwt: jti: %w", err)
 	}
 	// JWT times have second precision; exp is what the token says.
-	exp := now.Add(TTL).Truncate(time.Second)
+	exp = exp.Truncate(time.Second)
 	tok := jwt.NewWithClaims(jwt.SigningMethodEdDSA, signedClaims{
 		Iss: Issuer, Aud: Audience, Sub: c.CourierID, Tenant: c.TenantID, Env: c.Env,
 		Session: c.SessionID, Source: c.Source, Scope: Scope,

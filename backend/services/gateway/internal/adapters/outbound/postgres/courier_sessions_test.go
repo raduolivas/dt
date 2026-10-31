@@ -191,7 +191,7 @@ func TestOneActivePerCourierIndex(t *testing.T) {
 	if err := ins("cs_4", "pending_link", 4); !unique(err) {
 		t.Fatalf("second pending link: %v", err)
 	}
-	// Another courier, or another environment, is independent.
+	// Once the active session has ended, the courier may have a new one.
 	if _, err := pool.Exec(ctx, `UPDATE courier_sessions SET status = 'ended', ended_at = $1, end_reason = 'partner'
 		WHERE id = 'cs_1'`, csT0); err != nil {
 		t.Fatal(err)

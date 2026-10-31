@@ -177,3 +177,26 @@ func TestClaimsCheck(t *testing.T) {
 		}
 	}
 }
+
+func TestSignUntilCapsExpiry(t *testing.T) {
+	s := signer(t, "k1:"+seed(t), "k1")
+	end := now.Add(time.Minute)
+	tok, exp, err := s.SignUntil(claims, now, end)
+	if err != nil || !exp.Equal(end) {
+		t.Fatalf("capped exp = %v, %v; want %v", exp, err, end)
+	}
+	if _, err := s.Verify(tok, end.Add(29*time.Second)); err != nil {
+		t.Fatalf("within leeway: %v", err)
+	}
+	if _, err := s.Verify(tok, end.Add(31*time.Second)); !errors.Is(err, courierjwt.ErrInvalid) {
+		t.Fatalf("past the bound: err = %v, want ErrInvalid", err)
+	}
+	// A bound later than now + TTL changes nothing.
+	if _, exp, err := s.SignUntil(claims, now, now.Add(time.Hour)); err != nil || !exp.Equal(now.Add(courierjwt.TTL)) {
+		t.Fatalf("uncapped exp = %v, %v", exp, err)
+	}
+	// A bound at or before now cannot issue a usable token.
+	if _, _, err := s.SignUntil(claims, now, now); err == nil {
+		t.Fatal("signed a token that is already past its bound")
+	}
+}

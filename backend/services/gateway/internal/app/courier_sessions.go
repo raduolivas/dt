@@ -41,13 +41,15 @@ var (
 // writes it again.
 const CourierTouchInterval = 60 * time.Second
 
-// Audit actors and actions of the session ends this service records itself
-// (M5 ruling R3): a partner's end is audited by the HTTP Audit hook, but a
-// courier's own end and the system's ends pass no such hook.
+// Audit actors of the session changes this service records itself (M5
+// rulings R3, R5): a partner's start and end are audited by the HTTP Audit
+// hook, but a link-code exchange, a courier's own end and the system's ends
+// pass no such hook.
 const (
 	auditActorSystem = "system"
 	auditSystemID    = "gateway"
-	// auditNoStatus is the status of an entry that is not one HTTP answer.
+	// auditNoStatus is AuditEntry.Status for these entries: 0 means no HTTP
+	// response, the entry was written by the app layer.
 	auditNoStatus = 0
 )
 
@@ -210,6 +212,7 @@ func (c *CourierSessions) Exchange(ctx context.Context, code, ip string) (Tokens
 	}
 	addr, _ := netip.ParseAddr(ip)
 	c.systemEnded(ctx, replaced, addr)
+	c.record(ctx, found, string(domain.CredentialCourier), found.ID, "courier_sessions.start", addr)
 	return tokens, nil
 }
 
@@ -422,20 +425,25 @@ func (c *CourierSessions) deny(ctx context.Context, sid string) error {
 }
 
 // audit records the end of s when no HTTP Audit hook does: the courier's own
-// end and the system's. A failed write is logged; the end stands.
+// end and the system's.
 func (c *CourierSessions) audit(ctx context.Context, s domain.CourierSession, ip netip.Addr) {
+	switch s.EndReason {
+	case domain.EndCourier:
+		c.record(ctx, s, string(domain.CredentialCourier), s.ID, "courier_sessions.end", ip)
+	case domain.EndReplaced, domain.EndRefreshReuse:
+		c.record(ctx, s, auditActorSystem, auditSystemID, "courier_sessions."+string(s.EndReason), ip)
+	default: // partner (audited by the HTTP hook) and expired (no actor)
+	}
+}
+
+// record writes one audit entry about session s. A failed write is logged;
+// the change it records stands.
+func (c *CourierSessions) record(ctx context.Context, s domain.CourierSession, actorType, actorID, action string, ip netip.Addr) {
 	if c.Audit == nil {
 		return
 	}
-	e := AuditEntry{TenantID: s.TenantID, Env: s.Env, Target: s.ID, Status: auditNoStatus, IP: ip, At: c.Clock.Now()}
-	switch s.EndReason {
-	case domain.EndCourier:
-		e.ActorType, e.ActorID, e.Action = string(domain.CredentialCourier), s.ID, "courier_sessions.end"
-	case domain.EndReplaced, domain.EndRefreshReuse:
-		e.ActorType, e.ActorID, e.Action = auditActorSystem, auditSystemID, "courier_sessions."+string(s.EndReason)
-	default: // partner (audited by the HTTP hook) and expired (no actor)
-		return
-	}
+	e := AuditEntry{TenantID: s.TenantID, Env: s.Env, ActorType: actorType, ActorID: actorID, Action: action,
+		Target: s.ID, Status: auditNoStatus, IP: ip, At: c.Clock.Now()}
 	if c.RequestID != nil {
 		e.RequestID = c.RequestID(ctx)
 	}
@@ -445,10 +453,12 @@ func (c *CourierSessions) audit(ctx context.Context, s domain.CourierSession, ip
 	}
 }
 
-// issue signs s's access token at now and pairs it with refresh.
+// issue signs s's access token at now and pairs it with refresh. The access
+// token never outlives the session (ruling R4): its exp is the earlier of
+// now + courierjwt.TTL and the session's expiry.
 func (c *CourierSessions) issue(s domain.CourierSession, refresh string, now time.Time) (Tokens, error) {
-	access, exp, err := c.Signer.Sign(courierjwt.Claims{CourierID: s.CourierID, TenantID: s.TenantID, Env: string(s.Env),
-		SessionID: s.ID, Source: string(s.Mode)}, now)
+	access, exp, err := c.Signer.SignUntil(courierjwt.Claims{CourierID: s.CourierID, TenantID: s.TenantID, Env: string(s.Env),
+		SessionID: s.ID, Source: string(s.Mode)}, now, *s.ExpiresAt)
 	if err != nil {
 		return Tokens{}, err
 	}

@@ -475,3 +475,45 @@ func TestGetCourierSessionShowsExpiry(t *testing.T) {
 	// And a new session for the courier is not blocked by it.
 	f.startSDK(t, cou1)
 }
+
+func TestAccessTokenEndsWithSession(t *testing.T) {
+	f := newCourierFixture(t)
+	ctx := context.Background()
+	r, err := f.svc.Start(ctx, partner, cou1, "sdk", 900*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Refresh one minute before the session expires: the access token is
+	// capped at the session's expiry, not now + 15 min.
+	f.clock.Advance(14 * time.Minute)
+	tok, err := f.svc.Refresh(ctx, r.Tokens.RefreshToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := csNow.Add(15 * time.Minute)
+	if !tok.AccessExpiresAt.Equal(end) || !tok.SessionExpiresAt.Equal(end) {
+		t.Fatalf("access_expires_at = %v, session_expires_at = %v; want both %v", tok.AccessExpiresAt, tok.SessionExpiresAt, end)
+	}
+	if _, _, err := f.svc.Authenticate(ctx, tok.AccessToken); err != nil {
+		t.Fatalf("before expiry: %v", err)
+	}
+	f.clock.Advance(time.Minute + courierjwt.Leeway + time.Second)
+	if _, _, err := f.svc.Authenticate(ctx, tok.AccessToken); !errors.Is(err, app.ErrUnauthenticated) {
+		t.Fatalf("after session expiry: %v", err)
+	}
+}
+
+func TestExchangeAuditsStart(t *testing.T) {
+	f := newCourierFixture(t)
+	f.svc.RequestID = func(context.Context) string { return "req_1" }
+	l := f.startLink(t, cou1)
+	if _, err := f.svc.Exchange(context.Background(), l.LinkCode, "203.0.113.9"); err != nil {
+		t.Fatal(err)
+	}
+	e := f.audit.Entries()
+	if len(e) != 1 || e[0].ActorType != "courier" || e[0].ActorID != l.Session.ID || e[0].Action != "courier_sessions.start" ||
+		e[0].Target != l.Session.ID || e[0].TenantID != partner.TenantID || e[0].Env != partner.Env ||
+		e[0].IP.String() != "203.0.113.9" || e[0].RequestID != "req_1" || e[0].Status != 0 {
+		t.Fatalf("audit = %+v", e)
+	}
+}
