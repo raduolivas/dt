@@ -73,7 +73,13 @@ export default defineConfig({
     {
       name: 'desktop-chromium',
       testIgnore: [/look\.spec/, /fallback\.spec/],
-      use: { ...devices['Desktop Chrome'], launchOptions: chromiumGL },
+      use: {
+        ...devices['Desktop Chrome'],
+        launchOptions: chromiumGL,
+        // A GPU-less CI runner draws 1280 × 720 in software slowly enough to starve the page (it then misses the
+        // stream's 5 s auth window and resyncs past states); 1000 × 640 still gets the desktop side panel (≥ 900 px).
+        ...(process.env.CI ? { viewport: { width: 1000, height: 640 } } : {}),
+      },
     },
     {
       name: 'desktop-webkit',

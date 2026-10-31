@@ -8,9 +8,6 @@ test.beforeEach(async ({ context }) => {
   await ownClientIp(context);
 });
 
-// A smaller page than Desktop Chrome's 1280 × 720 keeps software GL on a GPU-less runner from starving the page.
-test.use({ viewport: { width: 800, height: 600 } });
-
 test('the demo page mounts <dt-tracking>, gets statuschange and delivered, and destroy() removes the canvas', async ({
   page,
 }) => {
