@@ -2,7 +2,7 @@ import type { Branding, DeliveryStatus, EtaWindow, TrackingSnapshot } from '@dt/
 import { createRenderer, type TileSourceSpec } from '@dt/renderer';
 import { createViewer, type ViewerState } from '@dt/viewer';
 import { ensureContrast, readableOn } from './branding';
-import { Cards, summaryLine } from './cards';
+import { Cards, isFinal, summaryLine } from './cards';
 import { pickLang, t, type Lang } from './i18n';
 import { computeLayout, type Rect } from './layout';
 import { CARD_BG, STYLES } from './styles';
@@ -240,19 +240,39 @@ export function createTracking(root: ShadowRoot, o: MountOptions): Tracking {
     relayout();
   };
 
-  const emitFor = (s: TrackingSnapshot) => {
+  /** statuschange once per change, delivered once only. */
+  const emitStatus = (s: TrackingSnapshot) => {
     if (s.status !== lastStatus) {
       lastStatus = s.status;
       o.onStatusChange?.(s.status);
     }
+    if (s.status === 'delivered' && !delivered) {
+      delivered = true;
+      o.onDelivered?.();
+    }
+  };
+  const emitFor = (s: TrackingSnapshot) => {
+    emitStatus(s);
     const eta = JSON.stringify([s.eta_seconds, s.eta_window]);
     if (eta !== lastEta) {
       lastEta = eta;
       o.onEtaChange?.({ seconds: s.eta_seconds, window: s.eta_window });
     }
-    if (s.status === 'delivered' && !delivered) {
-      delivered = true;
-      o.onDelivered?.();
+  };
+
+  /**
+   * The link ended. A final last snapshot the map has not drawn yet is drawn (and announced). A non-final one keeps
+   * the store and home but hides the courier, through the renderer's usual no-courier path: the same snapshot
+   * without the courier, at a version just past it so the renderer's version gate takes it (nothing follows an
+   * inactive state).
+   */
+  const showInactive = (last: TrackingSnapshot | null) => {
+    if (!last) return;
+    if (isFinal(last.status)) {
+      if (last.version !== version) renderer.update(last);
+      emitStatus(last);
+    } else if (last.courier) {
+      renderer.update({ ...last, courier: null, version: last.version + 0.5 });
     }
   };
 
@@ -282,6 +302,7 @@ export function createTracking(root: ShadowRoot, o: MountOptions): Tracking {
       o.onReady?.();
     }
     if (s.kind === 'live') emitFor(s.snapshot);
+    else if (s.kind === 'inactive') showInactive(s.last);
   };
 
   const onError = (e: { code: string; detail?: string }) => {

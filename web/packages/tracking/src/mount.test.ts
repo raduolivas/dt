@@ -126,6 +126,37 @@ describe('events', () => {
     t.destroy();
   });
 
+  it('fires statuschange and delivered when the first final snapshot arrives only as inactive.last', () => {
+    const on = { onStatusChange: vi.fn(), onDelivered: vi.fn(), onEtaChange: vi.fn() };
+    const t = mount(el, opts(on));
+    const v = lastViewer();
+    v.push(live(snapshot({ version: 3, status: 'picked_up', courier: courier() })));
+    v.push({ kind: 'inactive', last: snapshot({ version: 4, status: 'delivered' }) });
+    v.push({ kind: 'inactive', last: snapshot({ version: 4, status: 'delivered' }) });
+    expect(on.onStatusChange.mock.calls.map((c) => c[0])).toEqual(['picked_up', 'delivered']);
+    expect(on.onDelivered).toHaveBeenCalledTimes(1);
+    t.destroy();
+  });
+
+  it('fires statuschange for a final inactive.last seen first, and no delivered for a cancelled delivery', () => {
+    const on = { onStatusChange: vi.fn(), onDelivered: vi.fn() };
+    const t = mount(el, opts(on));
+    lastViewer().push({ kind: 'inactive', last: snapshot({ version: 2, status: 'cancelled' }) });
+    expect(on.onStatusChange.mock.calls.map((c) => c[0])).toEqual(['cancelled']);
+    expect(on.onDelivered).not.toHaveBeenCalled();
+    t.destroy();
+  });
+
+  it('does not fire statuschange for a non-final inactive.last', () => {
+    const onStatusChange = vi.fn();
+    const t = mount(el, opts({ onStatusChange }));
+    const v = lastViewer();
+    v.push(live(snapshot({ version: 3, status: 'picked_up', courier: courier() })));
+    v.push({ kind: 'inactive', last: snapshot({ version: 3, status: 'picked_up', courier: courier() }) });
+    expect(onStatusChange.mock.calls.map((c) => c[0])).toEqual(['picked_up']);
+    t.destroy();
+  });
+
   it('fires ready for a link that is inactive from the start', () => {
     const onReady = vi.fn();
     const t = mount(el, opts({ onReady }));
@@ -152,6 +183,41 @@ describe('events', () => {
     expect(onError).toHaveBeenCalledWith({ code: 'missing_token' });
     expect(viewers).toHaveLength(0);
     expect(q('[data-card="inactive"]')).not.toBeNull();
+    t.destroy();
+  });
+});
+
+describe('map after the link goes inactive', () => {
+  it('hides the courier when the last snapshot is not final', () => {
+    const t = mount(el, opts());
+    const v = lastViewer();
+    v.push(live(snapshot({ version: 3, status: 'picked_up', courier: courier() })));
+    v.push({ kind: 'inactive', last: snapshot({ version: 3, status: 'picked_up', courier: courier() }) });
+    const shown = lastRenderer().calls.update.at(-1)!;
+    expect(lastRenderer().calls.update).toHaveLength(2);
+    expect(shown.courier).toBeNull();
+    expect(shown.status).toBe('picked_up');
+    expect(shown.version).toBeGreaterThan(3); // past the renderer's version gate
+    expect(q('[data-card="inactive"]')).not.toBeNull();
+    t.destroy();
+  });
+
+  it('draws a final last snapshot that the map has not seen', () => {
+    const t = mount(el, opts());
+    const v = lastViewer();
+    v.push(live(snapshot({ version: 3, status: 'picked_up', courier: courier() })));
+    v.push({ kind: 'inactive', last: snapshot({ version: 4, status: 'delivered' }) });
+    expect(lastRenderer().calls.update.map((s) => [s.version, s.status])).toEqual([
+      [3, 'picked_up'],
+      [4, 'delivered'],
+    ]);
+    t.destroy();
+  });
+
+  it('leaves the map alone when there is no last snapshot', () => {
+    const t = mount(el, opts());
+    lastViewer().push({ kind: 'inactive', last: null });
+    expect(lastRenderer().calls.update).toHaveLength(0);
     t.destroy();
   });
 });
