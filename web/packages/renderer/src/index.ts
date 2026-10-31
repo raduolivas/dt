@@ -2,13 +2,14 @@ import type * as THREE from 'three';
 import type { TrackingSnapshot } from '@dt/contract';
 import { SnapshotGate } from './snapshot';
 import type { TileSourceSpec } from './tiles/source';
-import { CityScene } from './view/CityScene';
+import { CityScene, type SceneLabels } from './view/CityScene';
 import { FallbackView } from './view/fallback';
 import { AdaptiveQuality, isPhone } from './view/quality';
 import './view/scene.css';
 
 export type { TileSourceSpec } from './tiles/source';
 export type { Insets } from './view/framing';
+export type { SceneLabels } from './view/CityScene';
 import type { Insets } from './view/framing';
 export { activeLeg, activeLegKind, toLatLng, viewKind, type ViewKind } from './snapshot';
 
@@ -33,6 +34,8 @@ export interface RendererOptions {
   tiles?: TileSourceSpec;
   /** Partner primary color for the ribbon and pins. */
   accent?: string;
+  /** The scene's label text in the page's language (the home label); default English. */
+  labels?: Partial<SceneLabels>;
   /** Milliseconds; tests freeze it. */
   clock?: () => number;
   /** Once per second. */
@@ -124,6 +127,7 @@ export function createRenderer(container: HTMLElement, o: RendererOptions = {}, 
         tiles: o.tiles,
         theme,
         mode: o.mode,
+        labels: o.labels,
         clock: o.clock,
         webgl: deps.webgl,
         reducedMotion: o.reducedMotion ?? media?.matches ?? false,

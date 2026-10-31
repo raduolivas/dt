@@ -39,6 +39,13 @@ export interface Insets {
   left: number;
 }
 
+/** A label pinned over the scene (bottom centre at `at`), its box in CSS px: framing keeps the whole box in view. */
+export interface LabelBox {
+  at: THREE.Vector3;
+  width: number;
+  height: number;
+}
+
 export interface Frame {
   target: THREE.Vector3;
   zoom: number;
@@ -56,7 +63,15 @@ export interface Frame {
 export function computeFrame(
   cam: THREE.OrthographicCamera,
   points: THREE.Vector3[],
-  opts: { margin?: number; maxZoom?: number; lift?: number; back?: THREE.Vector3; insets?: Insets; viewport?: [number, number] } = {},
+  opts: {
+    margin?: number;
+    maxZoom?: number;
+    lift?: number;
+    back?: THREE.Vector3;
+    insets?: Insets;
+    viewport?: [number, number];
+    labels?: readonly LabelBox[];
+  } = {},
 ): Frame {
   const margin = opts.margin ?? 0.2;
   const maxZoom = opts.maxZoom ?? 2.4;
@@ -83,12 +98,26 @@ export function computeFrame(
       maxU = Math.max(maxU, u);
     }
   }
+  // A label's anchor counts as a point; its box (screen px, fixed at any zoom) is kept clear by padding the insets.
+  let halfW = 0;
+  let labelH = 0;
+  for (const l of opts.labels ?? []) {
+    const r = l.at.dot(right);
+    const u = l.at.dot(up);
+    minR = Math.min(minR, r);
+    maxR = Math.max(maxR, r);
+    minU = Math.min(minU, u);
+    maxU = Math.max(maxU, u);
+    halfW = Math.max(halfW, l.width / 2);
+    labelH = Math.max(labelH, l.height);
+  }
   if (!Number.isFinite(minR)) {
     minR = maxR = minU = maxU = 0;
   }
   // Only the part of the viewport not covered by the cards (insets, CSS px) frames the points.
   const [vw, vh] = opts.viewport ?? [1, 1];
-  const ins = opts.insets ?? { top: 0, right: 0, bottom: 0, left: 0 };
+  const given = opts.insets ?? { top: 0, right: 0, bottom: 0, left: 0 };
+  const ins = { top: given.top + labelH, right: given.right + halfW, bottom: given.bottom, left: given.left + halfW };
   const fx = Math.max(0.2, (vw - ins.left - ins.right) / vw);
   const fy = Math.max(0.2, (vh - ins.top - ins.bottom) / vh);
   const spanR = Math.max(1, maxR - minR) * (1 + 2 * margin);
@@ -119,7 +148,7 @@ export function applyFrame(cam: THREE.OrthographicCamera, f: Frame): void {
   cam.updateProjectionMatrix();
 }
 
-/** Sets the frustum for the viewport, then frames the points (store, home and courier). */
+/** Sets the frustum for the viewport, then frames the points (store, home and courier) and their labels. */
 export function frameCamera(
   cam: THREE.OrthographicCamera,
   points: THREE.Vector3[],
@@ -127,9 +156,10 @@ export function frameCamera(
   height: number,
   back?: THREE.Vector3,
   insets?: Insets,
+  labels?: readonly LabelBox[],
 ): Frame {
   setFrustum(cam, width, height);
-  const f = computeFrame(cam, points, { back, insets, viewport: [width, height] });
+  const f = computeFrame(cam, points, { back, insets, viewport: [width, height], labels });
   applyFrame(cam, f);
   return f;
 }

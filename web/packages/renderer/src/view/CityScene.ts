@@ -11,7 +11,7 @@ import { TileCity, placeSites } from './city';
 import { DAY } from './colors';
 import { isSharedTexture, makeCourierGlow } from './night';
 import { THEME_FADE_MS, applyTheme, createLights, nightMix, refreshTheme, type ThemeFade } from './theme';
-import { MIN_ZOOM, computeFrame, followZoom, setFrustum, type Insets } from './framing';
+import { MIN_ZOOM, computeFrame, followZoom, setFrustum, type Insets, type LabelBox } from './framing';
 import { CameraRig, type CameraMode } from './camera';
 import type { Quality } from './quality';
 import {
@@ -34,6 +34,17 @@ import { fillRibbon, ribbonWidth, routeLegs, trimLegFrom } from './ribbon';
 
 /** The dropoff is private to the customer's own view; the label is never the address from the snapshot. */
 const HOME_LABEL = 'Your address';
+/** Inset changes smaller than this (CSS px, every side) do not reframe: sub-pixel reflows and small card changes. */
+export const INSET_STEP_PX = 8;
+/** A label's size until the browser has laid it out (CSS px): pill padding plus about 7 px a character. */
+const LABEL_H_PX = 24;
+const labelWidthPx = (text: string) => 18 + 7 * text.length;
+
+/** The scene's own words (the store label is the pickup name from the snapshot). Default English. */
+export interface SceneLabels {
+  /** Over the customer's home: never the dropoff label from the snapshot. */
+  home: string;
+}
 const ROUTE_ACTIVE = 0x2f6bff;
 
 const GRID_ROAD_TOP = 0.4;
@@ -88,6 +99,8 @@ export interface CitySceneOptions {
   webgl?: () => THREE.WebGLRenderer;
   /** The WebGL context was lost (`true`) or restored and rebuilt (`false`). */
   onContext?: (lost: boolean) => void;
+  /** Label text in the page's language; default English. */
+  labels?: Partial<SceneLabels>;
 }
 
 export class CityScene {
@@ -181,6 +194,9 @@ export class CityScene {
   private legs: { active: Vec2[]; next: Vec2[] } = { active: [], next: [] };
   private ribbonWidthM = -1;
   private insets: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
+  /** The last frame showed the home alone (after delivery): reframes for new insets keep that. */
+  private framedHomeOnly = false;
+  private readonly homeLabel: string;
   private readonly xray = new THREE.MeshBasicMaterial({
     color: COLORS.blue,
     transparent: true,
@@ -197,6 +213,7 @@ export class CityScene {
     this.builder = opts.builder ?? null;
     this.onTiles = opts.onTiles;
     this.onContext = opts.onContext;
+    this.homeLabel = opts.labels?.home || HOME_LABEL;
     if (this.tileSpec) {
       this.tileSource = openTileSource(this.tileSpec);
       this.tileSource.catch((err) => console.warn('tiles:', err));
@@ -309,7 +326,7 @@ export class CityScene {
       return el;
     };
     this.labels = { store: mkLabel('store'), home: mkLabel('home'), courier: mkLabel('courier') };
-    this.labels.home.textContent = HOME_LABEL;
+    this.labels.home.textContent = this.homeLabel;
     // the city is built from the first snapshot: the places come from it
     this.setLabelsVisible(false);
 
@@ -373,9 +390,21 @@ export class CityScene {
     return this.effects.reducedMotion;
   }
 
-  /** Screen space the page's cards cover (CSS px): framing keeps store, home and courier out from under them. */
+  /**
+   * Screen space the page's cards cover (CSS px): framing keeps store, home and courier (and their labels) out from
+   * under them. A change reframes with the framing the state has (store, courier and home; the home alone after
+   * delivery), unless: it is under `INSET_STEP_PX` on every side; the camera follows the courier (it keeps following);
+   * or the customer moved the camera and everything framed is still clear of the cards (their view stays theirs).
+   */
   setInsets(i: Insets): void {
-    this.insets = { ...i };
+    const next: Insets = { top: Math.round(i.top), right: Math.round(i.right), bottom: Math.round(i.bottom), left: Math.round(i.left) };
+    const old = this.insets;
+    const sides = ['top', 'right', 'bottom', 'left'] as const;
+    if (sides.every((k) => Math.abs(next[k] - old[k]) < INSET_STEP_PX)) return;
+    this.insets = next;
+    if (!this.snap || !this.hasPos || this.rig.following || this.rig.introPending) return;
+    if (this.rig.userMoved && this.framedInView()) return;
+    this.frameAll(false, this.framedHomeOnly);
   }
 
   /** Day (`light`) or night (`dark`): fades, or switches at once under reduced motion. */
@@ -654,22 +683,65 @@ export class CityScene {
    * `snap` jumps there, else glides (under reduced motion it always snaps).
    */
   private frameAll(snap: boolean, homeOnly = false) {
-    const s = this.snap;
-    if (!s) return;
-    const home = this.home?.center ?? this.projection.toLocal(s.dropoff.location);
-    const pts = homeOnly ? [home] : [this.store?.center ?? this.projection.toLocal(s.pickup.location), home];
-    if (!homeOnly && this.courierRoot.visible) pts.push({ x: this.targetPos.x, z: this.targetPos.z });
+    if (!this.snap) return;
+    this.framedHomeOnly = homeOnly;
     // Built for the orbit direction the camera has (or will have once the intro has turned and the 2D/3D tilt has
     // settled), so it still frames after the user rotated the view.
     const back = this.rig.frameBack();
-    const f = computeFrame(
-      this.camera,
-      pts.map((p) => new THREE.Vector3(p.x, 0, p.z)),
-      { back, insets: this.insets, viewport: [this.width, this.height] },
-    );
+    const f = computeFrame(this.camera, this.framedPoints(homeOnly), {
+      back,
+      insets: this.insets,
+      viewport: [this.width, this.height],
+      labels: this.labelBoxes(homeOnly),
+    });
     this.controls.minZoom = Math.min(MIN_ZOOM, f.zoom * 0.8);
     if (snap) this.rig.snapToFrame(f);
     else this.rig.glideToFrame(f);
+  }
+
+  /** Store, home and the courier (when shown) on the ground, or the home alone. */
+  private framedPoints(homeOnly: boolean): THREE.Vector3[] {
+    const s = this.snap!;
+    const home = this.home?.center ?? this.projection.toLocal(s.dropoff.location);
+    const pts = homeOnly ? [home] : [this.store?.center ?? this.projection.toLocal(s.pickup.location), home];
+    if (!homeOnly && this.courierRoot.visible) pts.push({ x: this.targetPos.x, z: this.targetPos.z });
+    return pts.map((p) => new THREE.Vector3(p.x, 0, p.z));
+  }
+
+  /** The labels over the framed places (where `updateLabels` puts them), sized as laid out or estimated. */
+  private labelBoxes(homeOnly: boolean): LabelBox[] {
+    const box = (el: HTMLElement, at: THREE.Vector3): LabelBox => ({
+      at,
+      width: el.offsetWidth || labelWidthPx(el.textContent ?? ''),
+      height: el.offsetHeight || LABEL_H_PX,
+    });
+    const out: LabelBox[] = [];
+    if (this.home) out.push(box(this.labels.home, new THREE.Vector3(this.home.center.x, this.home.top + 24, this.home.center.z)));
+    if (this.store && !homeOnly) out.push(box(this.labels.store, new THREE.Vector3(this.store.center.x, this.store.top + 24, this.store.center.z)));
+    if (!homeOnly && this.courierRoot.visible && this.labels.courier.textContent) {
+      out.push(box(this.labels.courier, new THREE.Vector3(this.curPos.x, 16, this.curPos.z)));
+    }
+    return out;
+  }
+
+  /** Everything the current framing holds (points with their pins, labels) is on screen and clear of the cards. */
+  private framedInView(): boolean {
+    this.camera.updateMatrixWorld();
+    const { top, right, bottom, left } = this.insets;
+    const inside = (x: number, y: number) => x >= left && x <= this.width - right && y >= top && y <= this.height - bottom;
+    const screen = (p: THREE.Vector3) => {
+      const v = this.tmp.copy(p).project(this.camera);
+      return { x: (v.x * 0.5 + 0.5) * this.width, y: (-v.y * 0.5 + 0.5) * this.height };
+    };
+    for (const p of this.framedPoints(this.framedHomeOnly)) {
+      const a = screen(p);
+      if (!inside(a.x, a.y)) return false;
+    }
+    for (const l of this.labelBoxes(this.framedHomeOnly)) {
+      const a = screen(l.at);
+      if (!inside(a.x - l.width / 2, a.y - l.height) || !inside(a.x + l.width / 2, a.y)) return false;
+    }
+    return true;
   }
 
   private resize() {
@@ -928,7 +1000,7 @@ export class CityScene {
 
   private gridPlacesChanged(s: TrackingSnapshot): boolean {
     const store = placeNear('store', s.pickup.name, s.pickup.location);
-    const home = placeNear('home', HOME_LABEL, s.dropoff.location);
+    const home = placeNear('home', this.homeLabel, s.dropoff.location);
     const key = `${store.cell.i},${store.cell.j}|${home.cell.i},${home.cell.j}`;
     if (key === this.deliveryKey && this.gridPlace) {
       this.gridPlace.store.label = s.pickup.name;

@@ -144,6 +144,15 @@ describe('createRenderer', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('shows the home label in the language the caller gives (task 13 review, R22)', () => {
+    const gl = mockWebGL();
+    const r = createRenderer(container(), { reducedMotion: true, labels: { home: 'Je adres' } }, { webgl: () => gl });
+    r.update(snap);
+    const home = dom.container.children.find((c) => c.className.startsWith('scene-label home'));
+    expect(home?.textContent).toBe('Je adres');
+    r.destroy();
+  });
+
   it('reports fps once per second', () => {
     let now = 0;
     const stats: number[] = [];

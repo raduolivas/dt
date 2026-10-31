@@ -42,6 +42,8 @@ export class CameraRig {
   /** Yaw (rad) the intro still has to turn; 0 when done. */
   private introLeft = 0;
   private follow = false;
+  /** The user moved the camera (orbit, pan or zoom) since it was last framed. */
+  private moved = false;
   private view: CameraMode;
   private readonly tmp = new THREE.Vector3();
   private readonly sph = new THREE.Spherical();
@@ -66,6 +68,7 @@ export class CameraRig {
       // the user takes the camera: glides and the intro stop where they are
       this.goal = null;
       this.introLeft = 0;
+      this.moved = true;
     });
     this.view = mode;
     this.limit(mode);
@@ -78,6 +81,11 @@ export class CameraRig {
 
   get following(): boolean {
     return this.follow;
+  }
+
+  /** The user took the camera since the last frame or follow start: their view is theirs until the next one. */
+  get userMoved(): boolean {
+    return this.moved;
   }
 
   /** The intro has not been played (or skipped) yet. */
@@ -102,6 +110,7 @@ export class CameraRig {
     this.follow = on;
     this.controls.enablePan = !on;
     if (!on) return;
+    this.moved = false;
     this.goal = { target: at.clone(), zoom, rate: GLIDE_RATE };
     if (!this.motion.glide()) this.finishMove();
   }
@@ -119,6 +128,7 @@ export class CameraRig {
 
   /** Jumps onto a frame (built with `frameBack()`). */
   snapToFrame(f: Frame): void {
+    this.moved = false;
     applyFrame(this.camera, f); // the tested framing path
     this.controls.target.copy(f.target);
     this.goal = null;
@@ -128,6 +138,7 @@ export class CameraRig {
 
   /** Glides onto a frame: same frame, reached by moving target and camera together along the orbit direction. */
   glideToFrame(f: Frame): void {
+    this.moved = false;
     const now = this.tmp.copy(this.camera.position).sub(this.controls.target).normalize();
     this.camera.position.copy(now).multiplyScalar(f.distance).add(this.controls.target);
     this.camera.far = f.far;

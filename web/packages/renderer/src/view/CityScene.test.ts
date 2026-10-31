@@ -114,3 +114,102 @@ describe('CityScene', () => {
     city.dispose();
   });
 });
+
+// ---- insets (task 13 review, R21) and scene labels (R22) ------------------------------------------------------------
+
+describe('CityScene insets', () => {
+  const W = 390;
+  const H = 844;
+
+  /** Where the scene put a label's anchor (bottom centre) on screen, from its CSS transform. */
+  function labelAt(dom: ReturnType<typeof installFakeDom>, cls: 'store' | 'home') {
+    const el = dom.container.children.find((c) => c.className === `scene-label ${cls}` || c.className.startsWith(`scene-label ${cls} `))!;
+    const m = /translate\(([-\d.]+)px, ([-\d.]+)px\)/.exec(el.style.transform ?? '')!;
+    return { x: Number(m[1]), y: Number(m[2]) };
+  }
+
+  function setup(s: TrackingSnapshot = snap) {
+    const dom = installFakeDom();
+    const gl = mockWebGL();
+    const city = new CityScene(dom.container as unknown as HTMLElement, { webgl: () => gl, reducedMotion: true });
+    city.onSnapshot(s);
+    city.frame(1 / 60);
+    const reframes = vi.spyOn(city as unknown as { frameAll: () => void }, 'frameAll');
+    /** The customer takes the camera (a drag or a pinch starts). */
+    const grab = () => (city as unknown as { controls: THREE.EventDispatcher<{ start: object }> }).controls.dispatchEvent({ type: 'start' });
+    return { dom, city, reframes, grab };
+  }
+
+  it('frames store and home again in the map the cards leave free', () => {
+    const { dom, city } = setup();
+    city.setInsets({ top: 0, right: 0, bottom: 560, left: 0 });
+    city.frame(1 / 60);
+    for (const c of ['store', 'home'] as const) {
+      const p = labelAt(dom, c);
+      expect(p.y, c).toBeLessThan(H - 560);
+      expect(p.x, c).toBeGreaterThan(0);
+      expect(p.x, c).toBeLessThan(W);
+    }
+    city.dispose();
+  });
+
+  it('keeps following the courier', () => {
+    const { city, reframes } = setup();
+    city.setFollow(true);
+    city.setInsets({ top: 0, right: 0, bottom: 400, left: 0 });
+    city.frame(1 / 60);
+    expect(city.isFollowing).toBe(true);
+    expect(reframes).not.toHaveBeenCalled();
+    city.dispose();
+  });
+
+  it('keeps the home-only framing after delivery', () => {
+    const delivered = { ...snap, status: 'delivered', courier: null, version: 2 } as TrackingSnapshot;
+    const { dom, city, reframes } = setup();
+    city.onSnapshot(delivered); // frames the home alone
+    city.frame(1 / 60);
+    reframes.mockClear();
+    city.setInsets({ top: 0, right: 0, bottom: 500, left: 0 });
+    city.frame(1 / 60);
+    expect(reframes).toHaveBeenCalledWith(false, true);
+    const home = labelAt(dom, 'home');
+    expect(home.y).toBeLessThan(H - 500);
+    expect(Math.abs(home.x - W / 2)).toBeLessThan(20); // the home alone, centred; framing the store too would move it
+    city.dispose();
+  });
+
+  it('ignores changes of a few pixels', () => {
+    const { city, reframes } = setup();
+    city.setInsets({ top: 0, right: 0, bottom: 200, left: 0 });
+    reframes.mockClear();
+    city.setInsets({ top: 0, right: 0, bottom: 203.6, left: 0.4 });
+    city.setInsets({ top: 0, right: 0, bottom: 196.2, left: 0 });
+    expect(reframes).not.toHaveBeenCalled();
+    city.dispose();
+  });
+
+  it("keeps the customer's own view unless the cards would hide store, courier or home", () => {
+    const { dom, city, reframes, grab } = setup();
+    city.setInsets({ top: 0, right: 0, bottom: 200, left: 0 });
+    city.frame(1 / 60);
+    grab();
+    const before = labelAt(dom, 'home');
+    city.setInsets({ top: 0, right: 0, bottom: 240, left: 0 }); // the points stay clear
+    city.frame(1 / 60);
+    expect(reframes).toHaveBeenCalledTimes(1); // only the first, before the customer took the camera
+    expect(labelAt(dom, 'home')).toEqual(before);
+    city.setInsets({ top: 0, right: 0, bottom: 700, left: 0 }); // now the sheet would cover them
+    city.frame(1 / 60);
+    expect(reframes).toHaveBeenCalledTimes(2);
+    expect(labelAt(dom, 'home').y).toBeLessThan(H - 700);
+    city.dispose();
+  });
+
+  it('shows the home label the caller gives', () => {
+    const dom = installFakeDom();
+    const city = new CityScene(dom.container as unknown as HTMLElement, { webgl: () => mockWebGL(), reducedMotion: true, labels: { home: 'Je adres' } });
+    city.onSnapshot(snap);
+    expect(dom.container.children.find((c) => c.className.startsWith('scene-label home'))!.textContent).toBe('Je adres');
+    city.dispose();
+  });
+});

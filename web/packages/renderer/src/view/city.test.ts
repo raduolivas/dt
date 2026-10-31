@@ -282,6 +282,38 @@ describe('frameCamera', () => {
     }
   });
 
+  it('keeps the pin labels inside the map the cards leave free (task 13 review, R23)', () => {
+    const proj = new GeoProjection({ lat: 52.37, lng: 4.89 });
+    // store and home far apart left to right, the labels wide: points alone would put half a label off screen
+    const [store, home] = [{ lat: 52.3731, lng: 4.8826 }, { lat: 52.3705, lng: 4.8995 }].map((p) => {
+      const l = proj.toLocal(p);
+      return new THREE.Vector3(l.x, 0, l.z);
+    }) as [THREE.Vector3, THREE.Vector3];
+    const labels = [
+      { at: store.clone().setY(30), width: 150, height: 26 },
+      { at: home.clone().setY(36), width: 170, height: 26 },
+    ];
+    const cases: [number, number, { top: number; right: number; bottom: number; left: number }][] = [
+      [375, 667, { top: 0, right: 0, bottom: 230, left: 0 }],
+      [667, 375, { top: 0, right: 0, bottom: 60, left: 0 }],
+      [1280, 800, { top: 0, right: 0, bottom: 0, left: 372 }],
+    ];
+    for (const [w, h, ins] of cases) {
+      const cam = new THREE.OrthographicCamera();
+      frameCamera(cam, [store, home], w, h, undefined, ins, labels);
+      cam.updateMatrixWorld();
+      for (const l of labels) {
+        const v = l.at.clone().project(cam);
+        const x = ((v.x + 1) / 2) * w;
+        const y = ((1 - v.y) / 2) * h;
+        expect(x - l.width / 2, `${w}x${h} left`).toBeGreaterThanOrEqual(ins.left);
+        expect(x + l.width / 2, `${w}x${h} right`).toBeLessThanOrEqual(w - ins.right);
+        expect(y - l.height, `${w}x${h} top`).toBeGreaterThanOrEqual(ins.top);
+        expect(y, `${w}x${h} bottom`).toBeLessThanOrEqual(h - ins.bottom);
+      }
+    }
+  });
+
   it('frames a 12 km route', () => {
     expectInFrustum([
       { lat: 52.37, lng: 4.89 },
