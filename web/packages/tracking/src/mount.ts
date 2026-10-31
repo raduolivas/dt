@@ -27,6 +27,8 @@ export interface MountOptions {
   onEtaChange?(e: { seconds: number | null; window: EtaWindow }): void;
   onDelivered?(): void;
   onError?(e: { code: string }): void;
+  /** @internal Test seam: the renderer's clock in milliseconds (the end-to-end look tests freeze it). */
+  clock?: () => number;
 }
 
 export interface Tracking {
@@ -149,7 +151,13 @@ export function createTracking(root: ShadowRoot, o: MountOptions): Tracking {
   scheme?.addEventListener('change', onScheme);
 
   // ---- renderer ----
-  const renderer = createRenderer(mapEl, { mode, theme, tiles: o.tiles ?? DEFAULT_TILES, labels: { home: t('yourAddress', lang) } });
+  const renderer = createRenderer(mapEl, {
+    mode,
+    theme,
+    tiles: o.tiles ?? DEFAULT_TILES,
+    labels: { home: t('yourAddress', lang) },
+    clock: o.clock,
+  });
   let accentSent: string | null = null;
 
   const showMode = () => {

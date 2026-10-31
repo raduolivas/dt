@@ -30,17 +30,20 @@ make doctor
 | `make gen` | Regenerate code from the contracts (Protobuf → Go + Connect, SQL → Go via sqlc, OpenAPI → Go models + TypeScript) |
 | `make vuln` / `make audit-web` | Scan Go modules / web dependencies for known vulnerabilities |
 | `make web-dev` | Run the renderer prototype at http://localhost:5173 |
+| `make web-assets` | Build the hosted tracking page and the SDK into `build/cdn` for the local CDN (`cdn` service, http://localhost:8090); a link's page is then http://localhost:8080/t/&lt;token&gt; |
+| `make e2e` | After `make dev` and `make web-assets`: the Playwright end-to-end tests (`web/e2e`: hosted page, SDK demo, embedding, no-WebGL fallback, screenshots). Install the browsers once with `pnpm -C web --filter @dt/e2e exec playwright install --with-deps chromium webkit firefox`; update the screenshot baselines with `make e2e E2E_ARGS=--update-snapshots` |
 | `make osrm-data` | Download and preprocess the Amsterdam routing data (`make dev` runs it) |
 | `make ci` | Every CI check locally: lint, tests, web build, audits, vulnerability scans, secret scan. It does **not** run the `iac` CI job (`tofu fmt`, `init`/`validate`, `tofu test` and the trivy scan of `infra/aws`); run those by hand when you touch `infra/` (the job must be among the required checks of `main`) |
 | `make aws-bootstrap PHASE=a\|b` | Owner only, in CloudShell: create the AWS organization, guard rails and CI role ([`docs/runbooks/aws-account-setup.md`](docs/runbooks/aws-account-setup.md)) |
 | `make staging-up` / `staging-down` | Owner only: create or update, or destroy, the AWS staging stack ([`docs/runbooks/staging.md`](docs/runbooks/staging.md)) |
 | `make staging-wake` / `staging-sleep` | Owner only: start or stop the staging host and database outside the schedule |
 
-Local services listen on `127.0.0.1` only: gateway 8080, deliveries 8081, tracking 8082, webhooks 8083,
-accounts 8084, tracking's internal RPC 8085, Postgres 5432, Redis 6379, NATS 4222 (monitoring 8222), OSRM car
-5000 and bike 5001. Every service exposes `GET /livez` and `GET /readyz`. The public API is the gateway's `/v1`
-(tracking's 8082 serves the viewer endpoints behind the same load balancer); the internal RPC listeners (accounts
-8084, deliveries 8081, tracking 8085) speak mTLS and are never routed publicly.
+Local services listen on `127.0.0.1` only: the public API 8080 (the `edge` proxy, like the staging load balancer:
+`/v1/tracking/snapshot` and `/v1/tracking/stream*` go to tracking, everything else to the gateway), deliveries 8081,
+tracking 8082, webhooks 8083, accounts 8084, tracking's internal RPC 8085, the local CDN 8090, Postgres 5432, Redis
+6379, NATS 4222 (monitoring 8222), OSRM car 5000 and bike 5001. Every service exposes `GET /livez` and `GET /readyz`.
+The public API is `/v1` on 8080; the internal RPC listeners (accounts 8084, deliveries 8081, tracking 8085) speak
+mTLS and are never routed publicly.
 
 ## Status
 

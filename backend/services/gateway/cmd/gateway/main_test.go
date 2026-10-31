@@ -330,7 +330,7 @@ func TestTrackPageConfigReducesCSPToOrigins(t *testing.T) {
 	}
 	csp := domain.PageCSP("'none'", c.Origins)
 	for _, want := range []string{
-		"connect-src http://localhost:8080 http://localhost:8090 http://localhost:8090 https://tiles.openfreemap.org;",
+		"connect-src http://localhost:8080 ws://localhost:8080 http://localhost:8090 http://localhost:8090 https://tiles.openfreemap.org;",
 		"script-src http://localhost:8090;",
 	} {
 		if !strings.Contains(csp, want) {

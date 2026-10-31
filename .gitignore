@@ -24,3 +24,6 @@ infra/aws/**/*.tfstate
 infra/aws/**/*.tfstate.*
 infra/aws/**/*.tfplan
 /build/
+# Playwright output (web/e2e)
+web/e2e/test-results/
+web/e2e/playwright-report/

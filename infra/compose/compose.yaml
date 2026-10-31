@@ -87,8 +87,11 @@ services:
       NATS_URL: "nats://nats:4222"
       # Dev-only placeholder, never a real secret: the same value as accounts'.
       APIKEY_PEPPER: "ZGV2LW9ubHktbm90LWEtc2VjcmV0LXBlcHBlci0wMDAwMDAwMDAwMDA=" # gitleaks:allow (dev-only placeholder)
-      # CIDRs of proxies whose X-Forwarded-For hops count; empty: none.
-      TRUSTED_PROXIES: ""
+      # CIDRs of proxies whose X-Forwarded-For hops count. The edge proxy (and
+      # Docker's port forwarding) reach the gateway from private addresses; a
+      # client-sent X-Forwarded-For then names the client, which lets the
+      # end-to-end tests give each browser its own viewer rate limit (dev only).
+      TRUSTED_PROXIES: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
       DELIVERIES_RPC_URL: "https://deliveries:8081"
       # Internal RPC over mTLS (dev certs from scripts/dev-certs.sh).
       INTERNAL_RPC_TLS_CERT: /certs/gateway.pem
@@ -119,8 +122,44 @@ services:
       # snapshots from it. delivery.status_changed arrives over NATS
       # (consumer gateway-deliveries, waits for the DELIVERIES stream).
       TRACKING_RPC_URL: "https://tracking:8085"
+    # Port 8080 on the host is the edge proxy, which forwards to the gateway.
+
+  # The public API origin, like the staging load balancer: /v1/tracking/snapshot
+  # and /v1/tracking/stream* to tracking, the rest to the gateway.
+  edge:
+    image: nginxinc/nginx-unprivileged@sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6 # 1.29.8-alpine
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      gateway:
+        condition: service_started
+      tracking:
+        condition: service_started
+    environment:
+      NGINX_ENTRYPOINT_QUIET_LOGS: "1"
+    tmpfs: [/tmp]
+    volumes:
+      - ./edge/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
       - "127.0.0.1:8080:8080"
+
+  # The CDN for local use: the hosted page, the SDK and the tile fixture from
+  # build/cdn (make web-assets), with range requests, CORS * and immutable
+  # page/ and sdk/ files.
+  cdn:
+    image: nginxinc/nginx-unprivileged@sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6 # 1.29.8-alpine
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      NGINX_ENTRYPOINT_QUIET_LOGS: "1"
+    tmpfs: [/tmp]
+    volumes:
+      - ./cdn/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../../build/cdn:/srv/cdn:ro
+    ports:
+      - "127.0.0.1:8090:8090"
 
   deliveries:
     <<: *service

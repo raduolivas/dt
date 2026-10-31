@@ -95,7 +95,7 @@ func TestTrackPageHeaders(t *testing.T) {
 		"X-Content-Type-Options": "nosniff",
 		"Content-Type":           "text/html; charset=utf-8",
 		"Content-Security-Policy": "default-src 'none'; script-src https://cdn.example; style-src https://cdn.example 'unsafe-inline'; " +
-			"img-src https://cdn.example 'self' data: blob:; connect-src https://api.example https://cdn.example https://cdn.example https://tiles.openfreemap.org; " +
+			"img-src https://cdn.example 'self' data: blob:; connect-src https://api.example wss://api.example https://cdn.example https://cdn.example https://tiles.openfreemap.org; " +
 			"worker-src blob:; font-src https://cdn.example; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
 	}
 	for k, w := range want {

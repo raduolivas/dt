@@ -35,7 +35,7 @@ func TestPageCSPExact(t *testing.T) {
 		Extra: []string{"https://tiles.openfreemap.org", "https://x.example"}}
 	want := "default-src 'none'; script-src https://cdn.example; style-src https://cdn.example 'unsafe-inline'; " +
 		"img-src https://cdn.example 'self' data: blob:; " +
-		"connect-src https://api.example https://cdn.example https://cdn.example https://tiles.openfreemap.org https://x.example; " +
+		"connect-src https://api.example wss://api.example https://cdn.example https://cdn.example https://tiles.openfreemap.org https://x.example; " +
 		"worker-src blob:; font-src https://cdn.example; base-uri 'none'; form-action 'none'; frame-ancestors https://shop.example"
 	if got := PageCSP("https://shop.example", o); got != want {
 		t.Fatalf("csp =\n%s\nwant\n%s", got, want)
@@ -43,8 +43,20 @@ func TestPageCSPExact(t *testing.T) {
 	// No extras: no trailing space.
 	o.Extra = nil
 	if got := PageCSP("'none'", o); got == "" || got[len(got)-len("frame-ancestors 'none'"):] != "frame-ancestors 'none'" ||
-		!contains(got, "connect-src https://api.example https://cdn.example https://cdn.example; ") {
+		!contains(got, "connect-src https://api.example wss://api.example https://cdn.example https://cdn.example; ") {
 		t.Fatalf("csp = %s", got)
+	}
+}
+
+// The viewer stream is a WebSocket on the API origin: a CSP source with an
+// http(s) scheme does not match a ws(s) URL, so connect-src names both.
+func TestPageCSPAllowsTheAPIWebSocket(t *testing.T) {
+	t.Parallel()
+	for api, ws := range map[string]string{"https://api.example": "wss://api.example", "http://localhost:8080": "ws://localhost:8080"} {
+		got := PageCSP("'none'", PageOrigins{CDN: "https://cdn.example", API: api})
+		if !contains(got, "connect-src "+api+" "+ws+" https://cdn.example; ") {
+			t.Fatalf("api %s: csp = %s", api, got)
+		}
 	}
 }
 

@@ -50,7 +50,7 @@ func PageCSP(frameAncestors string, o PageOrigins) string {
 		cdn = "'self'"
 	}
 	connect := []string{}
-	for _, s := range append([]string{o.API, o.Tiles, o.CDN}, o.Extra...) {
+	for _, s := range append([]string{o.API, wsOrigin(o.API), o.Tiles, o.CDN}, o.Extra...) {
 		if s != "" {
 			connect = append(connect, s)
 		}
@@ -61,4 +61,17 @@ func PageCSP(frameAncestors string, o PageOrigins) string {
 	return "default-src 'none'; script-src " + cdn + "; style-src " + cdn + " 'unsafe-inline'; img-src " + cdn +
 		" 'self' data: blob:; connect-src " + strings.Join(connect, " ") + "; worker-src blob:; font-src " + cdn +
 		"; base-uri 'none'; form-action 'none'; frame-ancestors " + frameAncestors
+}
+
+// wsOrigin is the WebSocket origin of an http(s) origin (the viewer stream is
+// a WebSocket on the API origin, and a CSP source with an http(s) scheme does
+// not match a ws(s) URL); "" for anything else.
+func wsOrigin(origin string) string {
+	if rest, ok := strings.CutPrefix(origin, "https://"); ok {
+		return "wss://" + rest
+	}
+	if rest, ok := strings.CutPrefix(origin, "http://"); ok {
+		return "ws://" + rest
+	}
+	return ""
 }

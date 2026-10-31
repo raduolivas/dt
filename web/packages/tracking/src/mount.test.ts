@@ -74,6 +74,16 @@ describe('mount', () => {
     t.destroy();
   });
 
+  it('passes a test clock to the renderer, and none by default', () => {
+    const clock = () => 1234;
+    const frozen = mount(el, opts({ clock }));
+    expect(lastRenderer().options.clock).toBe(clock);
+    frozen.destroy();
+    const real = mount(el, opts());
+    expect(lastRenderer().options.clock).toBeUndefined();
+    real.destroy();
+  });
+
   it('draws every live snapshot and gives the renderer the partner color', () => {
     const t = mount(el, opts());
     const s = snapshot();
