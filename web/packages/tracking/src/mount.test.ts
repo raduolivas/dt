@@ -58,6 +58,15 @@ describe('mount', () => {
     t.destroy();
   });
 
+  it('gives the renderer its labels in the page language', () => {
+    const nl = mount(el, opts({ lang: 'nl' }));
+    expect(lastRenderer().options.labels).toEqual({ home: 'Je adres' });
+    nl.destroy();
+    const en = mount(el, opts({ lang: 'en' }));
+    expect(lastRenderer().options.labels).toEqual({ home: 'Your address' });
+    en.destroy();
+  });
+
   it('passes mode and tiles to the renderer', () => {
     const tiles = { kind: 'pmtiles' as const, url: 'https://cdn.example/tiles/nl.pmtiles' };
     const t = mount(el, opts({ mode: '2d', tiles }));
@@ -220,14 +229,23 @@ describe('layout', () => {
     t.destroy();
   });
 
-  it('frames the scene again when the cards cover a different part of the map', () => {
+  it('leaves reframing to the renderer when the cards change height (no overview)', () => {
     const t = mount(el, opts());
     const r = lastRenderer();
-    lastViewer().push(live(snapshot()));
-    const before = r.calls.overview;
-    q<HTMLButtonElement>('button.dt-handle')!.click(); // the sheet opens: more of the map is covered
-    expect(r.calls.setInsets.length).toBeGreaterThan(1);
-    expect(r.calls.overview).toBeGreaterThan(before);
+    let top = 470;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const panel = this.classList.contains('dt-panel');
+      const y = panel ? top : 0;
+      return { left: 0, top: y, width: 375, height: panel ? 667 - 12 - y : 667, right: 375, bottom: 667, x: 0, y, toJSON() {} } as DOMRect;
+    });
+    lastViewer().push(live(snapshot({ version: 1 })));
+    const sets = r.calls.setInsets.length;
+    top = 395.4; // the courier card appears: the sheet grows
+    lastViewer().push(live(snapshot({ version: 2, status: 'courier_assigned', courier: courier() })));
+    q<HTMLButtonElement>('button.dt-handle')!.click(); // and the customer opens it
+    expect(r.calls.setInsets.length).toBeGreaterThan(sets);
+    expect(r.calls.setInsets.at(-1)!.bottom).toBe(Math.round(667 - 395.4));
+    expect(r.calls.overview).toBe(0);
     t.destroy();
   });
 

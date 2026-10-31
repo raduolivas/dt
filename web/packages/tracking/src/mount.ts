@@ -149,7 +149,7 @@ export function createTracking(root: ShadowRoot, o: MountOptions): Tracking {
   scheme?.addEventListener('change', onScheme);
 
   // ---- renderer ----
-  const renderer = createRenderer(mapEl, { mode, theme, tiles: o.tiles ?? DEFAULT_TILES });
+  const renderer = createRenderer(mapEl, { mode, theme, tiles: o.tiles ?? DEFAULT_TILES, labels: { home: t('yourAddress', lang) } });
   let accentSent: string | null = null;
 
   const showMode = () => {
@@ -175,7 +175,6 @@ export function createTracking(root: ShadowRoot, o: MountOptions): Tracking {
     return r.width > 0 && r.height > 0 ? { left: r.left - base.left, top: r.top - base.top, width: r.width, height: r.height } : null;
   };
   let lastInsets = '';
-  let drawn = false;
   const relayout = () => {
     if (!alive) return;
     const width = rootEl.clientWidth || 375;
@@ -187,12 +186,13 @@ export function createTracking(root: ShadowRoot, o: MountOptions): Tracking {
     const collapsible = pre.kind !== 'side' || width < 900;
     panel.toggleAttribute('data-collapsible', collapsible);
     const l = computeLayout({ width, height, expanded, panel: box(panel) });
-    const key = JSON.stringify(l.insets);
+    // whole pixels: sub-pixel reflows are not a change (the renderer also ignores small ones and reframes itself)
+    const i = l.insets;
+    const insets = { top: Math.round(i.top), right: Math.round(i.right), bottom: Math.round(i.bottom), left: Math.round(i.left) };
+    const key = JSON.stringify(insets);
     if (key !== lastInsets) {
       lastInsets = key;
-      renderer.setInsets(l.insets);
-      // the renderer frames on its own only when the delivery state changes: frame store, courier and home again
-      if (drawn) renderer.overview();
+      renderer.setInsets(insets);
     }
   };
   const showExpanded = () => {
@@ -265,10 +265,7 @@ export function createTracking(root: ShadowRoot, o: MountOptions): Tracking {
     }
     // the cards first: their size gives the insets the renderer frames this snapshot with
     render();
-    if (s.kind === 'live') {
-      renderer.update(s.snapshot);
-      drawn = true;
-    }
+    if (s.kind === 'live') renderer.update(s.snapshot);
     if (!ready && (s.kind === 'live' || s.kind === 'inactive')) {
       ready = true;
       o.onReady?.();
