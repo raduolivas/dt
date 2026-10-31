@@ -241,8 +241,9 @@ those off when it does. Items the reviews fixed in their own fix rounds are not 
   fight. `resolveTheme` splits `createRenderer`'s doc comment. `auto` is resolved once, but the doc says "follows"
   (add a listener or reword). `currentTheme` is unused. `disposeCity` disposes the shared `litBase` map. The
   streetlight glow `renderOrder` 1 equals `routeNext`, so additive pools may brighten the next-leg ribbon.
-- **Lifecycle and context:** no `forceContextLoss()` before dispose on a fallback swap or destroy (the context
-  lives until GC; browsers cap at about 8-16). A `CityScene` constructor throw after `appendChild` leaks the canvas
+- **Lifecycle and context:** ~~no `forceContextLoss()` before dispose on a fallback swap or destroy~~ (done in the
+  final fix wave: `dispose` releases the context after removing its listeners; the 3 s context timer also runs only
+  while the page is visible, R33). A `CityScene` constructor throw after `appendChild` leaks the canvas
   and listeners. The restore handler runs `rebuildGpu()` before `onContext(false)` (a throwing rebuild still falls
   back at 3 s, which is arguably right). `glowTexture` has an unmarked no-canvas branch.
 - **Tests:** no test for the `updateRoutes`/`activeLeg` link beyond the Task 6 fix, for the 5 s tile retry gate,
@@ -263,11 +264,16 @@ those off when it does. Items the reviews fixed in their own fix rounds are not 
   (the server pings every 25 s). Some lines in `stream.test.ts` are long and unformatted. The visibility listener
   stays until `stop()` after the link becomes inactive. The transport resets to `ws` before the resume awaits
   (consistent with R19). The retry-on-return test (R19) does not assert the second SSE fallback.
+- Final fix wave: a 503 keeps the client warming and retrying (R30). Close code 4401 recovers once (refresh, else a
+  new session from the link token) and goes inactive only on 401 `link_invalid`; a second 4401 before the new
+  stream delivered any message also ends in inactive, so a server that keeps refusing fresh tokens cannot cause a
+  recover loop.
 
 ### SDK and page
 
-- A broken partner logo is requested again on every snapshot. `onDelivered` and `onStatusChange` do not fire when
-  the first final snapshot arrives as `inactive.last`. Removing the `theme` attribute forces `auto` over the
+- A broken partner logo is requested again on every snapshot. ~~`onDelivered` and `onStatusChange` do not fire when
+  the first final snapshot arrives as `inactive.last`~~ (done in the final fix wave, which also hides the courier on
+  the map when the link goes inactive before a final state). Removing the `theme` attribute forces `auto` over the
   branding theme. The `three` package and the renderer `./framing` export exist only for a test. The `mode` option
   of `mount` is not validated.
 - Follow mode does not recenter on the free area after an inset change (the SDK never turns follow on). Label
@@ -282,7 +288,9 @@ those off when it does. Items the reviews fixed in their own fix rounds are not 
 - The CDN `nginx.conf` has duplicated CORS blocks. Its immutable `Cache-Control` uses `always`, which caches 404s.
   `types {}` replaces `mime.types`. `serve-demo` answers 502 after the headers are sent, and its `::1` listener has
   no error handler.
-- The e2e CI job has no `timeout-minutes`, and the Playwright cache is keyed on the whole lockfile.
+- ~~The e2e CI job has no `timeout-minutes`, and the Playwright cache is keyed on the whole lockfile.~~ Done in the
+  final fix wave (75 minutes; keyed on the `@playwright/test` version). The look baselines on GitHub's runners are
+  still unproven until the owner pushes.
 
 ### Infrastructure and deploy
 

@@ -233,9 +233,10 @@ optional. Set them with `dtctl tenant settings` (the console will do this in M7)
 | Theme | `--brand-theme` | `light`, `dark` or `auto` |
 | Logo | `--brand-logo` | PNG or WebP, up to 100 KB and 512 x 512 pixels |
 
-The name and logo show in a card at the top of the details. The primary color is used for accents on the cards. If
-the color has too little contrast on the card, the view uses a slightly darker shade (or lighter, at night) so the
-text stays readable. The theme is the default when you do not set `theme` yourself. Branding applies to the hosted
+The name and logo show in a card at the top of the details. The primary color is used for the accents on the
+cards, and it also tints the route ribbon and the pins on the map. The rest of the 3D city keeps
+DeliveryOnTrack's day and night colors. If the color has too little contrast on the card, the cards use a slightly
+darker shade (or lighter, at night) so the text stays readable. The theme is the default when you do not set `theme` yourself. Branding applies to the hosted
 page, the iframe and the SDK.
 
 ## Languages
