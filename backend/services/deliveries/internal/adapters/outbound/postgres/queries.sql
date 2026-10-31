@@ -59,6 +59,20 @@ WHERE (sqlc.narg(status)::text IS NULL OR d.status = sqlc.narg(status)::text)
 ORDER BY d.id DESC
 LIMIT sqlc.arg(row_limit);
 
+-- name: ListCourierDeliveries :many
+-- The courier's non-final deliveries, oldest first.
+SELECT d.id, d.tenant_id, d.environment, d.external_id, d.model, d.status, d.pickup_policy,
+  ST_Y(d.pickup::geometry)::float8 AS pickup_lat, ST_X(d.pickup::geometry)::float8 AS pickup_lng, d.pickup_name,
+  ST_Y(d.dropoff::geometry)::float8 AS dropoff_lat, ST_X(d.dropoff::geometry)::float8 AS dropoff_lng,
+  d.dropoff_label_sealed, d.customer_first_name_sealed, d.notes_sealed, d.metadata_sealed,
+  d.items_summary, d.item_count, d.ready_at, d.courier_id, c.external_id AS courier_external_id,
+  c.display_name AS courier_display_name, c.vehicle AS courier_vehicle,
+  d.erased_at, d.dropped_reports, d.version, d.created_at, d.updated_at
+FROM deliveries d LEFT JOIN couriers c ON c.id = d.courier_id
+WHERE d.courier_id = sqlc.arg(courier_id)::text
+  AND d.status NOT IN ('delivered', 'cancelled', 'failed')
+ORDER BY d.created_at, d.id;
+
 -- name: UpdateDelivery :execrows
 UPDATE deliveries
 SET status = @status,

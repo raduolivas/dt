@@ -92,6 +92,18 @@ func (r *fakeRepo) Mutate(ctx context.Context, s app.Scope, id string, fn func(*
 	return d, nil
 }
 
+func (r *fakeRepo) ListByCourier(_ context.Context, s app.Scope, courierID string) ([]*domain.Delivery, error) {
+	var out []*domain.Delivery
+	for _, d := range r.deliveries {
+		if d.TenantID == s.TenantID && d.Env == s.Env && d.Courier != nil && d.Courier.ID == courierID && !d.Status.Final() {
+			c := *d
+			out = append(out, &c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
 func (r *fakeRepo) Courier(_ context.Context, _ app.Scope, id string) (domain.Courier, error) {
 	c, ok := r.couriers[id]
 	if !ok {

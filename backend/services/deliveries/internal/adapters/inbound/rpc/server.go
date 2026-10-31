@@ -41,8 +41,6 @@ func Mount(mux *http.ServeMux, svc *app.Service, token string, log *slog.Logger)
 // Server implements deliveriesv1connect.DeliveriesServiceHandler. Log lines
 // carry ids and states only, never personal fields.
 type Server struct {
-	// GetCourier and ListCourierDeliveries answer Unimplemented until M5 Task 3.
-	deliveriesv1connect.UnimplementedDeliveriesServiceHandler
 	svc *app.Service
 	log *slog.Logger
 }
@@ -147,7 +145,9 @@ func (s *Server) ReportEvent(ctx context.Context, req *deliveriesv1.ReportEventR
 	s.log.InfoContext(ctx, "delivery_event_reported", slog.String("tenant_id", sc.TenantID),
 		slog.String("environment", sc.Env), slog.String("delivery_id", d.ID),
 		slog.String("type", req.GetType()), slog.String("outcome", string(outcome)))
-	return &deliveriesv1.ReportEventResponse{Delivery: fromDelivery(d), Outcome: string(outcome)}, nil
+	return &deliveriesv1.ReportEventResponse{
+		Delivery: fromDelivery(d), Outcome: string(outcome), NextActions: d.CourierNextActions(),
+	}, nil
 }
 
 func (s *Server) CancelDelivery(ctx context.Context, req *deliveriesv1.CancelDeliveryRequest) (*deliveriesv1.CancelDeliveryResponse, error) {
@@ -188,4 +188,38 @@ func (s *Server) UpsertCourier(ctx context.Context, req *deliveriesv1.UpsertCour
 	s.log.InfoContext(ctx, "courier_upserted", slog.String("tenant_id", sc.TenantID),
 		slog.String("environment", sc.Env), slog.String("courier_id", c.ID), slog.Bool("created", created))
 	return &deliveriesv1.UpsertCourierResponse{Courier: fromCourier(c), Created: created}, nil
+}
+
+// GetCourier answers NotFound (dt-code courier_not_found) for a courier that
+// is absent from the scope, including another tenant's or environment's.
+func (s *Server) GetCourier(ctx context.Context, req *deliveriesv1.GetCourierRequest) (*deliveriesv1.GetCourierResponse, error) {
+	sc, err := toScope(req.GetScope())
+	if err != nil {
+		return nil, s.fail(ctx, err)
+	}
+	c, err := s.svc.Courier(ctx, sc, req.GetId())
+	if errors.Is(err, app.ErrCourierNotFound) {
+		rpcauth.SetCode(ctx, "courier_not_found")
+		return nil, connect.NewError(connect.CodeNotFound, err.Error()).WithCause(err)
+	}
+	if err != nil {
+		return nil, s.fail(ctx, err)
+	}
+	return &deliveriesv1.GetCourierResponse{Courier: fromCourier(c)}, nil
+}
+
+func (s *Server) ListCourierDeliveries(ctx context.Context, req *deliveriesv1.ListCourierDeliveriesRequest) (*deliveriesv1.ListCourierDeliveriesResponse, error) {
+	sc, err := toScope(req.GetScope())
+	if err != nil {
+		return nil, s.fail(ctx, err)
+	}
+	ds, err := s.svc.ListCourierDeliveries(ctx, sc, req.GetCourierId())
+	if err != nil {
+		return nil, s.fail(ctx, err)
+	}
+	out := make([]*deliveriesv1.CourierDelivery, len(ds))
+	for i, d := range ds {
+		out[i] = fromCourierDelivery(d)
+	}
+	return &deliveriesv1.ListCourierDeliveriesResponse{Deliveries: out}, nil
 }

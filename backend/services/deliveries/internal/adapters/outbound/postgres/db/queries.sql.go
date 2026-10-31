@@ -440,6 +440,101 @@ func (q *Queries) InsertPickupWatch(ctx context.Context, arg InsertPickupWatchPa
 	return err
 }
 
+const listCourierDeliveries = `-- name: ListCourierDeliveries :many
+SELECT d.id, d.tenant_id, d.environment, d.external_id, d.model, d.status, d.pickup_policy,
+  ST_Y(d.pickup::geometry)::float8 AS pickup_lat, ST_X(d.pickup::geometry)::float8 AS pickup_lng, d.pickup_name,
+  ST_Y(d.dropoff::geometry)::float8 AS dropoff_lat, ST_X(d.dropoff::geometry)::float8 AS dropoff_lng,
+  d.dropoff_label_sealed, d.customer_first_name_sealed, d.notes_sealed, d.metadata_sealed,
+  d.items_summary, d.item_count, d.ready_at, d.courier_id, c.external_id AS courier_external_id,
+  c.display_name AS courier_display_name, c.vehicle AS courier_vehicle,
+  d.erased_at, d.dropped_reports, d.version, d.created_at, d.updated_at
+FROM deliveries d LEFT JOIN couriers c ON c.id = d.courier_id
+WHERE d.courier_id = $1::text
+  AND d.status NOT IN ('delivered', 'cancelled', 'failed')
+ORDER BY d.created_at, d.id
+`
+
+type ListCourierDeliveriesRow struct {
+	ID                      string
+	TenantID                string
+	Environment             string
+	ExternalID              string
+	Model                   string
+	Status                  string
+	PickupPolicy            string
+	PickupLat               float64
+	PickupLng               float64
+	PickupName              string
+	DropoffLat              float64
+	DropoffLng              float64
+	DropoffLabelSealed      []byte
+	CustomerFirstNameSealed []byte
+	NotesSealed             []byte
+	MetadataSealed          []byte
+	ItemsSummary            *string
+	ItemCount               *int32
+	ReadyAt                 *time.Time
+	CourierID               *string
+	CourierExternalID       *string
+	CourierDisplayName      *string
+	CourierVehicle          *string
+	ErasedAt                *time.Time
+	DroppedReports          int32
+	Version                 int64
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+}
+
+// The courier's non-final deliveries, oldest first.
+func (q *Queries) ListCourierDeliveries(ctx context.Context, courierID string) ([]ListCourierDeliveriesRow, error) {
+	rows, err := q.db.Query(ctx, listCourierDeliveries, courierID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCourierDeliveriesRow
+	for rows.Next() {
+		var i ListCourierDeliveriesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.Environment,
+			&i.ExternalID,
+			&i.Model,
+			&i.Status,
+			&i.PickupPolicy,
+			&i.PickupLat,
+			&i.PickupLng,
+			&i.PickupName,
+			&i.DropoffLat,
+			&i.DropoffLng,
+			&i.DropoffLabelSealed,
+			&i.CustomerFirstNameSealed,
+			&i.NotesSealed,
+			&i.MetadataSealed,
+			&i.ItemsSummary,
+			&i.ItemCount,
+			&i.ReadyAt,
+			&i.CourierID,
+			&i.CourierExternalID,
+			&i.CourierDisplayName,
+			&i.CourierVehicle,
+			&i.ErasedAt,
+			&i.DroppedReports,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDeliveries = `-- name: ListDeliveries :many
 SELECT d.id, d.tenant_id, d.environment, d.external_id, d.model, d.status, d.pickup_policy,
   ST_Y(d.pickup::geometry)::float8 AS pickup_lat, ST_X(d.pickup::geometry)::float8 AS pickup_lng, d.pickup_name,

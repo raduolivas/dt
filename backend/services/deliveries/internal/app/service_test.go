@@ -195,3 +195,55 @@ func TestListClampsLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestListCourierDeliveriesOnlyAssignedNonFinal(t *testing.T) {
+	ctx := context.Background()
+	s, r, clk := newSvc()
+	other := app.Scope{TenantID: "ten_2", Env: "test"}
+	for _, id := range []string{"cou_a", "cou_b"} {
+		r.couriers[id] = domain.Courier{ID: id, Vehicle: domain.VehicleCar}
+	}
+	create := func(sc app.Scope, ext, courier string) *domain.Delivery {
+		t.Helper()
+		clk.now = clk.now.Add(time.Minute)
+		d, err := s.Create(ctx, sc, input(ext))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if courier != "" {
+			if d, err = s.Assign(ctx, sc, d.ID, courier); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return d
+	}
+	second := create(scope, "second", "cou_a")
+	first := create(scope, "first", "cou_a")
+	r.deliveries[first.ID].CreatedAt = t0 // oldest
+	create(scope, "unassigned", "")
+	create(scope, "theirs", "cou_b")
+	create(other, "tenant", "cou_a")
+	done := create(scope, "done", "cou_a")
+	if _, err := s.Cancel(ctx, scope, done.ID, "x"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.ListCourierDeliveries(ctx, scope, "cou_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != first.ID || got[1].ID != second.ID {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestCourierNotFound(t *testing.T) {
+	s, r, _ := newSvc()
+	r.couriers["cou_1"] = domain.Courier{ID: "cou_1"}
+	if c, err := s.Courier(context.Background(), scope, "cou_1"); err != nil || c.ID != "cou_1" {
+		t.Fatalf("%+v %v", c, err)
+	}
+	if _, err := s.Courier(context.Background(), scope, "cou_x"); !errors.Is(err, app.ErrCourierNotFound) {
+		t.Fatalf("got %v", err)
+	}
+}

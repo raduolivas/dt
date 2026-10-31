@@ -55,6 +55,9 @@ type Repo interface {
 	Mutate(ctx context.Context, s Scope, id string, fn func(*domain.Delivery) ([]domain.Event, error)) (*domain.Delivery, error)
 	// Courier returns ErrNotFound when the courier does not exist.
 	Courier(ctx context.Context, s Scope, id string) (domain.Courier, error)
+	// ListByCourier returns the non-final deliveries assigned to the courier,
+	// oldest first by creation, each with its full history.
+	ListByCourier(ctx context.Context, s Scope, courierID string) ([]*domain.Delivery, error)
 	// UpsertCourier creates the courier or updates the one with the same
 	// external id (keeping its id); the bool reports whether it was created.
 	UpsertCourier(ctx context.Context, s Scope, c domain.Courier, evts []domain.Event) (domain.Courier, bool, error)

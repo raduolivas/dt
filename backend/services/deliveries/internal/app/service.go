@@ -62,6 +62,21 @@ func (s *Service) List(ctx context.Context, sc Scope, f ListFilter) ([]*domain.D
 	return s.Repo.List(ctx, sc, f)
 }
 
+// ListCourierDeliveries returns the courier's assigned deliveries that are
+// not final, oldest first.
+func (s *Service) ListCourierDeliveries(ctx context.Context, sc Scope, courierID string) ([]*domain.Delivery, error) {
+	return s.Repo.ListByCourier(ctx, sc, courierID)
+}
+
+// Courier returns the courier, or ErrCourierNotFound.
+func (s *Service) Courier(ctx context.Context, sc Scope, id string) (domain.Courier, error) {
+	c, err := s.Repo.Courier(ctx, sc, id)
+	if errors.Is(err, ErrNotFound) {
+		return domain.Courier{}, ErrCourierNotFound
+	}
+	return c, err
+}
+
 // Update applies a partial update.
 func (s *Service) Update(ctx context.Context, sc Scope, id string, p domain.Patch) (*domain.Delivery, error) {
 	return s.Repo.Mutate(ctx, sc, id, func(d *domain.Delivery) ([]domain.Event, error) {
