@@ -193,6 +193,8 @@ jobs:
   e2e:
     needs: [go, web]
     runs-on: ubuntu-24.04
+    # make dev, the OSRM data and three browsers over every project; a hung stack must not hold a runner for 6 h
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -219,11 +221,15 @@ jobs:
           key: osrm-${{ hashFiles('scripts/osrm-prepare.sh') }}
       - name: Prepare the Amsterdam OSRM data (a no-op when the cache restored it)
         run: scripts/osrm-prepare.sh amsterdam
-      # Browsers are cached per Playwright version (from the lockfile); their system libraries are installed each run.
+      # Browsers are cached per installed @playwright/test version (not the whole lockfile, so unrelated dependency
+      # changes keep the cache); their system libraries are installed each run.
+      - name: Read the Playwright version
+        id: playwright
+        run: echo "version=$(pnpm -C web --filter @dt/e2e exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('web/pnpm-lock.yaml') }}
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       - name: Install the Playwright browsers and their system libraries
         run: pnpm -C web --filter @dt/e2e exec playwright install --with-deps chromium webkit firefox
       - run: make dev
