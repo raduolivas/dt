@@ -44,6 +44,10 @@ tags:
     description: Create deliveries, report their progress and read them back.
   - name: Couriers
     description: Couriers you register for assignment, and the locations you relay for them.
+  - name: Courier sessions
+    description: Start and end the sessions your couriers use to report their own location and status.
+  - name: Courier
+    description: What a courier's app or link page calls, with a courier access token.
   - name: Tracking
     description: Tracking links, the customer's viewer session, and the courier data partners can read.
   - name: Sandbox
@@ -1325,6 +1329,403 @@ paths:
         '401': *id012
         '429': *id005
         '503': *id010
+  /courier-sessions:
+    post:
+      operationId: createCourierSession
+      summary: Start a courier session
+      description: >-
+        Starts a session that lets one courier report location and delivery status from a phone, without
+        your own courier backend relaying every fix. `mode: sdk` returns tokens for the `@dt/courier` SDK
+        in your own app (`access_token` lasts 15 minutes; `refresh_token` is single use and rotating). `mode: link`
+        returns a one-time `link_url` (valid 15 minutes) to send to the courier; it opens the DT courier page.
+        The tokens and the link code are shown once and are never stored in plaintext. A courier has one
+        active session: starting a new one ends the old one with `end_reason: replaced`.
+        `expires_in_seconds` is the session length, 900 to 43200 (default 43200). `Idempotency-Key` makes a
+        retry return the same response within 24 hours. Requires scope `couriers:write`. Problem codes:
+        `validation_failed` (400), `courier_not_found` (404), `rate_limited` (429).
+      tags: [Courier sessions]
+      security:
+        - SecretKey: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CourierSessionCreate'
+            examples:
+              sdk:
+                summary: SDK session
+                value:
+                  courier_id: cou_01j9z3k8m2q4r6s8t0v2w4x6y8
+                  mode: sdk
+              link:
+                summary: Link session, 8 hours
+                value:
+                  courier_id: cou_01j9z3k8m2q4r6s8t0v2w4x6y8
+                  mode: link
+                  expires_in_seconds: 28800
+      responses:
+        '201':
+          description: >-
+            The session. In `sdk` mode the response carries `access_token`, `access_expires_at` and
+            `refresh_token`; in `link` mode it carries `link_url` and `link_expires_at`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourierSessionCreated'
+              examples:
+                sdk:
+                  value:
+                    session:
+                      id: cs_01j9z3k8m2q4r6s8t0v2w4x6y8
+                      courier_id: cou_01j9z3k8m2q4r6s8t0v2w4x6y8
+                      mode: sdk
+                      status: active
+                      started_at: '2026-10-31T08:00:00Z'
+                      expires_at: '2026-10-31T20:00:00Z'
+                      ended_at: null
+                      end_reason: null
+                      last_seen_at: null
+                    access_token: eyJhbGciOiJFZERTQSIsImtpZCI6ImMxIn0.eyJhdWQiOiJjb3VyaWVyIn0.c2ln
+                    access_expires_at: '2026-10-31T08:15:00Z'
+                    refresh_token: rt_dGhpcyBpcyBhbiBleGFtcGxlIHJlZnJlc2ggdG9rZW4
+                link:
+                  value:
+                    session:
+                      id: cs_01j9z3k8m2q4r6s8t0v2w4x6y8
+                      courier_id: cou_01j9z3k8m2q4r6s8t0v2w4x6y8
+                      mode: link
+                      status: pending_link
+                      started_at: '2026-10-31T08:00:00Z'
+                      expires_at: '2026-10-31T16:00:00Z'
+                      ended_at: null
+                      end_reason: null
+                      last_seen_at: null
+                    link_url: https://courier.example.invalid/s/Zm9yIGV4YW1wbGUgb25seQ
+                    link_expires_at: '2026-10-31T08:15:00Z'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The Idempotency-Key was reused with a different request or is still in progress.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /courier-sessions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The session id (`cs_…`).
+        schema:
+          $ref: '#/components/schemas/CourierSessionId'
+        example: cs_01j9z3k8m2q4r6s8t0v2w4x6y8
+    get:
+      operationId: getCourierSession
+      summary: Get a courier session
+      description: >-
+        Returns the session's status: `pending_link` (a link session whose code is not used yet), `active` or
+        `ended`. Requires scope `couriers:write`. Problem codes: `not_found` (404), `rate_limited` (429).
+      tags: [Courier sessions]
+      security:
+        - SecretKey: []
+      responses:
+        '200':
+          description: The session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourierSession'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    delete:
+      operationId: endCourierSession
+      summary: End a courier session
+      description: >-
+        Ends the session now with `end_reason: partner`. The courier's tokens stop working immediately.
+        Idempotent: ending a session that already ended returns `200` with the session. Requires scope
+        `couriers:write`. Problem codes: `not_found` (404), `rate_limited` (429).
+      tags: [Courier sessions]
+      security:
+        - SecretKey: []
+      responses:
+        '200':
+          description: The ended session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourierSession'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /courier/token:
+    post:
+      operationId: createCourierToken
+      summary: Get courier tokens
+      description: >-
+        Exchanges a link code (from a `link` session's `link_url`) or a refresh token for a new token pair.
+        No bearer token is needed. Each refresh token works once; using an old one ends the session with
+        `end_reason: refresh_reuse`. A link code works once and expires after 15 minutes. Any origin may
+        call it. Rate limits: refresh 10 requests/minute per session; link code 20 requests/minute per IP,
+        failed guesses included. Problem codes: `validation_failed` (400), `link_code_invalid` (401, unknown
+        or expired code), `link_code_used` (401, the code was already exchanged), `refresh_token_invalid`
+        (401, unknown, already used or expired), `session_ended` (401), `rate_limited` (429).
+      tags: [Courier]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CourierTokenRequest'
+            examples:
+              link_code:
+                summary: First exchange from a link
+                value:
+                  grant_type: link_code
+                  code: Zm9yIGV4YW1wbGUgb25seQ
+              refresh_token:
+                summary: Renew
+                value:
+                  grant_type: refresh_token
+                  refresh_token: rt_dGhpcyBpcyBhbiBleGFtcGxlIHJlZnJlc2ggdG9rZW4
+      responses:
+        '200':
+          description: A new token pair. Store the new refresh token; the one you sent no longer works.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourierTokens'
+              examples:
+                default:
+                  value:
+                    access_token: eyJhbGciOiJFZERTQSIsImtpZCI6ImMxIn0.eyJhdWQiOiJjb3VyaWVyIn0.c2ln
+                    access_expires_at: '2026-10-31T08:15:00Z'
+                    refresh_token: rt_bmV3IGV4YW1wbGUgcmVmcmVzaCB0b2tlbiAxMjM
+                    session_expires_at: '2026-10-31T20:00:00Z'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/CourierUnauthenticated'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /courier/deliveries:
+    get:
+      operationId: listCourierDeliveries
+      summary: List my deliveries
+      description: >-
+        The courier's assigned deliveries that are not final, in this environment. A courier sees only what
+        is needed to do the job: no customer name, phone or email, no metadata and no other couriers. Problem
+        codes: `session_ended` (401), `rate_limited` (429).
+      tags: [Courier]
+      security:
+        - CourierToken: []
+      responses:
+        '200':
+          description: The courier's open deliveries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourierDeliveryList'
+              examples:
+                default:
+                  value:
+                    deliveries:
+                      - id: del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                        reference: order-1042
+                        model: direct
+                        status: courier_assigned
+                        ready_at: null
+                        pickup:
+                          lat: -23.5614
+                          lng: -46.6559
+                          label: Pizzaria Central
+                        dropoff:
+                          lat: -23.5505
+                          lng: -46.6333
+                          label: Apto 42
+                          notes: Ring twice
+                        items_summary: 2 pizzas
+                        item_count: 2
+                        pickup_confirmations: []
+                        next_actions: [at_pickup, pickup_confirmed, failed]
+        '401':
+          $ref: '#/components/responses/CourierUnauthenticated'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /courier/locations:
+    post:
+      operationId: reportMyLocations
+      summary: Report my locations
+      description: >-
+        Sends GPS fixes for the courier the token belongs to. The rules are those of `reportCourierLocations`:
+        at most 50 fixes and 16 KB per batch; fixes count only while the courier has a non-final assigned
+        delivery, and implausible or future-dated fixes are `dropped`. Rate limit: 1 request/second per
+        session, burst 5. Problem codes: `validation_failed` (400), `session_ended` (401), `payload_too_large`
+        (413), `rate_limited` (429), `tracking_unavailable` (503).
+      tags: [Courier]
+      security:
+        - CourierToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportCourierLocationsRequest'
+            examples:
+              default:
+                value:
+                  fixes:
+                    - t: '2026-10-31T08:15:03Z'
+                      lat: -23.5612
+                      lng: -46.6557
+                      accuracy_m: 6.5
+                      speed_mps: 4.8
+                      heading_deg: 84
+      responses:
+        '200':
+          description: How many fixes were accepted and dropped.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportCourierLocationsResult'
+              examples:
+                default:
+                  value:
+                    accepted: 1
+                    dropped: 0
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/CourierUnauthenticated'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/TrackingUnavailable'
+  /courier/deliveries/{id}/events:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The delivery id (`del_…`).
+        schema:
+          $ref: '#/components/schemas/DeliveryId'
+        example: del_01j9z3k8m2q4r6s8t0v2w4x6y8
+    post:
+      operationId: reportMyDeliveryEvent
+      summary: Report a delivery event as the courier
+      description: >-
+        Reports a status tap for a delivery assigned to this courier. `event_id` makes the report idempotent:
+        send the same one when you retry. `outcome` is as in `reportDeliveryEvent`. `pickup_confirmed` counts
+        as the courier's confirmation under the delivery's pickup policy. The answer lists the delivery's
+        `next_actions`. Rate limit: 10 requests/minute per session. Problem codes: `validation_failed` (400),
+        `session_ended` (401), `not_found` (404, no such delivery or it is not assigned to this courier),
+        `invalid_transition` (409), `rate_limited` (429).
+      tags: [Courier]
+      security:
+        - CourierToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CourierEventRequest'
+            examples:
+              pickup_confirmed:
+                value:
+                  event_id: 7d4c1b0e-5a31-4c3e-9a55-0c2f6a1b9e11
+                  type: pickup_confirmed
+                  occurred_at: '2026-10-31T08:20:00Z'
+      responses:
+        '200':
+          description: The outcome and the delivery as the courier sees it.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourierEventResult'
+              examples:
+                default:
+                  value:
+                    outcome: applied
+                    delivery:
+                      id: del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                      reference: order-1042
+                      model: direct
+                      status: picked_up
+                      ready_at: null
+                      pickup:
+                        lat: -23.5614
+                        lng: -46.6559
+                        label: Pizzaria Central
+                      dropoff:
+                        lat: -23.5505
+                        lng: -46.6333
+                        label: Apto 42
+                        notes: Ring twice
+                      items_summary: 2 pizzas
+                      item_count: 2
+                      pickup_confirmations:
+                        - by: courier
+                          at: '2026-10-31T08:20:00Z'
+                      next_actions: [delivered, failed]
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/CourierUnauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`invalid_transition`: the event is not allowed in the delivery''s current status.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /courier/session/end:
+    post:
+      operationId: endMySession
+      summary: End my session
+      description: >-
+        Ends the courier's own session (`end_reason: courier`). The tokens stop working at once. Problem codes:
+        `session_ended` (401), `rate_limited` (429).
+      tags: [Courier]
+      security:
+        - CourierToken: []
+      responses:
+        '204':
+          description: The session ended.
+        '401':
+          $ref: '#/components/responses/CourierUnauthenticated'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
 webhooks: {}
 components:
   securitySchemes:
@@ -1337,6 +1738,13 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Short-lived viewer token from `POST /tracking/session`. Safe to use in the customer's browser.
+    CourierToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        Short-lived courier access token (15 minutes) from `POST /courier/token` or a `sdk` courier session.
+        It reaches only the deliveries assigned to its courier. Safe to use in the courier's phone.
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
@@ -1453,6 +1861,21 @@ components:
     NotFound:
       description: The resource does not exist for this tenant and environment (`not_found`). Resources of
         other tenants or environments are never revealed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    CourierUnauthenticated:
+      description: >-
+        The courier credential is missing, malformed, expired or revoked (`unauthenticated`), the session
+        ended (`session_ended`), or, on `POST /courier/token`, the link code or refresh token was refused
+        (`link_code_invalid`, `link_code_used`, `refresh_token_invalid`). Call `POST /courier/token` with the
+        refresh token, or ask the partner for a new session.
+      headers:
+        WWW-Authenticate:
+          description: Always `Bearer`.
+          schema:
+            type: string
       content:
         application/problem+json:
           schema:
@@ -2572,3 +2995,229 @@ components:
         expires_at:
           type: string
           format: date-time
+    CourierSessionId:
+      type: string
+      pattern: ^cs_[0-9a-z]{26}$
+      examples:
+      - cs_01j9z3k8m2q4r6s8t0v2w4x6y8
+    CourierSessionMode:
+      type: string
+      description: '`sdk`: tokens for the `@dt/courier` SDK in your app. `link`: a one-time link to the DT courier page.'
+      enum: [sdk, link]
+    CourierSessionStatus:
+      type: string
+      description: '`pending_link`: a link session whose code is not used yet.'
+      enum: [pending_link, active, ended]
+    CourierSessionEndReason:
+      type: string
+      description: >-
+        `courier`: the courier ended it. `partner`: you ended it. `expired`: it ran out. `replaced`: a newer
+        session for the same courier started. `refresh_reuse`: an old refresh token was used again.
+      enum: [courier, partner, expired, replaced, refresh_reuse]
+    CourierSessionCreate:
+      type: object
+      additionalProperties: false
+      required: [courier_id, mode]
+      properties:
+        courier_id:
+          $ref: '#/components/schemas/CourierId'
+        mode:
+          $ref: '#/components/schemas/CourierSessionMode'
+        expires_in_seconds:
+          type: integer
+          minimum: 900
+          maximum: 43200
+          default: 43200
+          description: How long the session lasts, in seconds.
+    CourierSession:
+      type: object
+      required: [id, courier_id, mode, status, started_at, expires_at, ended_at, end_reason, last_seen_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/CourierSessionId'
+        courier_id:
+          $ref: '#/components/schemas/CourierId'
+        mode:
+          $ref: '#/components/schemas/CourierSessionMode'
+        status:
+          $ref: '#/components/schemas/CourierSessionStatus'
+        started_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: [string, 'null']
+          format: date-time
+        ended_at:
+          type: [string, 'null']
+          format: date-time
+        end_reason:
+          oneOf:
+            - $ref: '#/components/schemas/CourierSessionEndReason'
+            - type: 'null'
+        last_seen_at:
+          type: [string, 'null']
+          format: date-time
+          description: The last time the courier's token was used, or `null` if never.
+    CourierSessionCreated:
+      type: object
+      description: >-
+        The new session. In `sdk` mode it also has `access_token`, `access_expires_at` and `refresh_token`;
+        in `link` mode it has `link_url` and `link_expires_at`. Tokens and the link are shown once.
+      required: [session]
+      properties:
+        session:
+          $ref: '#/components/schemas/CourierSession'
+        access_token:
+          type: string
+          description: '`sdk` mode only. The courier access token.'
+        access_expires_at:
+          type: string
+          format: date-time
+          description: '`sdk` mode only.'
+        refresh_token:
+          type: string
+          description: '`sdk` mode only. Single use; each exchange returns a new one.'
+        link_url:
+          type: string
+          format: uri
+          description: '`link` mode only. Send it to the courier. It works once.'
+        link_expires_at:
+          type: string
+          format: date-time
+          description: '`link` mode only. The link works until this time (15 minutes).'
+    CourierTokenRequest:
+      type: object
+      description: >-
+        Send `{grant_type: link_code, code}` for the first exchange of a link, or
+        `{grant_type: refresh_token, refresh_token}` to renew. The field that does not match `grant_type`
+        must be absent.
+      additionalProperties: false
+      required: [grant_type]
+      properties:
+        grant_type:
+          type: string
+          enum: [link_code, refresh_token]
+        code:
+          type: string
+          description: 'With `link_code`: the code at the end of the `link_url`.'
+        refresh_token:
+          type: string
+          description: 'With `refresh_token`: the refresh token from the last exchange.'
+    CourierTokens:
+      type: object
+      required: [access_token, access_expires_at, refresh_token, session_expires_at]
+      properties:
+        access_token:
+          type: string
+        access_expires_at:
+          type: string
+          format: date-time
+        refresh_token:
+          type: string
+          description: Replaces the one you sent; keep only this one.
+        session_expires_at:
+          type: string
+          format: date-time
+    CourierNextAction:
+      type: string
+      description: An event type the courier can report now. `arriving` is never offered.
+      enum: [at_pickup, pickup_confirmed, delivered, failed]
+    CourierDeliveryPickup:
+      type: object
+      required: [lat, lng, label]
+      properties:
+        lat:
+          type: number
+          format: double
+        lng:
+          type: number
+          format: double
+        label:
+          type: string
+          description: The pickup `name`.
+    CourierDeliveryDropoff:
+      type: object
+      required: [lat, lng, label, notes]
+      properties:
+        lat:
+          type: number
+          format: double
+        lng:
+          type: number
+          format: double
+        label:
+          type: [string, 'null']
+        notes:
+          type: [string, 'null']
+          description: The delivery `notes`.
+    CourierDelivery:
+      type: object
+      description: A delivery as its courier sees it. It leaves out the customer, metadata and history.
+      required: [id, reference, model, status, ready_at, pickup, dropoff, items_summary, item_count, pickup_confirmations, next_actions]
+      properties:
+        id:
+          $ref: '#/components/schemas/DeliveryId'
+        reference:
+          type: string
+          description: Your `external_id` for the delivery.
+        model:
+          $ref: '#/components/schemas/DeliveryModel'
+        status:
+          $ref: '#/components/schemas/DeliveryStatus'
+        ready_at:
+          type: [string, 'null']
+          format: date-time
+        pickup:
+          $ref: '#/components/schemas/CourierDeliveryPickup'
+        dropoff:
+          $ref: '#/components/schemas/CourierDeliveryDropoff'
+        items_summary:
+          type: [string, 'null']
+        item_count:
+          type: [integer, 'null']
+        pickup_confirmations:
+          type: array
+          items:
+            $ref: '#/components/schemas/PickupConfirmation'
+        next_actions:
+          type: array
+          description: Event types the courier can report now, for the delivery's status and pickup policy.
+          items:
+            $ref: '#/components/schemas/CourierNextAction'
+    CourierDeliveryList:
+      type: object
+      required: [deliveries]
+      properties:
+        deliveries:
+          type: array
+          items:
+            $ref: '#/components/schemas/CourierDelivery'
+    CourierEventRequest:
+      type: object
+      additionalProperties: false
+      required: [event_id, type]
+      properties:
+        event_id:
+          type: string
+          minLength: 1
+          maxLength: 255
+          pattern: ^[ -~]+$
+          description: Your id for this tap; send the same one when you retry. A repeat is reported as `duplicate`.
+        type:
+          $ref: '#/components/schemas/DeliveryEventType'
+        occurred_at:
+          type: string
+          format: date-time
+          description: When it happened. At most 5 minutes after receipt; defaults to receipt time.
+        reason:
+          type: string
+          maxLength: 200
+          description: Why, for `failed`.
+    CourierEventResult:
+      type: object
+      required: [outcome, delivery]
+      properties:
+        outcome:
+          $ref: '#/components/schemas/DeliveryEventOutcome'
+        delivery:
+          $ref: '#/components/schemas/CourierDelivery'

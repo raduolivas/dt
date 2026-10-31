@@ -51,6 +51,12 @@ const (
 	// DeliveriesServiceUpsertCourierProcedure is the procedure name of the DeliveriesService's
 	// UpsertCourier RPC.
 	DeliveriesServiceUpsertCourierProcedure = "/dt.deliveries.v1.DeliveriesService/UpsertCourier"
+	// DeliveriesServiceGetCourierProcedure is the procedure name of the DeliveriesService's GetCourier
+	// RPC.
+	DeliveriesServiceGetCourierProcedure = "/dt.deliveries.v1.DeliveriesService/GetCourier"
+	// DeliveriesServiceListCourierDeliveriesProcedure is the procedure name of the DeliveriesService's
+	// ListCourierDeliveries RPC.
+	DeliveriesServiceListCourierDeliveriesProcedure = "/dt.deliveries.v1.DeliveriesService/ListCourierDeliveries"
 )
 
 var (
@@ -117,6 +123,20 @@ var (
 			Procedure:  DeliveriesServiceUpsertCourierProcedure,
 		}
 	})
+	deliveriesServiceGetCourierSpec = sync.OnceValue(func() connect.Spec {
+		return connect.Spec{
+			StreamType: connect.StreamTypeUnary,
+			Schema:     v1.File_dt_deliveries_v1_deliveries_proto.Services().ByName("DeliveriesService").Methods().ByName("GetCourier"),
+			Procedure:  DeliveriesServiceGetCourierProcedure,
+		}
+	})
+	deliveriesServiceListCourierDeliveriesSpec = sync.OnceValue(func() connect.Spec {
+		return connect.Spec{
+			StreamType: connect.StreamTypeUnary,
+			Schema:     v1.File_dt_deliveries_v1_deliveries_proto.Services().ByName("DeliveriesService").Methods().ByName("ListCourierDeliveries"),
+			Procedure:  DeliveriesServiceListCourierDeliveriesProcedure,
+		}
+	})
 )
 
 // DeliveriesServiceClient is a client for the dt.deliveries.v1.DeliveriesService service.
@@ -130,6 +150,12 @@ type DeliveriesServiceClient interface {
 	CancelDelivery(context.Context, *v1.CancelDeliveryRequest) (*v1.CancelDeliveryResponse, error)
 	ErasePersonalData(context.Context, *v1.ErasePersonalDataRequest) (*v1.ErasePersonalDataResponse, error)
 	UpsertCourier(context.Context, *v1.UpsertCourierRequest) (*v1.UpsertCourierResponse, error)
+	// GetCourier looks a courier up by its cou_ id; courier_not_found if it
+	// does not exist in the scope.
+	GetCourier(context.Context, *v1.GetCourierRequest) (*v1.GetCourierResponse, error)
+	// ListCourierDeliveries returns the courier's assigned deliveries that are
+	// not final, in the courier-safe shape (no customer, metadata or history).
+	ListCourierDeliveries(context.Context, *v1.ListCourierDeliveriesRequest) (*v1.ListCourierDeliveriesResponse, error)
 }
 
 // NewDeliveriesServiceClient constructs a client for the dt.deliveries.v1.DeliveriesService
@@ -149,6 +175,12 @@ type DeliveriesServiceHandler interface {
 	CancelDelivery(context.Context, *v1.CancelDeliveryRequest) (*v1.CancelDeliveryResponse, error)
 	ErasePersonalData(context.Context, *v1.ErasePersonalDataRequest) (*v1.ErasePersonalDataResponse, error)
 	UpsertCourier(context.Context, *v1.UpsertCourierRequest) (*v1.UpsertCourierResponse, error)
+	// GetCourier looks a courier up by its cou_ id; courier_not_found if it
+	// does not exist in the scope.
+	GetCourier(context.Context, *v1.GetCourierRequest) (*v1.GetCourierResponse, error)
+	// ListCourierDeliveries returns the courier's assigned deliveries that are
+	// not final, in the courier-safe shape (no customer, metadata or history).
+	ListCourierDeliveries(context.Context, *v1.ListCourierDeliveriesRequest) (*v1.ListCourierDeliveriesResponse, error)
 }
 
 // RegisterDeliveriesServiceHandler registers svc as the dt.deliveries.v1.DeliveriesService
@@ -165,6 +197,8 @@ func RegisterDeliveriesServiceHandler(server *connect.Server, svc DeliveriesServ
 		connect.Method{Spec: deliveriesServiceCancelDeliverySpec(), Handler: adapter.cancelDelivery},
 		connect.Method{Spec: deliveriesServiceErasePersonalDataSpec(), Handler: adapter.erasePersonalData},
 		connect.Method{Spec: deliveriesServiceUpsertCourierSpec(), Handler: adapter.upsertCourier},
+		connect.Method{Spec: deliveriesServiceGetCourierSpec(), Handler: adapter.getCourier},
+		connect.Method{Spec: deliveriesServiceListCourierDeliveriesSpec(), Handler: adapter.listCourierDeliveries},
 	)
 }
 
@@ -205,6 +239,14 @@ func (UnimplementedDeliveriesServiceHandler) ErasePersonalData(context.Context, 
 
 func (UnimplementedDeliveriesServiceHandler) UpsertCourier(context.Context, *v1.UpsertCourierRequest) (*v1.UpsertCourierResponse, error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, "dt.deliveries.v1.DeliveriesService.UpsertCourier is not implemented")
+}
+
+func (UnimplementedDeliveriesServiceHandler) GetCourier(context.Context, *v1.GetCourierRequest) (*v1.GetCourierResponse, error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, "dt.deliveries.v1.DeliveriesService.GetCourier is not implemented")
+}
+
+func (UnimplementedDeliveriesServiceHandler) ListCourierDeliveries(context.Context, *v1.ListCourierDeliveriesRequest) (*v1.ListCourierDeliveriesResponse, error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, "dt.deliveries.v1.DeliveriesService.ListCourierDeliveries is not implemented")
 }
 
 type deliveriesServiceClient struct {
@@ -278,6 +320,22 @@ func (c *deliveriesServiceClient) ErasePersonalData(ctx context.Context, req *v1
 func (c *deliveriesServiceClient) UpsertCourier(ctx context.Context, req *v1.UpsertCourierRequest) (*v1.UpsertCourierResponse, error) {
 	var res v1.UpsertCourierResponse
 	if err := c.client.CallUnary(ctx, deliveriesServiceUpsertCourierSpec(), req, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+func (c *deliveriesServiceClient) GetCourier(ctx context.Context, req *v1.GetCourierRequest) (*v1.GetCourierResponse, error) {
+	var res v1.GetCourierResponse
+	if err := c.client.CallUnary(ctx, deliveriesServiceGetCourierSpec(), req, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+func (c *deliveriesServiceClient) ListCourierDeliveries(ctx context.Context, req *v1.ListCourierDeliveriesRequest) (*v1.ListCourierDeliveriesResponse, error) {
+	var res v1.ListCourierDeliveriesResponse
+	if err := c.client.CallUnary(ctx, deliveriesServiceListCourierDeliveriesSpec(), req, &res); err != nil {
 		return nil, err
 	}
 	return &res, nil
@@ -387,6 +445,30 @@ func (h deliveriesServiceHandler) upsertCourier(ctx context.Context, _ connect.S
 		return err
 	}
 	res, err := h.svc.UpsertCourier(ctx, &req)
+	if err != nil {
+		return err
+	}
+	return stream.Send(res)
+}
+
+func (h deliveriesServiceHandler) getCourier(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
+	var req v1.GetCourierRequest
+	if err := stream.Receive(&req); err != nil {
+		return err
+	}
+	res, err := h.svc.GetCourier(ctx, &req)
+	if err != nil {
+		return err
+	}
+	return stream.Send(res)
+}
+
+func (h deliveriesServiceHandler) listCourierDeliveries(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
+	var req v1.ListCourierDeliveriesRequest
+	if err := stream.Receive(&req); err != nil {
+		return err
+	}
+	res, err := h.svc.ListCourierDeliveries(ctx, &req)
 	if err != nil {
 		return err
 	}

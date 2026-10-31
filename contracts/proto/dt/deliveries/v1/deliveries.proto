@@ -24,6 +24,12 @@ service DeliveriesService {
   rpc CancelDelivery(CancelDeliveryRequest) returns (CancelDeliveryResponse);
   rpc ErasePersonalData(ErasePersonalDataRequest) returns (ErasePersonalDataResponse);
   rpc UpsertCourier(UpsertCourierRequest) returns (UpsertCourierResponse);
+  // GetCourier looks a courier up by its cou_ id; courier_not_found if it
+  // does not exist in the scope.
+  rpc GetCourier(GetCourierRequest) returns (GetCourierResponse);
+  // ListCourierDeliveries returns the courier's assigned deliveries that are
+  // not final, in the courier-safe shape (no customer, metadata or history).
+  rpc ListCourierDeliveries(ListCourierDeliveriesRequest) returns (ListCourierDeliveriesResponse);
 }
 
 // Scope is the tenant, environment and caller every request runs under.
@@ -176,7 +182,7 @@ message ReportEventRequest {
   string event_id = 3;
   string type = 4; // at_pickup | pickup_confirmed | arriving | delivered | failed
   google.protobuf.Timestamp occurred_at = 5; // unset = receipt time
-  string by = 6; // "partner" | "store"; only for pickup_confirmed
+  string by = 6; // "partner" | "store" | "courier"; only for pickup_confirmed
   string reason = 7;
   string actor = 8; // "" or "partner" | "courier"; the gateway never sets it
 }
@@ -184,6 +190,9 @@ message ReportEventRequest {
 message ReportEventResponse {
   Delivery delivery = 1;
   string outcome = 2; // applied | duplicate | stale | conflict | recorded
+  // Event types the courier may report next in the delivery's current state
+  // (never "arriving"). Empty when the delivery is final.
+  repeated string next_actions = 3;
 }
 
 message CancelDeliveryRequest {
@@ -216,4 +225,49 @@ message UpsertCourierRequest {
 message UpsertCourierResponse {
   Courier courier = 1;
   bool created = 2;
+}
+
+message GetCourierRequest {
+  Scope scope = 1;
+  string id = 2; // a cou_ id
+}
+
+message GetCourierResponse {
+  Courier courier = 1;
+}
+
+message ListCourierDeliveriesRequest {
+  Scope scope = 1;
+  string courier_id = 2; // a cou_ id
+}
+
+message ListCourierDeliveriesResponse {
+  repeated CourierDelivery deliveries = 1;
+}
+
+message CourierPickup {
+  dt.events.v1.LatLng location = 1;
+  string label = 2; // the pickup name
+}
+
+message CourierDropoff {
+  dt.events.v1.LatLng location = 1;
+  optional string label = 2;
+  optional string notes = 3; // the delivery notes
+}
+
+// CourierDelivery is the courier-safe view of a delivery. It mirrors the
+// public CourierDelivery object.
+message CourierDelivery {
+  string id = 1;
+  string reference = 2; // the partner's external_id
+  string model = 3; // "direct" | "end_to_end"
+  string status = 4;
+  google.protobuf.Timestamp ready_at = 5; // unset = none
+  CourierPickup pickup = 6;
+  CourierDropoff dropoff = 7;
+  optional string items_summary = 8;
+  optional int32 item_count = 9;
+  repeated PickupConfirmation pickup_confirmations = 10;
+  repeated string next_actions = 11; // event types the courier may report now
 }

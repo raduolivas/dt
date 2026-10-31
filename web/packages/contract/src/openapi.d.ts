@@ -418,6 +418,162 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/courier-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a courier session
+         * @description Starts a session that lets one courier report location and delivery status from a phone, without your own courier backend relaying every fix. `mode: sdk` returns tokens for the `@dt/courier` SDK in your own app (`access_token` lasts 15 minutes; `refresh_token` is single use and rotating). `mode: link` returns a one-time `link_url` (valid 15 minutes) to send to the courier; it opens the DT courier page. The tokens and the link code are shown once and are never stored in plaintext. A courier has one active session: starting a new one ends the old one with `end_reason: replaced`. `expires_in_seconds` is the session length, 900 to 43200 (default 43200). `Idempotency-Key` makes a retry return the same response within 24 hours. Requires scope `couriers:write`. Problem codes: `validation_failed` (400), `courier_not_found` (404), `rate_limited` (429).
+         */
+        post: operations["createCourierSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/courier-sessions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The session id (`cs_…`).
+                 * @example cs_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: components["schemas"]["CourierSessionId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get a courier session
+         * @description Returns the session's status: `pending_link` (a link session whose code is not used yet), `active` or `ended`. Requires scope `couriers:write`. Problem codes: `not_found` (404), `rate_limited` (429).
+         */
+        get: operations["getCourierSession"];
+        put?: never;
+        post?: never;
+        /**
+         * End a courier session
+         * @description Ends the session now with `end_reason: partner`. The courier's tokens stop working immediately. Idempotent: ending a session that already ended returns `200` with the session. Requires scope `couriers:write`. Problem codes: `not_found` (404), `rate_limited` (429).
+         */
+        delete: operations["endCourierSession"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/courier/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Get courier tokens
+         * @description Exchanges a link code (from a `link` session's `link_url`) or a refresh token for a new token pair. No bearer token is needed. Each refresh token works once; using an old one ends the session with `end_reason: refresh_reuse`. A link code works once and expires after 15 minutes. Any origin may call it. Rate limits: refresh 10 requests/minute per session; link code 20 requests/minute per IP, failed guesses included. Problem codes: `validation_failed` (400), `link_code_invalid` (401, unknown or expired code), `link_code_used` (401, the code was already exchanged), `refresh_token_invalid` (401, unknown, already used or expired), `session_ended` (401), `rate_limited` (429).
+         */
+        post: operations["createCourierToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/courier/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List my deliveries
+         * @description The courier's assigned deliveries that are not final, in this environment. A courier sees only what is needed to do the job: no customer name, phone or email, no metadata and no other couriers. Problem codes: `session_ended` (401), `rate_limited` (429).
+         */
+        get: operations["listCourierDeliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/courier/locations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report my locations
+         * @description Sends GPS fixes for the courier the token belongs to. The rules are those of `reportCourierLocations`: at most 50 fixes and 16 KB per batch; fixes count only while the courier has a non-final assigned delivery, and implausible or future-dated fixes are `dropped`. Rate limit: 1 request/second per session, burst 5. Problem codes: `validation_failed` (400), `session_ended` (401), `payload_too_large` (413), `rate_limited` (429), `tracking_unavailable` (503).
+         */
+        post: operations["reportMyLocations"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/courier/deliveries/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id (`del_…`).
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: components["schemas"]["DeliveryId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report a delivery event as the courier
+         * @description Reports a status tap for a delivery assigned to this courier. `event_id` makes the report idempotent: send the same one when you retry. `outcome` is as in `reportDeliveryEvent`. `pickup_confirmed` counts as the courier's confirmation under the delivery's pickup policy. The answer lists the delivery's `next_actions`. Rate limit: 10 requests/minute per session. Problem codes: `validation_failed` (400), `session_ended` (401), `not_found` (404, no such delivery or it is not assigned to this courier), `invalid_transition` (409), `rate_limited` (429).
+         */
+        post: operations["reportMyDeliveryEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/courier/session/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End my session
+         * @description Ends the courier's own session (`end_reason: courier`). The tokens stop working at once. Problem codes: `session_ended` (401), `rate_limited` (429).
+         */
+        post: operations["endMySession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -901,6 +1057,149 @@ export interface components {
             /** Format: date-time */
             expires_at: string;
         };
+        /** @example cs_01j9z3k8m2q4r6s8t0v2w4x6y8 */
+        CourierSessionId: string;
+        /**
+         * @description `sdk`: tokens for the `@dt/courier` SDK in your app. `link`: a one-time link to the DT courier page.
+         * @enum {string}
+         */
+        CourierSessionMode: "sdk" | "link";
+        /**
+         * @description `pending_link`: a link session whose code is not used yet.
+         * @enum {string}
+         */
+        CourierSessionStatus: "pending_link" | "active" | "ended";
+        /**
+         * @description `courier`: the courier ended it. `partner`: you ended it. `expired`: it ran out. `replaced`: a newer session for the same courier started. `refresh_reuse`: an old refresh token was used again.
+         * @enum {string}
+         */
+        CourierSessionEndReason: "courier" | "partner" | "expired" | "replaced" | "refresh_reuse";
+        CourierSessionCreate: {
+            courier_id: components["schemas"]["CourierId"];
+            mode: components["schemas"]["CourierSessionMode"];
+            /**
+             * @description How long the session lasts, in seconds.
+             * @default 43200
+             */
+            expires_in_seconds: number;
+        };
+        CourierSession: {
+            id: components["schemas"]["CourierSessionId"];
+            courier_id: components["schemas"]["CourierId"];
+            mode: components["schemas"]["CourierSessionMode"];
+            status: components["schemas"]["CourierSessionStatus"];
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            expires_at: string | null;
+            /** Format: date-time */
+            ended_at: string | null;
+            end_reason: components["schemas"]["CourierSessionEndReason"] | null;
+            /**
+             * Format: date-time
+             * @description The last time the courier's token was used, or `null` if never.
+             */
+            last_seen_at: string | null;
+        };
+        /** @description The new session. In `sdk` mode it also has `access_token`, `access_expires_at` and `refresh_token`; in `link` mode it has `link_url` and `link_expires_at`. Tokens and the link are shown once. */
+        CourierSessionCreated: {
+            session: components["schemas"]["CourierSession"];
+            /** @description `sdk` mode only. The courier access token. */
+            access_token?: string;
+            /**
+             * Format: date-time
+             * @description `sdk` mode only.
+             */
+            access_expires_at?: string;
+            /** @description `sdk` mode only. Single use; each exchange returns a new one. */
+            refresh_token?: string;
+            /**
+             * Format: uri
+             * @description `link` mode only. Send it to the courier. It works once.
+             */
+            link_url?: string;
+            /**
+             * Format: date-time
+             * @description `link` mode only. The link works until this time (15 minutes).
+             */
+            link_expires_at?: string;
+        };
+        /** @description Send `{grant_type: link_code, code}` for the first exchange of a link, or `{grant_type: refresh_token, refresh_token}` to renew. The field that does not match `grant_type` must be absent. */
+        CourierTokenRequest: {
+            /** @enum {string} */
+            grant_type: "link_code" | "refresh_token";
+            /** @description With `link_code`: the code at the end of the `link_url`. */
+            code?: string;
+            /** @description With `refresh_token`: the refresh token from the last exchange. */
+            refresh_token?: string;
+        };
+        CourierTokens: {
+            access_token: string;
+            /** Format: date-time */
+            access_expires_at: string;
+            /** @description Replaces the one you sent; keep only this one. */
+            refresh_token: string;
+            /** Format: date-time */
+            session_expires_at: string;
+        };
+        /**
+         * @description An event type the courier can report now. `arriving` is never offered.
+         * @enum {string}
+         */
+        CourierNextAction: "at_pickup" | "pickup_confirmed" | "delivered" | "failed";
+        CourierDeliveryPickup: {
+            /** Format: double */
+            lat: number;
+            /** Format: double */
+            lng: number;
+            /** @description The pickup `name`. */
+            label: string;
+        };
+        CourierDeliveryDropoff: {
+            /** Format: double */
+            lat: number;
+            /** Format: double */
+            lng: number;
+            label: string | null;
+            /** @description The delivery `notes`. */
+            notes: string | null;
+        };
+        /** @description A delivery as its courier sees it. It leaves out the customer, metadata and history. */
+        CourierDelivery: {
+            id: components["schemas"]["DeliveryId"];
+            /** @description Your `external_id` for the delivery. */
+            reference: string;
+            model: components["schemas"]["DeliveryModel"];
+            status: components["schemas"]["DeliveryStatus"];
+            /** Format: date-time */
+            ready_at: string | null;
+            pickup: components["schemas"]["CourierDeliveryPickup"];
+            dropoff: components["schemas"]["CourierDeliveryDropoff"];
+            items_summary: string | null;
+            item_count: number | null;
+            pickup_confirmations: components["schemas"]["PickupConfirmation"][];
+            /** @description Event types the courier can report now, for the delivery's status and pickup policy. */
+            next_actions: components["schemas"]["CourierNextAction"][];
+        };
+        CourierDeliveryList: {
+            deliveries: components["schemas"]["CourierDelivery"][];
+        };
+        CourierEventRequest: {
+            /** @description Your id for this tap; send the same one when you retry. A repeat is reported as `duplicate`. */
+            event_id: string;
+            type: components["schemas"]["DeliveryEventType"];
+            /**
+             * Format: date-time
+             * @description When it happened. At most 5 minutes after receipt; defaults to receipt time.
+             */
+            occurred_at?: string;
+            /** @description Why, for `failed`. */
+            reason?: string;
+        };
+        CourierEventResult: {
+            outcome: components["schemas"]["DeliveryEventOutcome"];
+            delivery: components["schemas"]["CourierDelivery"];
+        };
     };
     responses: {
         /** @description The credential is missing, malformed, unknown, expired or revoked, or was sent other than as a bearer token (`unauthenticated`). */
@@ -952,6 +1251,17 @@ export interface components {
         /** @description The resource does not exist for this tenant and environment (`not_found`). Resources of other tenants or environments are never revealed. */
         NotFound: {
             headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The courier credential is missing, malformed, expired or revoked (`unauthenticated`), the session ended (`session_ended`), or, on `POST /courier/token`, the link code or refresh token was refused (`link_code_invalid`, `link_code_used`, `refresh_token_invalid`). Call `POST /courier/token` with the refresh token, or ask the partner for a new session. */
+        CourierUnauthenticated: {
+            headers: {
+                /** @description Always `Bearer`. */
+                "WWW-Authenticate"?: string;
                 [name: string]: unknown;
             };
             content: {
@@ -1744,6 +2054,250 @@ export interface operations {
             401: components["responses"]["ViewerTokenInvalid"];
             429: components["responses"]["TooManyRequests"];
             503: components["responses"]["TrackingUnavailable"];
+        };
+    };
+    createCourierSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Client-chosen key that makes a POST safe to retry (1 to 255 printable ASCII characters). A retry with the same key and body replays the first response for 24 hours; a different body is refused. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CourierSessionCreate"];
+            };
+        };
+        responses: {
+            /** @description The session. In `sdk` mode the response carries `access_token`, `access_expires_at` and `refresh_token`; in `link` mode it carries `link_url` and `link_expires_at`. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourierSessionCreated"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The Idempotency-Key was reused with a different request or is still in progress. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            413: components["responses"]["PayloadTooLarge"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getCourierSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The session id (`cs_…`).
+                 * @example cs_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: components["schemas"]["CourierSessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The session. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourierSession"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    endCourierSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The session id (`cs_…`).
+                 * @example cs_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: components["schemas"]["CourierSessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The ended session. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourierSession"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    createCourierToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CourierTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description A new token pair. Store the new refresh token; the one you sent no longer works. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourierTokens"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["CourierUnauthenticated"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listCourierDeliveries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The courier's open deliveries. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourierDeliveryList"];
+                };
+            };
+            401: components["responses"]["CourierUnauthenticated"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    reportMyLocations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportCourierLocationsRequest"];
+            };
+        };
+        responses: {
+            /** @description How many fixes were accepted and dropped. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportCourierLocationsResult"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["CourierUnauthenticated"];
+            413: components["responses"]["PayloadTooLarge"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["TrackingUnavailable"];
+        };
+    };
+    reportMyDeliveryEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description The delivery id (`del_…`).
+                 * @example del_01j9z3k8m2q4r6s8t0v2w4x6y8
+                 */
+                id: components["schemas"]["DeliveryId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CourierEventRequest"];
+            };
+        };
+        responses: {
+            /** @description The outcome and the delivery as the courier sees it. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourierEventResult"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["CourierUnauthenticated"];
+            404: components["responses"]["NotFound"];
+            /** @description `invalid_transition`: the event is not allowed in the delivery's current status. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            413: components["responses"]["PayloadTooLarge"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    endMySession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The session ended. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["CourierUnauthenticated"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
 }

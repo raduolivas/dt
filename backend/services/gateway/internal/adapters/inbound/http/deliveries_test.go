@@ -168,6 +168,22 @@ func (f *fakeDeliveries) UpsertCourier(ctx context.Context, r *deliveriesv1.Upse
 	return &deliveriesv1.UpsertCourierResponse{Courier: f.courier, Created: f.created}, nil
 }
 
+// GetCourier and ListCourierDeliveries are stubs; the M5 courier routes that
+// call them are tested with their own fakes.
+func (f *fakeDeliveries) GetCourier(ctx context.Context, r *deliveriesv1.GetCourierRequest) (*deliveriesv1.GetCourierResponse, error) {
+	if err := f.rec(ctx, "get_courier", r); err != nil {
+		return nil, err
+	}
+	return &deliveriesv1.GetCourierResponse{Courier: f.courier}, nil
+}
+
+func (f *fakeDeliveries) ListCourierDeliveries(ctx context.Context, r *deliveriesv1.ListCourierDeliveriesRequest) (*deliveriesv1.ListCourierDeliveriesResponse, error) {
+	if err := f.rec(ctx, "list_courier_deliveries", r); err != nil {
+		return nil, err
+	}
+	return &deliveriesv1.ListCourierDeliveriesResponse{}, nil
+}
+
 // rpcFail is what the real service returns: a Connect error plus a dt-code
 // trailer on the call info, and one FieldViolation detail each.
 func rpcFail(code connect.Code, dtCode string, violations ...*deliveriesv1.FieldViolation) func(context.Context) error {

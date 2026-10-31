@@ -41,6 +41,8 @@ func Mount(mux *http.ServeMux, svc *app.Service, token string, log *slog.Logger)
 // Server implements deliveriesv1connect.DeliveriesServiceHandler. Log lines
 // carry ids and states only, never personal fields.
 type Server struct {
+	// GetCourier and ListCourierDeliveries answer Unimplemented until M5 Task 3.
+	deliveriesv1connect.UnimplementedDeliveriesServiceHandler
 	svc *app.Service
 	log *slog.Logger
 }

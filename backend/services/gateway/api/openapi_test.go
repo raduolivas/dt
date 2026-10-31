@@ -120,6 +120,11 @@ func TestOpenAPIOperations(t *testing.T) {
 		"reportCourierLocations": "POST /couriers/{id}/locations", "simulateDelivery": "POST /test/deliveries/{id}/simulate",
 		"createTrackingSession": "POST /tracking/session", "refreshTrackingSession": "POST /tracking/session/refresh",
 		"getTrackingSnapshot": "GET /tracking/snapshot",
+		// M5
+		"createCourierSession": "POST /courier-sessions", "getCourierSession": "GET /courier-sessions/{id}",
+		"endCourierSession": "DELETE /courier-sessions/{id}", "createCourierToken": "POST /courier/token",
+		"listCourierDeliveries": "GET /courier/deliveries", "reportMyLocations": "POST /courier/locations",
+		"reportMyDeliveryEvent": "POST /courier/deliveries/{id}/events", "endMySession": "POST /courier/session/end",
 	}
 	got := map[string]string{}
 	for path, item := range doc.Paths.Map() {
@@ -140,8 +145,8 @@ func TestOpenAPIOperations(t *testing.T) {
 			t.Errorf("operation %s = %q, want %q", id, got[id], route)
 		}
 	}
-	if _, ok := doc.Components.SecuritySchemes["CourierToken"]; ok {
-		t.Error("security scheme CourierToken should be removed until M5")
+	if _, ok := doc.Components.SecuritySchemes["CourierToken"]; !ok {
+		t.Error("security scheme CourierToken is missing")
 	}
 	if _, ok := doc.Components.SecuritySchemes["ViewerToken"]; !ok {
 		t.Error("security scheme ViewerToken is missing")
@@ -149,6 +154,21 @@ func TestOpenAPIOperations(t *testing.T) {
 	// Only the session exchange is unauthenticated; the other viewer routes use the viewer token.
 	if sec := operationByID(doc, "createTrackingSession").Security; sec == nil || len(*sec) != 0 {
 		t.Error("createTrackingSession must declare security: []")
+	}
+	if sec := operationByID(doc, "createCourierToken").Security; sec == nil || len(*sec) != 0 {
+		t.Error("createCourierToken must declare security: []")
+	}
+	for _, id := range []string{"listCourierDeliveries", "reportMyLocations", "reportMyDeliveryEvent", "endMySession"} {
+		sec := operationByID(doc, id).Security
+		if sec == nil || len(*sec) != 1 || (*sec)[0]["CourierToken"] == nil {
+			t.Errorf("%s must use CourierToken", id)
+		}
+	}
+	for _, id := range []string{"createCourierSession", "getCourierSession", "endCourierSession"} {
+		sec := operationByID(doc, id).Security
+		if sec == nil || len(*sec) != 1 || (*sec)[0]["SecretKey"] == nil {
+			t.Errorf("%s must use SecretKey", id)
+		}
 	}
 	for _, id := range []string{"refreshTrackingSession", "getTrackingSnapshot"} {
 		sec := operationByID(doc, id).Security

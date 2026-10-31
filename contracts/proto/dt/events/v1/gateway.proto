@@ -1,0 +1,20 @@
+syntax = "proto3";
+package dt.events.v1;
+
+// Payloads of the courier.session_* events the gateway publishes (subjects
+// gateway.courier.session_started and gateway.courier.session_ended). They
+// carry no personal data and never a token or code.
+
+// courier.session_started
+message CourierSessionStarted {
+  string session_id = 1; // cs_…
+  string courier_id = 2; // cou_…
+  string mode = 3; // "sdk" | "link"
+}
+
+// courier.session_ended
+message CourierSessionEnded {
+  string session_id = 1;
+  string courier_id = 2;
+  string reason = 3; // courier | partner | expired | replaced | refresh_reuse
+}

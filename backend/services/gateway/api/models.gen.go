@@ -28,6 +28,96 @@ func (e BrandingTheme) Valid() bool {
 	}
 }
 
+// Defines values for CourierNextAction.
+const (
+	CourierNextActionAtPickup        CourierNextAction = "at_pickup"
+	CourierNextActionDelivered       CourierNextAction = "delivered"
+	CourierNextActionFailed          CourierNextAction = "failed"
+	CourierNextActionPickupConfirmed CourierNextAction = "pickup_confirmed"
+)
+
+// Valid indicates whether the value is a known member of the CourierNextAction enum.
+func (e CourierNextAction) Valid() bool {
+	switch e {
+	case CourierNextActionAtPickup:
+		return true
+	case CourierNextActionDelivered:
+		return true
+	case CourierNextActionFailed:
+		return true
+	case CourierNextActionPickupConfirmed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CourierSessionEndReason.
+const (
+	CourierSessionEndReasonCourier      CourierSessionEndReason = "courier"
+	CourierSessionEndReasonExpired      CourierSessionEndReason = "expired"
+	CourierSessionEndReasonPartner      CourierSessionEndReason = "partner"
+	CourierSessionEndReasonRefreshReuse CourierSessionEndReason = "refresh_reuse"
+	CourierSessionEndReasonReplaced     CourierSessionEndReason = "replaced"
+)
+
+// Valid indicates whether the value is a known member of the CourierSessionEndReason enum.
+func (e CourierSessionEndReason) Valid() bool {
+	switch e {
+	case CourierSessionEndReasonCourier:
+		return true
+	case CourierSessionEndReasonExpired:
+		return true
+	case CourierSessionEndReasonPartner:
+		return true
+	case CourierSessionEndReasonRefreshReuse:
+		return true
+	case CourierSessionEndReasonReplaced:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CourierSessionMode.
+const (
+	Link CourierSessionMode = "link"
+	Sdk  CourierSessionMode = "sdk"
+)
+
+// Valid indicates whether the value is a known member of the CourierSessionMode enum.
+func (e CourierSessionMode) Valid() bool {
+	switch e {
+	case Link:
+		return true
+	case Sdk:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CourierSessionStatus.
+const (
+	Active      CourierSessionStatus = "active"
+	Ended       CourierSessionStatus = "ended"
+	PendingLink CourierSessionStatus = "pending_link"
+)
+
+// Valid indicates whether the value is a known member of the CourierSessionStatus enum.
+func (e CourierSessionStatus) Valid() bool {
+	switch e {
+	case Active:
+		return true
+	case Ended:
+		return true
+	case PendingLink:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CourierSignal.
 const (
 	CourierSignalLive    CourierSignal = "live"
@@ -46,6 +136,24 @@ func (e CourierSignal) Valid() bool {
 	case CourierSignalPending:
 		return true
 	case CourierSignalStale:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CourierTokenRequestGrantType.
+const (
+	LinkCode     CourierTokenRequestGrantType = "link_code"
+	RefreshToken CourierTokenRequestGrantType = "refresh_token"
+)
+
+// Valid indicates whether the value is a known member of the CourierTokenRequestGrantType enum.
+func (e CourierTokenRequestGrantType) Valid() bool {
+	switch e {
+	case LinkCode:
+		return true
+	case RefreshToken:
 		return true
 	default:
 		return false
@@ -475,6 +583,74 @@ type Courier struct {
 	Vehicle   Vehicle   `json:"vehicle"`
 }
 
+// CourierDelivery A delivery as its courier sees it. It leaves out the customer, metadata and history.
+type CourierDelivery struct {
+	Dropoff CourierDeliveryDropoff `json:"dropoff"`
+
+	// Id Examples: del_01j9z3k8m2q4r6s8t0v2w4x6y8
+	Id           DeliveryId `json:"id"`
+	ItemCount    *int       `json:"item_count"`
+	ItemsSummary *string    `json:"items_summary"`
+
+	// Model `direct`: the partner reports progress. `end_to_end`: DT couriers report it.
+	Model DeliveryModel `json:"model"`
+
+	// NextActions Event types the courier can report now, for the delivery's status and pickup policy.
+	NextActions         []CourierNextAction   `json:"next_actions"`
+	Pickup              CourierDeliveryPickup `json:"pickup"`
+	PickupConfirmations []PickupConfirmation  `json:"pickup_confirmations"`
+	ReadyAt             *time.Time            `json:"ready_at"`
+
+	// Reference Your `external_id` for the delivery.
+	Reference string `json:"reference"`
+
+	// Status `delivered`, `cancelled` and `failed` are final.
+	Status DeliveryStatus `json:"status"`
+}
+
+// CourierDeliveryDropoff defines model for CourierDeliveryDropoff.
+type CourierDeliveryDropoff struct {
+	Label *string `json:"label"`
+	Lat   float64 `json:"lat"`
+	Lng   float64 `json:"lng"`
+
+	// Notes The delivery `notes`.
+	Notes *string `json:"notes"`
+}
+
+// CourierDeliveryList defines model for CourierDeliveryList.
+type CourierDeliveryList struct {
+	Deliveries []CourierDelivery `json:"deliveries"`
+}
+
+// CourierDeliveryPickup defines model for CourierDeliveryPickup.
+type CourierDeliveryPickup struct {
+	// Label The pickup `name`.
+	Label string  `json:"label"`
+	Lat   float64 `json:"lat"`
+	Lng   float64 `json:"lng"`
+}
+
+// CourierEventRequest defines model for CourierEventRequest.
+type CourierEventRequest struct {
+	// EventId Your id for this tap; send the same one when you retry. A repeat is reported as `duplicate`.
+	EventId string `json:"event_id"`
+
+	// OccurredAt When it happened. At most 5 minutes after receipt; defaults to receipt time.
+	OccurredAt *time.Time `json:"occurred_at,omitempty"`
+
+	// Reason Why, for `failed`.
+	Reason *string           `json:"reason,omitempty"`
+	Type   DeliveryEventType `json:"type"`
+}
+
+// CourierEventResult defines model for CourierEventResult.
+type CourierEventResult struct {
+	// Delivery A delivery as its courier sees it. It leaves out the customer, metadata and history.
+	Delivery CourierDelivery      `json:"delivery"`
+	Outcome  DeliveryEventOutcome `json:"outcome"`
+}
+
 // CourierFix defines model for CourierFix.
 type CourierFix struct {
 	AccuracyM  float32  `json:"accuracy_m"`
@@ -490,6 +666,9 @@ type CourierFix struct {
 // CourierId Examples: cou_01j9z3k8m2q4r6s8t0v2w4x6y8
 type CourierId = string
 
+// CourierNextAction An event type the courier can report now. `arriving` is never offered.
+type CourierNextAction string
+
 // CourierRef defines model for CourierRef.
 type CourierRef struct {
 	DisplayName string `json:"display_name"`
@@ -504,8 +683,96 @@ type CourierRef struct {
 	Vehicle Vehicle   `json:"vehicle"`
 }
 
+// CourierSession defines model for CourierSession.
+type CourierSession struct {
+	// CourierId Examples: cou_01j9z3k8m2q4r6s8t0v2w4x6y8
+	CourierId CourierId                `json:"courier_id"`
+	EndReason *CourierSessionEndReason `json:"end_reason"`
+	EndedAt   *time.Time               `json:"ended_at"`
+	ExpiresAt *time.Time               `json:"expires_at"`
+
+	// Id Examples: cs_01j9z3k8m2q4r6s8t0v2w4x6y8
+	Id CourierSessionId `json:"id"`
+
+	// LastSeenAt The last time the courier's token was used, or `null` if never.
+	LastSeenAt *time.Time `json:"last_seen_at"`
+
+	// Mode `sdk`: tokens for the `@dt/courier` SDK in your app. `link`: a one-time link to the DT courier page.
+	Mode      CourierSessionMode `json:"mode"`
+	StartedAt time.Time          `json:"started_at"`
+
+	// Status `pending_link`: a link session whose code is not used yet.
+	Status CourierSessionStatus `json:"status"`
+}
+
+// CourierSessionCreate defines model for CourierSessionCreate.
+type CourierSessionCreate struct {
+	// CourierId Examples: cou_01j9z3k8m2q4r6s8t0v2w4x6y8
+	CourierId CourierId `json:"courier_id"`
+
+	// ExpiresInSeconds How long the session lasts, in seconds.
+	ExpiresInSeconds *int `json:"expires_in_seconds,omitempty"`
+
+	// Mode `sdk`: tokens for the `@dt/courier` SDK in your app. `link`: a one-time link to the DT courier page.
+	Mode CourierSessionMode `json:"mode"`
+}
+
+// CourierSessionCreated The new session. In `sdk` mode it also has `access_token`, `access_expires_at` and `refresh_token`; in `link` mode it has `link_url` and `link_expires_at`. Tokens and the link are shown once.
+type CourierSessionCreated struct {
+	// AccessExpiresAt `sdk` mode only.
+	AccessExpiresAt *time.Time `json:"access_expires_at,omitempty"`
+
+	// AccessToken `sdk` mode only. The courier access token.
+	AccessToken *string `json:"access_token,omitempty"`
+
+	// LinkExpiresAt `link` mode only. The link works until this time (15 minutes).
+	LinkExpiresAt *time.Time `json:"link_expires_at,omitempty"`
+
+	// LinkUrl `link` mode only. Send it to the courier. It works once.
+	LinkUrl *string `json:"link_url,omitempty"`
+
+	// RefreshToken `sdk` mode only. Single use; each exchange returns a new one.
+	RefreshToken *string        `json:"refresh_token,omitempty"`
+	Session      CourierSession `json:"session"`
+}
+
+// CourierSessionEndReason `courier`: the courier ended it. `partner`: you ended it. `expired`: it ran out. `replaced`: a newer session for the same courier started. `refresh_reuse`: an old refresh token was used again.
+type CourierSessionEndReason string
+
+// CourierSessionId Examples: cs_01j9z3k8m2q4r6s8t0v2w4x6y8
+type CourierSessionId = string
+
+// CourierSessionMode `sdk`: tokens for the `@dt/courier` SDK in your app. `link`: a one-time link to the DT courier page.
+type CourierSessionMode string
+
+// CourierSessionStatus `pending_link`: a link session whose code is not used yet.
+type CourierSessionStatus string
+
 // CourierSignal `pending`: the courier is visible but no fix has arrived yet. `live`: the last fix is at most 30 seconds old. `stale`: older than 30 seconds. `lost`: older than 5 minutes (or still `pending` after 5 minutes).
 type CourierSignal string
+
+// CourierTokenRequest Send `{grant_type: link_code, code}` for the first exchange of a link, or `{grant_type: refresh_token, refresh_token}` to renew. The field that does not match `grant_type` must be absent.
+type CourierTokenRequest struct {
+	// Code With `link_code`: the code at the end of the `link_url`.
+	Code      *string                      `json:"code,omitempty"`
+	GrantType CourierTokenRequestGrantType `json:"grant_type"`
+
+	// RefreshToken With `refresh_token`: the refresh token from the last exchange.
+	RefreshToken *string `json:"refresh_token,omitempty"`
+}
+
+// CourierTokenRequestGrantType defines model for CourierTokenRequest.GrantType.
+type CourierTokenRequestGrantType string
+
+// CourierTokens defines model for CourierTokens.
+type CourierTokens struct {
+	AccessExpiresAt time.Time `json:"access_expires_at"`
+	AccessToken     string    `json:"access_token"`
+
+	// RefreshToken Replaces the one you sent; keep only this one.
+	RefreshToken     string    `json:"refresh_token"`
+	SessionExpiresAt time.Time `json:"session_expires_at"`
+}
 
 // CreateDeliveryRequest Pickup and dropoff must be at most 100 km apart.
 type CreateDeliveryRequest struct {
@@ -1122,6 +1389,9 @@ type Limit = int
 // StartingAfter Examples: del_01j9z3k8m2q4r6s8t0v2w4x6y8
 type StartingAfter = DeliveryId
 
+// CourierUnauthenticated RFC 9457 problem details.
+type CourierUnauthenticated = Problem
+
 // Forbidden RFC 9457 problem details.
 type Forbidden = Problem
 
@@ -1145,6 +1415,12 @@ type ValidationFailed = Problem
 
 // ViewerTokenInvalid RFC 9457 problem details.
 type ViewerTokenInvalid = Problem
+
+// CreateCourierSessionParams defines parameters for CreateCourierSession.
+type CreateCourierSessionParams struct {
+	// IdempotencyKey Client-chosen key that makes a POST safe to retry (1 to 255 printable ASCII characters). A retry with the same key and body replays the first response for 24 hours; a different body is refused.
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
 
 // ListDeliveriesParams defines parameters for ListDeliveries.
 type ListDeliveriesParams struct {
@@ -1220,6 +1496,18 @@ type SimulateDeliveryParams struct {
 	// IdempotencyKey Client-chosen key that makes a POST safe to retry (1 to 255 printable ASCII characters). A retry with the same key and body replays the first response for 24 hours; a different body is refused.
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
+
+// CreateCourierSessionJSONRequestBody defines body for CreateCourierSession for application/json ContentType.
+type CreateCourierSessionJSONRequestBody = CourierSessionCreate
+
+// ReportMyDeliveryEventJSONRequestBody defines body for ReportMyDeliveryEvent for application/json ContentType.
+type ReportMyDeliveryEventJSONRequestBody = CourierEventRequest
+
+// ReportMyLocationsJSONRequestBody defines body for ReportMyLocations for application/json ContentType.
+type ReportMyLocationsJSONRequestBody = ReportCourierLocationsRequest
+
+// CreateCourierTokenJSONRequestBody defines body for CreateCourierToken for application/json ContentType.
+type CreateCourierTokenJSONRequestBody = CourierTokenRequest
 
 // UpsertCourierJSONRequestBody defines body for UpsertCourier for application/json ContentType.
 type UpsertCourierJSONRequestBody = UpsertCourierRequest
