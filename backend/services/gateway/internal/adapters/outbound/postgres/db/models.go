@@ -39,6 +39,31 @@ type AuditLog struct {
 	OccurredAt  time.Time
 }
 
+type CourierRefreshUsed struct {
+	Hash      []byte
+	SessionID string
+}
+
+type CourierSession struct {
+	ID                string
+	TenantID          string
+	Environment       string
+	CourierID         string
+	Mode              string
+	Status            string
+	CreatedAt         time.Time
+	StartedAt         *time.Time
+	ExpiresAt         *time.Time
+	EndedAt           *time.Time
+	EndReason         pgtype.Text
+	ExpiresInSeconds  int32
+	LinkCodeHash      []byte
+	LinkExpiresAt     *time.Time
+	RefreshHash       []byte
+	RefreshGeneration int32
+	LastSeenAt        *time.Time
+}
+
 type IdempotencyRecord struct {
 	TenantID        string
 	Environment     string

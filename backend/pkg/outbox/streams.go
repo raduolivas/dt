@@ -44,6 +44,16 @@ var StreamTracking = jetstream.StreamConfig{
 	MaxAge:     7 * 24 * time.Hour,
 }
 
+// StreamGateway carries the gateway's events (courier.session_*). Consumers
+// keep their own state, so it is bounded to 7 days.
+var StreamGateway = jetstream.StreamConfig{
+	Name:       "GATEWAY",
+	Subjects:   []string{"gateway.>"},
+	Storage:    jetstream.FileStorage,
+	Duplicates: DuplicateWindow,
+	MaxAge:     7 * 24 * time.Hour,
+}
+
 // SubjectFor returns the subject of eventType on stream:
 // "<stream name lowercased>.<event type>", e.g. accounts.apikey.created.
 func SubjectFor(stream jetstream.StreamConfig, eventType string) string {

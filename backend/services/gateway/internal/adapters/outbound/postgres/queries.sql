@@ -144,3 +144,49 @@ FROM tenant_viewer_settings WHERE tenant_id = $1;
 -- name: GetViewerLogo :one
 SELECT logo, logo_content_type FROM tenant_viewer_settings
 WHERE tenant_id = @tenant_id AND logo_sha256 = @logo_sha256 AND logo IS NOT NULL;
+
+-- name: LockCourierSessions :exec
+-- Serializes every change to one courier's sessions for the transaction.
+SELECT pg_advisory_xact_lock(hashtextextended('courier_sessions:' || @tenant_id::text || ':' || @environment::text || ':' || @courier_id::text, 0));
+
+-- name: GetCourierSession :one
+SELECT * FROM courier_sessions WHERE id = $1;
+
+-- name: LockCourierSession :one
+SELECT * FROM courier_sessions WHERE id = $1 FOR UPDATE;
+
+-- name: LockCurrentCourierSession :one
+SELECT * FROM courier_sessions
+WHERE tenant_id = @tenant_id AND environment = @environment AND courier_id = @courier_id AND status = @status
+FOR UPDATE;
+
+-- name: GetCourierSessionByLinkHash :one
+SELECT * FROM courier_sessions WHERE link_code_hash = $1;
+
+-- name: GetCourierSessionByRefreshHash :one
+-- The current refresh token, or any superseded one.
+SELECT * FROM courier_sessions
+WHERE refresh_hash = @hash OR id = (SELECT session_id FROM courier_refresh_used WHERE courier_refresh_used.hash = @hash);
+
+-- name: InsertCourierSession :exec
+INSERT INTO courier_sessions (id, tenant_id, environment, courier_id, mode, status, created_at, started_at, expires_at,
+  ended_at, end_reason, expires_in_seconds, link_code_hash, link_expires_at, refresh_hash, refresh_generation, last_seen_at)
+VALUES (@id, @tenant_id, @environment, @courier_id, @mode, @status, @created_at, @started_at, @expires_at,
+  @ended_at, sqlc.narg(end_reason), @expires_in_seconds, @link_code_hash, @link_expires_at, @refresh_hash, @refresh_generation, @last_seen_at);
+
+-- name: SupersedeRefreshHash :exec
+-- Keeps the session's current refresh hash as superseded when it is about to
+-- be replaced by new_hash.
+INSERT INTO courier_refresh_used (hash, session_id)
+SELECT refresh_hash, id FROM courier_sessions
+WHERE id = @id AND refresh_hash IS NOT NULL AND refresh_hash IS DISTINCT FROM sqlc.narg(new_hash)::bytea
+ON CONFLICT (hash) DO NOTHING;
+
+-- name: UpdateCourierSession :exec
+UPDATE courier_sessions SET status = @status, started_at = @started_at, expires_at = @expires_at, ended_at = @ended_at,
+  end_reason = sqlc.narg(end_reason), refresh_hash = @refresh_hash, refresh_generation = @refresh_generation
+WHERE id = @id;
+
+-- name: TouchCourierSession :exec
+UPDATE courier_sessions SET last_seen_at = @now
+WHERE id = @id AND (last_seen_at IS NULL OR last_seen_at < @stale_before::timestamptz);

@@ -7,6 +7,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/raduolivas/dt/backend/pkg/courierjwt"
 	"github.com/raduolivas/dt/backend/pkg/viewerjwt"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
 )
@@ -57,4 +58,42 @@ func (r *Revoker) AnnounceExpiry(ctx context.Context, linkID string, expiresAt t
 		return fmt.Errorf("announce expiry %s: %w", linkID, err)
 	}
 	return nil
+}
+
+// courierRevokedPrefix + session id is the courier deny-list key.
+const courierRevokedPrefix = "dt:courier:revoked:"
+
+// CourierRevokedTTL is how long an ended session stays deny-listed: the
+// longest an access token issued before the end can still verify.
+const CourierRevokedTTL = courierjwt.TTL + courierjwt.Leeway
+
+// CourierDenyList deny-lists ended courier sessions at
+// dt:courier:revoked:<cs_id>. Only the gateway verifies courier tokens, so
+// nothing is published.
+type CourierDenyList struct{ c *redis.Client }
+
+var _ app.CourierDenyList = (*CourierDenyList)(nil)
+
+// NewCourierDenyList returns a CourierDenyList over c.
+func NewCourierDenyList(c *redis.Client) *CourierDenyList { return &CourierDenyList{c: c} }
+
+// Deny implements app.CourierDenyList.
+func (d *CourierDenyList) Deny(ctx context.Context, sessionID string) error {
+	ctx, cancel := context.WithTimeout(ctx, revokeTimeout)
+	defer cancel()
+	if err := d.c.Set(ctx, courierRevokedPrefix+sessionID, "1", CourierRevokedTTL).Err(); err != nil {
+		return fmt.Errorf("deny courier session %s: %w", sessionID, err)
+	}
+	return nil
+}
+
+// Denied implements app.CourierDenyList.
+func (d *CourierDenyList) Denied(ctx context.Context, sessionID string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, revokeTimeout)
+	defer cancel()
+	n, err := d.c.Exists(ctx, courierRevokedPrefix+sessionID).Result()
+	if err != nil {
+		return false, fmt.Errorf("check courier deny-list %s: %w", sessionID, err)
+	}
+	return n > 0, nil
 }
