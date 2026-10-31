@@ -12,7 +12,7 @@ export default defineConfig({
     emptyOutDir: true,
     // the shell names entry.css itself; a single stylesheet keeps that name meaningful
     cssCodeSplit: false,
-    // one bundle with Three.js on purpose (the SDK's own build checks the size budget); no warning for it
+    // one bundle with Three.js on purpose (scripts/size.mjs checks the gzipped budget after the build); no warning for it
     chunkSizeWarningLimit: 1024,
     rolldownOptions: {
       input: resolve(import.meta.dirname, 'src/main.ts'),

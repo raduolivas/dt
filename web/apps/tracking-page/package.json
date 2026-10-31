@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/size.mjs",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src vite.config.ts"
+    "lint": "eslint src scripts vite.config.ts"
   },
   "dependencies": {
     "@dt/tracking": "workspace:*"
@@ -15,5 +15,9 @@
   "devDependencies": {
     "@types/node": "24.19.2",
     "vite": "^8.3.4"
+  },
+  "sizeLimit": {
+    "dist/entry.js": 254206,
+    "dist/entry.css": 615
   }
 }
