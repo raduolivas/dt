@@ -4,6 +4,10 @@ Written at the M3 close-out from the final whole-branch review (`621d655..965bd4
 build ledger as the committed record. Nothing here blocks the M3 merge; the items marked **before ...** have a
 deadline.
 
+**Closed by M4** (see `docs/m4-followups.md`): M3-R10 (dropoff label), M3-R14 (renderer-side snapping), follow-up 5
+(`Retry-After` on the early 503) and the `frame-ancestors` item from the M3 design (§3.2): the gateway sets it per
+tenant from `embed_origins`. The "before real traffic" items below stay open.
+
 ## Do before real traffic or production
 
 - **Per-Apply routing deadline or circuit breaker (T6).** A hung OSRM costs up to 2 x 800 ms per `Apply`. This is the
@@ -18,8 +22,7 @@ deadline.
   gets no `signal_lost` after a flush).
 - **Courier data retention (T11)** is undefined for `couriers` rows in tracking: a product decision, to add to
   `docs/OPEN_QUESTIONS.md`.
-- **M3-R14:** OSRM `/match` is not wired into ingest (async or batched matching of the trail, or renderer-side
-  snapping in M4).
+- ~~**M3-R14:** OSRM `/match` is not wired into ingest~~ **Done in M4:** the renderer snaps the courier to the route and dead-reckons between fixes (M4-R8, design §6.3). Ingest stays unmatched.
 - **M3-R18:** a unique `(delivery_id, courier_id, t)` with `ON CONFLICT DO NOTHING` so retried relay batches do not
   duplicate dispute evidence.
 
@@ -49,9 +52,9 @@ deadline.
   mappings are untested.
 - **T11 (retention):** one failing trail blocks partition drops (fails safe); a frozen partial route older than 30
   days; no `tracking_links` index for expiry or revocation scans; an instance that is down at 02:00 skips the night.
-- **T12 (smoke, latency):** a viewer session in the first ~40 ms after delivery creation answers 503
-  `tracking_unavailable`. Checked: the gateway sets no `Retry-After` on that 503 (`rpcerrors.go`,
-  `tracking_links.go`); add one, or a short wait for the projection.
+- **T12 (smoke, latency):** ~~a viewer session in the first ~40 ms after delivery creation answers 503
+  `tracking_unavailable` with no `Retry-After`~~ (follow-up 5). **Done in M4:** the gateway now sends `Retry-After: 1`
+  (`tracking_links.go`), and the viewer client retries for up to 5 s and shows "Getting your delivery ready…".
 - **T13 (AWS stacks):** the `ReadOnly` permission set cannot decrypt trail logs; the `migrate-state` `-reconfigure`
   path; swallowed `ce` errors.
 - **T14 (deploy):** an out-of-order `workflow_run` can deploy an older SHA (add a "SHA is main HEAD" check later);
@@ -79,11 +82,11 @@ resolved questions `R1`-`R26` in `docs/OPEN_QUESTIONS.md`. Each line: what was d
 - **M3-R7:** mTLS covers the whole internal port of accounts and deliveries, `/readyz` included. If wrong: staging health checks must present a client cert, or rely on the ALB only for gateway and tracking.
 - **M3-R8:** the consumer-lag signal is the `consumer_lagging` warn log (the OTel gauge is a no-op without a MeterProvider), with a CloudWatch metric filter and alarm (built in the final fix wave, `infra/aws/staging/alarms.tf`). If wrong: lag goes unnoticed until metrics export exists.
 - **M3-R9:** the missing `dt_consumer_pending_messages` export is accepted because the spec asks for "a consumer-lag signal", met by the log line and its alarm; the gauge goes live with a metrics exporter. If wrong: lag is visible only through logs and the alarm.
-- **M3-R10:** snapshot `dropoff.label` stays null in M3 (events never carry the sealed label); M4 decides whether the session exchange fetches it from deliveries. If wrong: the customer page shows no "Home" label until then.
+- **M3-R10:** snapshot `dropoff.label` stays null in M3 (events never carry the sealed label); M4 decides whether the session exchange fetches it from deliveries. If wrong: the customer page shows no "Home" label until then. **Done in M4 (design §6.11):** the label stays null for the customer view and the page says "Your address"; a partner label is free text and may hold personal data.
 - **M3-R11:** the viewer snapshot (including `updated_at`) must not change when only a hidden courier's fix arrives, and the implied-speed check applies only when dt >= 2 s. If wrong: a small domain edit.
 - **M3-R12:** proof points use only the current courier's fixes (dispute evidence), the `SECURITY DEFINER` partition function is `REVOKE`d from PUBLIC, and a courier known from the delivery is accepted. If wrong: a slightly larger fix round.
 - **M3-R13:** `Events.Enqueue` in `applyOnce` is bounded by a 300 ms timeout, and `applyOnce` never returns an error after a successful `Put` (a publish failure is logged). If wrong: a small latency risk.
-- **M3-R14:** OSRM `/match` is not wired into ingest (up to 800 ms per fix would break p95 < 1 s); async or batched trail matching, or renderer-side snapping, comes later. If wrong: the courier marker can sit slightly off-road on the customer map.
+- **M3-R14:** OSRM `/match` is not wired into ingest (up to 800 ms per fix would break p95 < 1 s); async or batched trail matching, or renderer-side snapping, comes later. If wrong: the courier marker can sit slightly off-road on the customer map. **Done in M4:** renderer-side snapping and dead reckoning (M4-R8).
 - **M3-R15:** the JWKS verifier keeps a minimum spacing between fetches even after a caller cancel, and checks `aud` by exact match `viewer`. If wrong: none.
 - **M3-R16:** the Task 8 contract text follows the plan brief (data envelope, 25 s ping, 5 streams per link) over Task 2's draft text. If wrong: doc text only.
 - **M3-R17:** open streams may outlive the 15-minute viewer JWT; link revocation and expiry close them at once (the JWT guards session start and refresh). If wrong: a leaked JWT (not link) keeps one already-open stream alive until the link expires; a mandatory token swap could close it.
