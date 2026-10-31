@@ -22,6 +22,23 @@ export function createGps(
     get state() {
       return state;
     },
+    /**
+     * Asks for permission once with a single reading that is thrown away: it is never buffered or sent. This lets the
+     * prompt appear at the start of a shift even before a delivery is assigned. No watch is started.
+     */
+    ask() {
+      if (!geo || watch !== null) return;
+      set('asking');
+      geo.getCurrentPosition(
+        () => {
+          if (watch === null) set('off');
+        },
+        (e) => {
+          if (watch === null) set(e.code === 1 ? 'denied' : 'off');
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 30_000 },
+      );
+    },
     start() {
       if (watch !== null || !geo) return;
       set('asking');

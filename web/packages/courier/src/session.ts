@@ -10,7 +10,7 @@ const RETRY_MAX_MS = 30_000;
 
 interface Stored {
   tokens: CourierTokens;
-  /** The link code, or the first refresh token, this session came from: tells a reload from a new link. */
+  /** Fingerprint of the link code, or of the first refresh token, this session came from: tells a reload from a new link. */
   origin?: string;
 }
 
@@ -29,6 +29,20 @@ export function defaultStorage(): CourierStorage {
     setItem: (k, v) => void m.set(k, v),
     removeItem: (k) => void m.delete(k),
   };
+}
+
+/** Equality check only: stored in place of the code or first refresh token, so no usable secret is kept for it. */
+async function fingerprint(v: string): Promise<string> {
+  const bytes = new TextEncoder().encode(v);
+  try {
+    const h = await crypto.subtle.digest('SHA-256', bytes);
+    return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch {
+    // no crypto.subtle (an insecure origin): FNV-1a is enough to tell one code from another
+    let x = 0x811c9dc5;
+    for (const b of bytes) x = Math.imul(x ^ b, 0x01000193) >>> 0;
+    return 'fnv' + x.toString(16);
+  }
 }
 
 export interface SessionDeps {
@@ -130,7 +144,8 @@ export function createSession(d: SessionDeps) {
      * Resume from storage, else use the given pair, else exchange the link code. A stored pair wins when it came from
      * the same code or pair: the code is single use, and the stored refresh token is newer than the one we were given.
      */
-    async init(): Promise<void> {
+    /** Resolves true when it resumed the stored session, false when it started a new one (the caller drops leftovers). */
+    async init(): Promise<boolean> {
       let stored: Stored | null = null;
       try {
         const raw = await d.storage.getItem(STORAGE_KEY);
@@ -138,24 +153,29 @@ export function createSession(d: SessionDeps) {
       } catch {
         stored = null;
       }
-      const origin = d.linkCode ?? d.tokens?.refresh_token;
+      const given = d.linkCode ?? d.tokens?.refresh_token;
+      const origin = given === undefined ? undefined : await fingerprint(given);
       if (stored?.tokens && (origin === undefined || stored.origin === origin)) {
         cur = stored;
         if (killIfExpired()) throw new CourierError('session_ended');
         schedule();
-        return;
+        return true;
       }
       if (d.linkCode !== undefined) {
         const r = await d.client.call<CourierTokens>('POST', '/courier/token', {
           body: { grant_type: 'link_code', code: d.linkCode },
         });
-        if (r.kind === 'ok') return persist({ tokens: r.data, origin: d.linkCode });
+        if (r.kind === 'ok') {
+          await persist({ tokens: r.data, origin });
+          return false;
+        }
         if (r.kind === 'unauthorized') throw new CourierError(r.code ?? 'link_code_invalid');
         if (r.kind === 'network') throw new CourierError('network');
         throw new CourierError(r.kind === 'error' ? (r.code ?? 'rejected') : 'rate_limited');
       }
       if (d.tokens) {
-        return persist({ tokens: d.tokens, origin: d.tokens.refresh_token });
+        await persist({ tokens: d.tokens, origin });
+        return false;
       }
       throw new CourierError('no_session');
     },
@@ -167,6 +187,10 @@ export function createSession(d: SessionDeps) {
         if (d.now() >= accessExpiry()) await p; // still good for a while: let the refresh run behind this call
       }
       return dead || !cur ? null : cur.tokens.access_token;
+    },
+    /** The access token if it is still valid, else null. Never waits and never refreshes. */
+    readyToken(): string | null {
+      return cur && !dead && d.now() < accessExpiry() ? cur.tokens.access_token : null;
     },
     /** Call on resume from background: renews now if the timer was throttled while the tab slept. */
     ensureFresh() {

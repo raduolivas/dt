@@ -89,10 +89,38 @@ describe('sampling', () => {
     expect(geo.watches).toBe(1);
   });
 
-  it('collects nothing while the list is empty at start', async () => {
+  it('asks for permission once at start with an empty list, and never watches or sends', async () => {
     api.deliveries = [];
-    await started();
+    const c = make();
+    expect(c.state.gps).toBe('off');
+    await c.start();
+    expect(geo.asks).toBe(1);
+    expect(c.state.gps).toBe('off'); // allowed: asking is over and nothing is being collected
+    await tick(60_000);
     expect(geo.watches).toBe(0);
+    expect(c.state.buffered).toBe(0);
+    expect(api.paths('/courier/locations')).toHaveLength(0);
+  });
+
+  it('shows asking while the prompt is open, and denied when it is refused', async () => {
+    api.deliveries = [];
+    geo.askAnswer = 'denied';
+    const c = make();
+    const seen: string[] = [];
+    c.on('state', (s) => seen.push(s.gps));
+    await c.start();
+    expect(seen.filter((g, i) => g !== seen[i - 1])).toEqual(['off', 'asking', 'denied']);
+    expect(c.state.gps).toBe('denied');
+  });
+
+  it('the permission fix is never buffered or sent', async () => {
+    await started(); // a delivery exists: the watch runs, but the one-off reading must not reach the server
+    geo.fix(10, Date.now(), 52.37);
+    await tick(3000);
+    const fixes = api.paths('/courier/locations').flatMap((c) => c.body.fixes);
+    expect(fixes).toHaveLength(1);
+    expect(fixes[0].lat).toBe(52.37); // not the permission reading (lat 1)
+    expect(geo.asks).toBe(1);
   });
 
   it('stops watching when deliveries empty and resumes when one appears', async () => {
@@ -464,4 +492,117 @@ describe('rate limits', () => {
 });
 
 /** Let the fire-and-forget IndexedDB writes land (the first courier's store is not reachable from the test). */
-const idbSettle = () => tick(50);
+const idbSettle = async () => {
+  for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+};
+
+describe('review fixes', () => {
+  it('a refused tap with nobody waiting (restored after a reload) raises a rejected notice', async () => {
+    const first = await started();
+    api.offline = true;
+    void first.report('del_1', 'delivered');
+    await tick(0);
+    await idbSettle();
+
+    api.offline = false;
+    api.handle('POST /courier/deliveries/:id/events', () => problem(409, 'invalid_transition'));
+    const second = make();
+    const seen = notices(second);
+    await second.start();
+    await tick(0);
+    expect(seen).toEqual([{ kind: 'rejected', deliveryId: 'del_1', type: 'delivered' }]);
+    expect(second.state.pendingTaps).toBe(0);
+  });
+
+  it('a 400 on a restored tap also raises rejected', async () => {
+    const first = await started();
+    api.offline = true;
+    void first.report('del_1', 'failed', { reason: 'x' });
+    await tick(0);
+    await idbSettle();
+    api.offline = false;
+    api.handle('POST /courier/deliveries/:id/events', () => problem(400, 'validation_failed'));
+    const second = make();
+    const seen = notices(second);
+    await second.start();
+    await tick(0);
+    expect(seen).toEqual([{ kind: 'rejected', deliveryId: 'del_1', type: 'failed' }]);
+  });
+
+  it('end() does not wait for the network once the access token has expired', async () => {
+    const c = await started();
+    api.offline = true;
+    await tick(ACCESS_MS + 60_000); // the refresh loop is retrying and the token is dead
+    expect(c.state.network).toBe('offline');
+    await c.end(); // would hang on the refresh before the fix
+    expect(c.state.session).toBe('ended');
+    expect(storage.data.size).toBe(0);
+    expect(geo.watching).toBe(false);
+  });
+
+  it('end() gives up on a stalled farewell after a few seconds', async () => {
+    const c = await started();
+    api.handle('POST /courier/session/end', () => new Promise<Response>(() => {}));
+    const done = c.end();
+    await tick(5000);
+    await done;
+    expect(c.state.session).toBe('ended');
+    expect(storage.data.size).toBe(0);
+  });
+
+  it.each([
+    [429, 'rate_limited'],
+    [503, 'unavailable'],
+  ])('a %i on the code exchange leaves start() retryable', async (status, code) => {
+    api.handle('POST /courier/token', () => problem(status, code, { 'Retry-After': '1' }));
+    const c = make();
+    await expect(c.start()).rejects.toBeInstanceOf(CourierError);
+    expect(c.state.session).toBe('starting');
+    await c.start(); // the same instance, a second try
+    expect(c.state.session).toBe('active');
+  });
+
+  it('leftover fixes and taps from an older shift are dropped when a new code is exchanged', async () => {
+    let tabDead = false; // the old tab is gone: its timers must not send anything
+    const first = await started({ fetch: ((...a) => (tabDead ? Promise.reject(new TypeError('x')) : api.fetch(...a))) as typeof fetch });
+    api.offline = true;
+    geo.fix(10);
+    void first.report('del_1', 'at_pickup');
+    await tick(0);
+    await idbSettle();
+    tabDead = true;
+    api.offline = false;
+    api.calls.length = 0;
+
+    const second = await started({ linkCode: 'code-2' });
+    await tick(3000);
+    expect(second.state.buffered).toBe(0);
+    expect(second.state.pendingTaps).toBe(0);
+    expect(api.paths('/courier/deliveries/del_1/events')).toHaveLength(0);
+    expect(api.paths('/courier/locations')).toHaveLength(0);
+  });
+
+  it('stores a fingerprint of the code and of the first refresh token, not the secret', async () => {
+    await started();
+    let rec = JSON.parse(storage.data.get('dt.courier.session')!);
+    expect(rec.origin).toMatch(/^[0-9a-f]{64}$/);
+    expect(storage.data.get('dt.courier.session')).not.toContain('code-1');
+
+    storage.data.clear();
+    const tokens = api.tokens();
+    await started({ linkCode: undefined, tokens });
+    rec = JSON.parse(storage.data.get('dt.courier.session')!);
+    expect(rec.origin).toMatch(/^[0-9a-f]{64}$/);
+    expect(rec.origin).not.toBe(tokens.refresh_token);
+    // and the same pair given again after a reload still resumes instead of reusing the old token
+    const before = api.calls.length;
+    await started({ linkCode: undefined, tokens });
+    expect(api.calls.slice(before).filter((c) => c.path === '/courier/token')).toHaveLength(0);
+  });
+
+  it('report() before start() rejects with not_started', async () => {
+    const c = make();
+    await expect(c.report('del_1', 'at_pickup')).rejects.toMatchObject({ code: 'not_started' });
+    expect(api.calls).toHaveLength(0);
+  });
+});

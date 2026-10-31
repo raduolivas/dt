@@ -41,7 +41,11 @@ export type ReportResult = {
 };
 // 'recorded' = stored without a state change (e.g. one confirmation under courier_and_store); 'not_yours' = 404.
 
-export type CourierNotice = { kind: 'reassigned' | 'ended'; deliveryId?: string };
+/**
+ * 'reassigned': a tap got 404. 'ended': the session is over. 'rejected': the server refused a tap that nobody is
+ * waiting on (one restored after a reload), so the page can tell the courier it did not count.
+ */
+export type CourierNotice = { kind: 'reassigned' | 'ended' | 'rejected'; deliveryId?: string; type?: CourierEventType };
 
 export interface Courier {
   start(): Promise<void>;
@@ -57,7 +61,7 @@ export interface Courier {
 /** Why `start()` or `report()` failed. `code` is a problem code (`link_code_used`, `link_code_invalid`) or one of ours. */
 export class CourierError extends Error {
   constructor(
-    readonly code: 'link_code_used' | 'link_code_invalid' | 'no_session' | 'network' | 'session_ended' | 'rejected' | string,
+    readonly code: 'link_code_used' | 'link_code_invalid' | 'no_session' | 'network' | 'session_ended' | 'rejected' | 'not_started' | string,
     message?: string,
   ) {
     super(message ?? code);

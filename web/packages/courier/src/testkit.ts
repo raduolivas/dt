@@ -100,6 +100,9 @@ export function fakeGeolocation() {
   const g = {
     watches: 0,
     clears: 0,
+    asks: 0,
+    /** What getCurrentPosition answers: a good fix, or a permission error. */
+    askAnswer: 'fix' as 'fix' | 'denied',
     get watching() {
       return cb !== null;
     },
@@ -109,6 +112,15 @@ export function fakeGeolocation() {
         cb = ok;
         errCb = err ?? null;
         return g.watches;
+      },
+      getCurrentPosition: (ok: PositionCallback, err?: PositionErrorCallback | null) => {
+        g.asks++;
+        if (g.askAnswer === 'denied') err?.({ code: 1 } as GeolocationPositionError);
+        else
+          ok({
+            timestamp: Date.now(),
+            coords: { latitude: 1, longitude: 1, accuracy: 5, speed: null, heading: null },
+          } as unknown as GeolocationPosition);
       },
       clearWatch: () => {
         g.clears++;

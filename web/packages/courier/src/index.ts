@@ -34,6 +34,7 @@ const POLL_MS = 10_000;
 const POLL_EMPTY_MS = 20_000;
 const BACKLOG_GAP_MS = 1_000; // locations allow 1 batch/s: a backlog drains at that pace
 const BATCH_MAX = 50;
+const END_WAIT_MS = 5_000; // end() waits this long at most for the last flush and session/end
 
 type Listeners = {
   deliveries: Set<(d: readonly CourierDelivery[]) => void>;
@@ -51,6 +52,7 @@ export function createCourier(o: CourierOptions): Courier {
   let state: CourierState = { gps: 'off', network: 'online', buffered: 0, pendingTaps: 0, session: 'starting' };
   let deliveries: readonly CourierDelivery[] = [];
   let started = false;
+  let ready = false; // session established and the buffer loaded: report() may queue
   let over = false; // ended, expired or revoked: nothing runs any more
   let wantGps = false;
   let flushing = false;
@@ -242,12 +244,16 @@ export function createCourier(o: CourierOptions): Courier {
           return true;
         }
         if (r.status === 409) {
+          if (tap.waiters.length === 0) emit('notice', { kind: 'rejected', deliveryId, type });
           settle({ outcome: 'conflict' });
           void poll();
           return true;
         }
         if (r.status >= 500) return false;
-        settle(new CourierError(r.code ?? 'rejected')); // a tap the server refuses outright must not block the ones behind it
+        // A tap the server refuses outright must not block the ones behind it. With nobody waiting (it was restored
+        // after a reload) the page would never learn it did not count, so say so.
+        if (tap.waiters.length === 0) emit('notice', { kind: 'rejected', deliveryId, type });
+        settle(new CourierError(r.code ?? 'rejected'));
         return true;
       default:
         return false;
@@ -294,16 +300,19 @@ export function createCourier(o: CourierOptions): Courier {
       if (started || over) return;
       started = true;
       try {
+        const resumed = await session.init();
         await queue.load();
-        await session.init();
+        // Leftovers from an older shift must not go out under this one.
+        if (!resumed) for (const t of queue.clear()) for (const w of t.waiters) w.reject(new CourierError('session_ended'));
       } catch (e) {
         started = false;
-        if (!over) {
-          // A used or invalid code means this link is finished; a network error leaves start() to be called again.
-          if (e instanceof CourierError && e.code !== 'network') await finish('ended', false);
+        // Only a used or invalid link is final. Anything else (network, 429, 5xx) can be tried again.
+        if (!over && e instanceof CourierError && (e.code === 'link_code_used' || e.code === 'link_code_invalid')) {
+          await finish('ended', false);
         }
         throw e;
       }
+      ready = true;
       setState({ session: 'active' });
       if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible);
       if (typeof window !== 'undefined') window.addEventListener('online', onOnline);
@@ -312,6 +321,7 @@ export function createCourier(o: CourierOptions): Courier {
         if (typeof window !== 'undefined') window.removeEventListener('online', onOnline);
       };
       flushTimer = setInterval(() => void flush(), FLUSH_MS);
+      gps.ask(); // the permission prompt, once, even with nothing assigned yet
       void poll();
       void flush(); // taps and fixes left over from before a reload
     },
@@ -320,10 +330,19 @@ export function createCourier(o: CourierOptions): Courier {
       if (over) return;
       wantGps = false;
       gps.stop();
-      if (started) {
-        await flush(); // best effort: taps still waiting go out before the session closes
-        const token = await session.token();
-        if (token !== null) await client.call('POST', '/courier/session/end', { token });
+      // Closing must never wait for the network: only try the farewell when we are online with a usable token.
+      const token = ready ? session.readyToken() : null;
+      if (token !== null && state.network === 'online') {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const giveUp = new Promise<void>((r) => (timer = setTimeout(r, END_WAIT_MS)));
+        await Promise.race([
+          (async () => {
+            await flush(); // best effort: taps still waiting go out before the session closes
+            if (!over) await client.call('POST', '/courier/session/end', { token });
+          })(),
+          giveUp,
+        ]);
+        clearTimeout(timer);
       }
       await finish('ended', false);
     },
@@ -337,6 +356,7 @@ export function createCourier(o: CourierOptions): Courier {
 
     report(deliveryId, type, opts) {
       if (over) return Promise.reject(new CourierError('session_ended'));
+      if (!ready) return Promise.reject(new CourierError('not_started'));
       return new Promise<ReportResult>((resolve, reject) => {
         // A double tap joins the tap still waiting: one event_id, one transition.
         const tap =
