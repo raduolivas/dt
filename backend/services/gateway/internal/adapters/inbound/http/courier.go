@@ -85,7 +85,8 @@ func courierClaims(ctx context.Context) (courierjwt.Claims, bool) {
 // for locations, 1 KiB otherwise) → ClientIP(trusted) → [courier token
 // authentication, every route but the token one] → its rate buckets →
 // Validate (OpenAPI) → handler. The buckets are rl:courier:loc:<sid> (1/s,
-// burst 5), rl:courier:evt:<sid> (10/min) and, for a refresh token,
+// burst 5), rl:courier:evt:<sid> (10/min), rl:courier:read:<sid> (30/min, shared by the
+// delivery listing and the session end) and, for a refresh token,
 // rl:courier:tok:<sid> (10/min); a link code is charged to
 // rl:courier:ip:<ip> (20/min) by the handler, which sees the grant type, and
 // failed codes count. Responses carry Cache-Control: no-store. Call it once
@@ -119,12 +120,14 @@ func MountCourier(mux *http.ServeMux, d CourierDeps) {
 	}
 	routes := []route{
 		{method: "POST", path: "/v1/courier/token", limit: MaxCourierBodyBytes, h: a.token},
-		{method: "GET", path: "/v1/courier/deliveries", limit: MaxCourierBodyBytes, h: a.listDeliveries},
+		{method: "GET", path: "/v1/courier/deliveries", limit: MaxCourierBodyBytes, h: a.listDeliveries,
+			bucket: "rl:courier:read:", rate: app.CourierRead},
 		{method: "POST", path: "/v1/courier/locations", limit: MaxRelayBodyBytes, h: a.reportLocations,
 			scope: domain.ScopeLocationWrite, bucket: "rl:courier:loc:", rate: app.CourierLocations},
 		{method: "POST", path: "/v1/courier/deliveries/{id}/events", limit: MaxCourierBodyBytes, h: a.reportEvent,
 			scope: domain.ScopeStatusWrite, bucket: "rl:courier:evt:", rate: app.CourierEvents},
-		{method: "POST", path: "/v1/courier/session/end", limit: MaxCourierBodyBytes, h: a.endSession},
+		{method: "POST", path: "/v1/courier/session/end", limit: MaxCourierBodyBytes, h: a.endSession,
+			bucket: "rl:courier:read:", rate: app.CourierRead},
 	}
 	for _, rt := range routes {
 		var h http.Handler = rt.h

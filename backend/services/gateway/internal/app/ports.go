@@ -71,6 +71,9 @@ var (
 	// CourierEvents is applied per courier session to delivery events, keyed
 	// rl:courier:evt:<session id>.
 	CourierEvents = Limit{Rate: 10, Period: time.Minute, Burst: 10}
+	// CourierRead is applied per courier session to the delivery listing and
+	// the session end, keyed rl:courier:read:<session id>.
+	CourierRead = Limit{Rate: 30, Period: time.Minute, Burst: 30}
 	// CourierRefresh is applied per courier session to refresh-token
 	// exchanges, keyed rl:courier:tok:<session id>.
 	CourierRefresh = Limit{Rate: 10, Period: time.Minute, Burst: 10}

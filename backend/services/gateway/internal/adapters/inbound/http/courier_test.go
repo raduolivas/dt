@@ -209,8 +209,9 @@ func TestTokenGrantPairing(t *testing.T) {
 		"refresh_token with both":           `{"grant_type":"refresh_token","code":"abc","refresh_token":"` + res.Tokens.RefreshToken + `"}`,
 		"unknown grant (the schema's enum)": `{"grant_type":"password","code":"abc"}`,
 	} {
-		wantProblem(t, e.do(tokenReq(body)), http.StatusBadRequest, "validation_failed")
-		_ = name
+		t.Run(name, func(t *testing.T) {
+			wantProblem(t, e.do(tokenReq(body)), http.StatusBadRequest, "validation_failed")
+		})
 	}
 	// None of them touched the session: its refresh token still works.
 	if rec := e.do(tokenReq(`{"grant_type":"refresh_token","refresh_token":"` + res.Tokens.RefreshToken + `"}`)); rec.Code != http.StatusOK {
@@ -304,8 +305,9 @@ func TestLocationsValidation(t *testing.T) {
 		"bad latitude": `{"fixes":[{"t":"2026-10-20T11:59:58Z","lat":91,"lng":0,"accuracy_m":5}]}`,
 		"extra field":  `{"fixes":[{"t":"2026-10-20T11:59:58Z","lat":1,"lng":0,"accuracy_m":5}],"courier_id":"` + otherCou + `"}`,
 	} {
-		wantProblem(t, e.do(cReq("POST", "/v1/courier/locations", tok, body)), http.StatusBadRequest, "validation_failed")
-		_ = name
+		t.Run(name, func(t *testing.T) {
+			wantProblem(t, e.do(cReq("POST", "/v1/courier/locations", tok, body)), http.StatusBadRequest, "validation_failed")
+		})
 	}
 	if e.trk.count() != 0 {
 		t.Fatal("tracking called for an invalid batch")
@@ -562,4 +564,26 @@ var courierRoutes = []struct {
 	{"courier.report_locations", "POST", "/v1/courier/locations", fixBody, true, http.StatusOK},
 	{"courier.report_event", "POST", "/v1/courier/deliveries/" + delID + "/events", evtBody, true, http.StatusOK},
 	{"courier.end_session", "POST", "/v1/courier/session/end", "", true, http.StatusNoContent},
+}
+
+func TestReadRateLimited(t *testing.T) {
+	t.Parallel()
+	e := newCourierEdge(t, &burstLimiterMem{n: map[string]int{}})
+	tok := e.sdk(partnerTest).Tokens.AccessToken
+	for i := 1; i <= 30; i++ {
+		if rec := e.do(cReq("GET", "/v1/courier/deliveries", tok, "")); rec.Code != http.StatusOK {
+			t.Fatalf("call %d = %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	rec := e.do(cReq("GET", "/v1/courier/deliveries", tok, ""))
+	wantProblem(t, rec, http.StatusTooManyRequests, "rate_limited")
+	if rec.Header().Get("Retry-After") == "" {
+		t.Fatal("no Retry-After")
+	}
+	// The session end shares the bucket; another session is unaffected.
+	wantProblem(t, e.do(cReq("POST", "/v1/courier/session/end", tok, "")), http.StatusTooManyRequests, "rate_limited")
+	other := e.sdk(partnerOther).Tokens.AccessToken
+	if rec := e.do(cReq("POST", "/v1/courier/session/end", other, "")); rec.Code != http.StatusNoContent {
+		t.Fatalf("other session end = %d", rec.Code)
+	}
 }
