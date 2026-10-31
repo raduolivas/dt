@@ -8,6 +8,9 @@ test.beforeEach(async ({ context }) => {
   await ownClientIp(context);
 });
 
+// A smaller page than Desktop Chrome's 1280 × 720 keeps software GL on a GPU-less runner from starving the page.
+test.use({ viewport: { width: 800, height: 600 } });
+
 test('the demo page mounts <dt-tracking>, gets statuschange and delivered, and destroy() removes the canvas', async ({
   page,
 }) => {
@@ -33,9 +36,12 @@ test('the demo page mounts <dt-tracking>, gets statuschange and delivered, and d
   const changes = (await events())
     .filter((e) => e.type === 'statuschange')
     .map((e) => (e.detail as { status: string }).status);
+  // A starved page (software GL on a CI runner) can miss the stream's 5 s auth window; the client then reconnects and
+  // resyncs to the latest snapshot, skipping the states in between. Statuses must still only move forward.
+  const order = ['confirmed', 'courier_assigned', 'at_pickup', 'picked_up', 'arriving', 'delivered'];
   expect(changes[0]).toBe('confirmed');
-  expect(changes).toContain('picked_up');
   expect(changes.at(-1)).toBe('delivered');
+  expect(changes).toEqual([...new Set(changes)].sort((a, b) => order.indexOf(a) - order.indexOf(b)));
   expect((await events()).filter((e) => e.type === 'delivered')).toHaveLength(1);
   await expect(view.locator('.dt-card-final .dt-head')).toHaveText('Delivered');
 
