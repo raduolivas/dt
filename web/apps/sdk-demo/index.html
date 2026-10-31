@@ -39,7 +39,7 @@
 
       const token = q.get('token');
       if (token) {
-        await import(q.get('sdk') || 'http://localhost:8090/sdk/tracking/dev/tracking.js');
+        await import('http://localhost:8090/sdk/tracking/dev/tracking.js');
         const el = document.createElement('dt-tracking');
         el.setAttribute('token', token);
         el.setAttribute('lang', 'en');
@@ -53,11 +53,19 @@
         document.getElementById('destroy').addEventListener('click', () => el.destroy());
       }
 
-      const frame = q.get('frame');
-      if (frame) {
+      // Only the local stack's hosted page may be framed: an https URL on localhost with a /t/<token> path.
+      const frameUrl = (() => {
+        try {
+          const u = new URL(q.get('frame') ?? '');
+          return u.protocol === 'https:' && u.hostname === 'localhost' && u.pathname.startsWith('/t/') ? u : null;
+        } catch {
+          return null;
+        }
+      })();
+      if (frameUrl) {
         const f = document.createElement('iframe');
         f.title = 'Delivery tracking';
-        f.src = frame;
+        f.src = frameUrl.href;
         f.addEventListener('load', () => (demo.frame = 'load'));
         slots.appendChild(f);
       }
