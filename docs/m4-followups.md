@@ -187,6 +187,23 @@ decision, why, and what it costs if wrong. The build order was tasks 1-14, then 
   Before the PR, the owner is offered an interim fps check of the iPhone SE on the local stack over the LAN. If
   wrong: M4 merges before its staging gate; the gate then runs as a post-merge check, with fixes as follow-up pull
   requests.
+- **M4-R29:** the Task 16 docs commit was reviewed inside the final whole-branch review, not in its own task review.
+  It is docs only and the last commit. If wrong: a doc mistake is found later.
+- **M4-R30:** the plan said "inactive after 5 s of 503". The spec (§6.6, §4) wins: the viewer stays on "Getting your
+  delivery ready…" and keeps retrying (`Retry-After` for about 5 s, then backoff up to 30 s). Inactive only on 401 or
+  `revoked`. If wrong: a backend that is really gone shows the warming card for a long time instead of an end card.
+- **M4-R31:** gosec G705 in `idempotency.go` (older than M4) is fixed on this branch with a justified `//nolint`,
+  because `make ci` must be green. The replayed body is the handler's own response. If wrong: one suppression to
+  revisit.
+- **M4-R32:** the look baselines must pass on a GitHub run before merge (regenerated there if fonts differ). This needs
+  a push. If wrong: nothing (stricter than before).
+- **M4-R33:** the 3 s "context never came back" timer only runs while the page is visible. iOS drops contexts in
+  background tabs and gives them back on return. If wrong: a visible page whose context never returns falls back to
+  2D a little later.
+- **M4-R34:** the final fix wave also took small customer-visible items: one recovery try on WebSocket 4401, the
+  courier hidden when the link goes inactive mid-delivery, a size check for the hosted page, `statuschange` and
+  `delivered` when the first final snapshot arrives as inactive, and the branding wording in the guide. If wrong: a
+  slightly larger fix wave.
 
 ## Deferred minors, by area
 
