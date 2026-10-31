@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 
@@ -83,6 +84,12 @@ type Deps struct {
 	// and the courier-location relay). Nil answers those routes 503
 	// tracking_unavailable.
 	Tracking trackingv1connect.TrackingServiceClient
+	// CourierSessions starts, reads and ends courier sessions. Nil answers
+	// those routes 503 service_unavailable.
+	CourierSessions CourierSessionService
+	// CourierURLBase is the hosted courier page's base URL; a link session's
+	// link_url is <base>/s/<code>.
+	CourierURLBase string
 	// Log receives failures of the deliveries calls. Nil means slog.Default().
 	Log *slog.Logger
 }
@@ -94,6 +101,14 @@ type TrackingLinkIssuer interface {
 	Rotate(ctx context.Context, p domain.Principal, deliveryID string) (domain.TrackingLink, string, error)
 }
 
+// CourierSessionService is what the courier-session routes need; it is
+// satisfied by *app.CourierSessions.
+type CourierSessionService interface {
+	Start(ctx context.Context, p domain.Principal, courierID, mode string, expiresIn time.Duration) (app.StartResult, error)
+	Get(ctx context.Context, p domain.Principal, id string) (domain.CourierSession, error)
+	End(ctx context.Context, p domain.Principal, id, reason string) (domain.CourierSession, error)
+}
+
 // Routes is the public route table.
 func Routes(deps Deps) []Route {
 	log := deps.Log
@@ -103,6 +118,7 @@ func Routes(deps Deps) []Route {
 	d := &deliveriesAPI{c: deps.Deliveries, purger: deps.Idempotency, log: log,
 		links: deps.Links, trackingBase: strings.TrimRight(deps.TrackingURLBase, "/")}
 	t := &trackingAPI{c: deps.Tracking, log: log}
+	cs := &courierSessionsAPI{svc: deps.CourierSessions, urlBase: strings.TrimRight(deps.CourierURLBase, "/"), log: log}
 	secret := []domain.CredentialType{domain.CredentialSecretKey}
 	route := func(name, method, pattern string, scope domain.Scope, status int, h http.HandlerFunc) Route {
 		return Route{Name: name, Method: method, Pattern: pattern, Credentials: secret, Scope: scope,
@@ -125,6 +141,9 @@ func Routes(deps Deps) []Route {
 		route("deliveries.rotate_tracking_link", http.MethodPost, "/v1/deliveries/{id}/tracking-link/rotate", write, http.StatusOK, d.rotateTrackingLink),
 		route("deliveries.erase_personal_data", http.MethodDelete, "/v1/deliveries/{id}/personal-data", write, http.StatusOK, d.erasePersonalData),
 		route("couriers.upsert", http.MethodPut, "/v1/couriers/{external_id}", couriers, http.StatusOK, d.upsertCourier),
+		route("courier_sessions.create", http.MethodPost, "/v1/courier-sessions", couriers, http.StatusCreated, cs.create),
+		route("courier_sessions.get", http.MethodGet, "/v1/courier-sessions/{id}", couriers, http.StatusOK, cs.get),
+		route("courier_sessions.end", http.MethodDelete, "/v1/courier-sessions/{id}", couriers, http.StatusOK, cs.end),
 		route("deliveries.get_tracking", http.MethodGet, "/v1/deliveries/{id}/tracking", read, http.StatusOK, t.getTracking),
 		auditedRead(route("deliveries.list_trail", http.MethodGet, "/v1/deliveries/{id}/trail", read, http.StatusOK, t.listTrail)),
 		auditedRead(route("deliveries.list_proof_points", http.MethodGet, "/v1/deliveries/{id}/proof-points", read, http.StatusOK, t.listProofPoints)),

@@ -35,6 +35,12 @@ var pgStarting = make(chan struct{}, 2)
 // idempotency store over it.
 func idemStore(t *testing.T) *postgres.IdempotencyStore {
 	t.Helper()
+	return postgres.NewIdempotencyStore(idemPool(t), testBox(t))
+}
+
+// idemPool starts Postgres with the gateway schema and returns a pool on it.
+func idemPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
 	pg := func() *testkit.Postgres {
 		pgStarting <- struct{}{}
 		defer func() { <-pgStarting }()
@@ -50,7 +56,7 @@ func idemStore(t *testing.T) *postgres.IdempotencyStore {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	return postgres.NewIdempotencyStore(pool, testBox(t))
+	return pool
 }
 
 const idemSpec = `
