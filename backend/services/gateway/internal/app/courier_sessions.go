@@ -277,6 +277,24 @@ func (c *CourierSessions) Refresh(ctx context.Context, refresh string) (Tokens, 
 	return tokens, nil
 }
 
+// RefreshSession returns the id of the session refresh belongs to, current
+// or superseded, without changing anything: the token endpoint charges that
+// session's rate bucket before it rotates the token. ErrRefreshInvalid for
+// an unknown or malformed token.
+func (c *CourierSessions) RefreshSession(ctx context.Context, refresh string) (string, error) {
+	if !domain.ValidCourierRefreshToken(refresh) {
+		return "", ErrRefreshInvalid
+	}
+	found, err := c.Repo.FindByRefreshHash(ctx, c.Hasher.HashCourierRefresh(refresh))
+	if errors.Is(err, ErrNotFound) {
+		return "", ErrRefreshInvalid
+	}
+	if err != nil {
+		return "", fmt.Errorf("find refresh token: %w", err)
+	}
+	return found.ID, nil
+}
+
 // Authenticate verifies a courier access token and checks its session
 // against the deny-list. Every bad or revoked token is ErrUnauthenticated; a
 // deny-list that cannot be read is an error (fail closed).

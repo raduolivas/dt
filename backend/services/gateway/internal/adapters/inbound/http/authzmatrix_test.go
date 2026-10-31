@@ -24,6 +24,7 @@ import (
 	eventsv1 "github.com/raduolivas/dt/backend/gen/dt/events/v1"
 	trackingv1 "github.com/raduolivas/dt/backend/gen/dt/tracking/v1"
 	"github.com/raduolivas/dt/backend/pkg/apikey"
+	"github.com/raduolivas/dt/backend/pkg/courierjwt"
 	"github.com/raduolivas/dt/backend/pkg/viewerjwt"
 	"github.com/raduolivas/dt/backend/services/gateway/api"
 	httpapi "github.com/raduolivas/dt/backend/services/gateway/internal/adapters/inbound/http"
@@ -849,4 +850,121 @@ func TestViewerAuthorizationMatrix(t *testing.T) {
 			})
 		}
 	}
+}
+
+// TestCourierAuthorizationMatrix runs every courier route against every
+// credential: none, a secret key (test and live), a viewer token, a courier
+// token of another tenant or environment, an expired, a revoked and a
+// replaced one, and the courier's own. Only the courier's own token
+// authenticates; the others' tokens reach only their own data.
+func TestCourierAuthorizationMatrix(t *testing.T) {
+	t.Parallel()
+	type credential struct {
+		name  string
+		token func(t *testing.T, e *courierEdge) string
+	}
+	secret := func(env apikey.Environment) func(*testing.T, *courierEdge) string {
+		return func(t *testing.T, _ *courierEdge) string {
+			return mint(t, env, actor, domain.AllScopes...).raw
+		}
+	}
+	rejected := []credential{
+		{"no credential", func(*testing.T, *courierEdge) string { return "" }},
+		{"garbage", func(*testing.T, *courierEdge) string { return "not.a.jwt" }},
+		{"test secret key", secret(apikey.Test)},
+		{"live secret key", secret(apikey.Live)},
+		{"viewer token", func(t *testing.T, _ *courierEdge) string {
+			jwt, _, err := testSigner(t).Sign(viewerjwt.Claims{DeliveryID: delID, TenantID: tenantID, Env: "test", LinkID: "tl_01j9z3k8m2q4r6s8t0v2w4x6y8"}, viewerNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return jwt
+		}},
+		{"expired", func(t *testing.T, e *courierEdge) string {
+			jwt, _, err := e.signer.Sign(courierjwt.Claims{CourierID: couID, TenantID: tenantID, Env: "test", SessionID: sesMine, Source: "sdk"},
+				viewerNow.Add(-time.Hour))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return jwt
+		}},
+		{"revoked", func(t *testing.T, e *courierEdge) string {
+			res := e.sdk(partnerTest)
+			if _, err := e.svc.End(context.Background(), partnerTest, res.Session.ID, "partner"); err != nil {
+				t.Fatal(err)
+			}
+			return res.Tokens.AccessToken
+		}},
+		{"replaced by a newer session", func(t *testing.T, e *courierEdge) string {
+			old := e.sdk(partnerTest)
+			e.sdk(partnerTest)
+			return old.Tokens.AccessToken
+		}},
+	}
+	for _, rt := range courierRoutes {
+		if !rt.bearer {
+			continue
+		}
+		for _, c := range rejected {
+			t.Run(rt.name+"/"+c.name, func(t *testing.T) {
+				t.Parallel()
+				e := newCourierEdge(t, nil)
+				rec := e.do(cReq(rt.method, rt.path, c.token(t, e), rt.body))
+				wantProblem(t, rec, http.StatusUnauthorized, "unauthenticated")
+				if e.trk.count() != 0 || e.dels.count() != 0 {
+					t.Fatal("a refused credential reached a service")
+				}
+			})
+		}
+		t.Run(rt.name+"/courier", func(t *testing.T) {
+			t.Parallel()
+			e := newCourierEdge(t, nil)
+			if rec := e.do(cReq(rt.method, rt.path, e.sdk(partnerTest).Tokens.AccessToken, rt.body)); rec.Code != rt.success {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, rt.success, rec.Body.String())
+			}
+		})
+	}
+
+	// A valid token of another tenant, or of the same tenant's other
+	// environment, is authenticated but sees nothing of the test
+	// environment's data: its scope is its own.
+	for name, p := range map[string]domain.Principal{"another tenant": partnerOther, "the other environment": partnerLive} {
+		t.Run("foreign/"+name, func(t *testing.T) {
+			t.Parallel()
+			e := newCourierEdge(t, nil)
+			tok := e.sdk(p).Tokens.AccessToken
+			wantProblem(t, e.do(cReq("POST", "/v1/courier/deliveries/"+delID+"/events", tok, evtBody)), http.StatusNotFound, "not_found")
+			rec := e.do(cReq("GET", "/v1/courier/deliveries", tok, ""))
+			if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"deliveries":[]}` {
+				t.Fatalf("list = %d: %s", rec.Code, rec.Body.String())
+			}
+			if e.do(cReq("POST", "/v1/courier/locations", tok, fixBody)).Code != http.StatusOK {
+				t.Fatal("locations refused")
+			}
+			ing := e.trk.last().(*trackingv1.IngestRequest)
+			wantEnv := eventsv1.Environment_ENVIRONMENT_TEST
+			if p.Env == domain.EnvLive {
+				wantEnv = eventsv1.Environment_ENVIRONMENT_LIVE
+			}
+			if ing.GetScope().GetTenantId() != p.TenantID || ing.GetScope().GetEnvironment() != wantEnv {
+				t.Fatalf("ingest scope = %v", ing.GetScope())
+			}
+			for _, c := range e.dels.calls {
+				if c == "event" {
+					t.Fatal("ReportEvent reached for a delivery outside the token's scope")
+				}
+			}
+		})
+	}
+
+	// The token route takes no bearer: whatever Authorization says is ignored.
+	t.Run("courier.token/ignores Authorization", func(t *testing.T) {
+		t.Parallel()
+		e := newCourierEdge(t, nil)
+		res := e.sdk(partnerTest)
+		body := `{"grant_type":"refresh_token","refresh_token":"` + res.Tokens.RefreshToken + `"}`
+		if rec := e.do(cReq("POST", "/v1/courier/token", mint(t, apikey.Live, actor, domain.AllScopes...).raw, body)); rec.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+	})
 }

@@ -57,6 +57,10 @@ type fakeDeliveries struct {
 	outcome string
 	courier *deliveriesv1.Courier
 	created bool
+	// open maps "tenant/env/courier" to that courier's open deliveries (the
+	// M5 courier routes; none by default). nextActions answers ReportEvent.
+	open        map[string][]*deliveriesv1.CourierDelivery
+	nextActions []string
 	// fail, when set, makes every call fail like the service would.
 	fail func(ctx context.Context) error
 }
@@ -144,7 +148,7 @@ func (f *fakeDeliveries) ReportEvent(ctx context.Context, r *deliveriesv1.Report
 	if err := f.rec(ctx, "event", r); err != nil {
 		return nil, err
 	}
-	return &deliveriesv1.ReportEventResponse{Delivery: f.del, Outcome: f.outcome}, nil
+	return &deliveriesv1.ReportEventResponse{Delivery: f.del, Outcome: f.outcome, NextActions: f.nextActions}, nil
 }
 
 func (f *fakeDeliveries) CancelDelivery(ctx context.Context, r *deliveriesv1.CancelDeliveryRequest) (*deliveriesv1.CancelDeliveryResponse, error) {
@@ -168,8 +172,7 @@ func (f *fakeDeliveries) UpsertCourier(ctx context.Context, r *deliveriesv1.Upse
 	return &deliveriesv1.UpsertCourierResponse{Courier: f.courier, Created: f.created}, nil
 }
 
-// GetCourier and ListCourierDeliveries are stubs; the M5 courier routes that
-// call them are tested with their own fakes.
+// GetCourier is a stub. ListCourierDeliveries answers from f.open.
 func (f *fakeDeliveries) GetCourier(ctx context.Context, r *deliveriesv1.GetCourierRequest) (*deliveriesv1.GetCourierResponse, error) {
 	if err := f.rec(ctx, "get_courier", r); err != nil {
 		return nil, err
@@ -181,7 +184,11 @@ func (f *fakeDeliveries) ListCourierDeliveries(ctx context.Context, r *deliverie
 	if err := f.rec(ctx, "list_courier_deliveries", r); err != nil {
 		return nil, err
 	}
-	return &deliveriesv1.ListCourierDeliveriesResponse{}, nil
+	sc := r.GetScope()
+	key := sc.GetTenantId() + "/" + sc.GetEnvironment().String() + "/" + r.GetCourierId()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return &deliveriesv1.ListCourierDeliveriesResponse{Deliveries: f.open[key]}, nil
 }
 
 // rpcFail is what the real service returns: a Connect error plus a dt-code

@@ -1399,7 +1399,7 @@ paths:
                       mode: link
                       status: pending_link
                       started_at: '2026-10-31T08:00:00Z'
-                      expires_at: '2026-10-31T16:00:00Z'
+                      expires_at: null
                       ended_at: null
                       end_reason: null
                       last_seen_at: null
@@ -3044,9 +3044,11 @@ components:
         started_at:
           type: string
           format: date-time
+          description: When the session started; for `pending_link`, the creation time.
         expires_at:
           type: [string, 'null']
           format: date-time
+          description: When the session ends; `null` until the link is exchanged.
         ended_at:
           type: [string, 'null']
           format: date-time

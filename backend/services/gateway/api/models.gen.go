@@ -689,7 +689,9 @@ type CourierSession struct {
 	CourierId CourierId                `json:"courier_id"`
 	EndReason *CourierSessionEndReason `json:"end_reason"`
 	EndedAt   *time.Time               `json:"ended_at"`
-	ExpiresAt *time.Time               `json:"expires_at"`
+
+	// ExpiresAt When the session ends; `null` until the link is exchanged.
+	ExpiresAt *time.Time `json:"expires_at"`
 
 	// Id Examples: cs_01j9z3k8m2q4r6s8t0v2w4x6y8
 	Id CourierSessionId `json:"id"`
@@ -698,8 +700,10 @@ type CourierSession struct {
 	LastSeenAt *time.Time `json:"last_seen_at"`
 
 	// Mode `sdk`: tokens for the `@dt/courier` SDK in your app. `link`: a one-time link to the DT courier page.
-	Mode      CourierSessionMode `json:"mode"`
-	StartedAt time.Time          `json:"started_at"`
+	Mode CourierSessionMode `json:"mode"`
+
+	// StartedAt When the session started; for `pending_link`, the creation time.
+	StartedAt time.Time `json:"started_at"`
 
 	// Status `pending_link`: a link session whose code is not used yet.
 	Status CourierSessionStatus `json:"status"`

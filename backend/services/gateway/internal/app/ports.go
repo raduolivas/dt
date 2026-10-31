@@ -65,6 +65,18 @@ var (
 	// RelayTenant is the relay's ceiling per tenant and environment, keyed
 	// rl:relay:ten:<tenant id>:<env>.
 	RelayTenant = Limit{Rate: 500, Period: time.Second, Burst: 1000}
+	// CourierLocations is applied per courier session to POST /courier/locations,
+	// keyed rl:courier:loc:<session id>.
+	CourierLocations = Limit{Rate: 1, Period: time.Second, Burst: 5}
+	// CourierEvents is applied per courier session to delivery events, keyed
+	// rl:courier:evt:<session id>.
+	CourierEvents = Limit{Rate: 10, Period: time.Minute, Burst: 10}
+	// CourierRefresh is applied per courier session to refresh-token
+	// exchanges, keyed rl:courier:tok:<session id>.
+	CourierRefresh = Limit{Rate: 10, Period: time.Minute, Burst: 10}
+	// CourierLinkIP is applied per client IP to link-code exchanges, failed
+	// guesses included, keyed rl:courier:ip:<client ip>.
+	CourierLinkIP = Limit{Rate: 20, Period: time.Minute, Burst: 20}
 )
 
 // CourierSessionStore keeps courier sessions (Postgres). Only hashes of link

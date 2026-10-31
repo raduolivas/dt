@@ -1088,9 +1088,15 @@ export interface components {
             courier_id: components["schemas"]["CourierId"];
             mode: components["schemas"]["CourierSessionMode"];
             status: components["schemas"]["CourierSessionStatus"];
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description When the session started; for `pending_link`, the creation time.
+             */
             started_at: string;
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description When the session ends; `null` until the link is exchanged.
+             */
             expires_at: string | null;
             /** Format: date-time */
             ended_at: string | null;

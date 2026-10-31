@@ -28,6 +28,7 @@ import (
 	"github.com/raduolivas/dt/backend/gen/dt/tracking/v1/trackingv1connect"
 	"github.com/raduolivas/dt/backend/pkg/apikey"
 	"github.com/raduolivas/dt/backend/pkg/bootstrap"
+	"github.com/raduolivas/dt/backend/pkg/courierjwt"
 	"github.com/raduolivas/dt/backend/pkg/httpx"
 	"github.com/raduolivas/dt/backend/pkg/nightly"
 	"github.com/raduolivas/dt/backend/pkg/outbox"
@@ -36,6 +37,7 @@ import (
 	"github.com/raduolivas/dt/backend/pkg/viewerjwt"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/adapters/inbound/consumer"
 	httpapi "github.com/raduolivas/dt/backend/services/gateway/internal/adapters/inbound/http"
+	deliveriesadapter "github.com/raduolivas/dt/backend/services/gateway/internal/adapters/outbound/deliveries"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/adapters/outbound/keyhash"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/adapters/outbound/postgres"
 	redislimit "github.com/raduolivas/dt/backend/services/gateway/internal/adapters/outbound/redis"
@@ -96,6 +98,15 @@ func run(ctx context.Context, ready func(addr string)) error {
 	if err != nil {
 		return fmt.Errorf("gateway: config: %w", err)
 	}
+	// Courier tokens (Ed25519, a key set of their own) and courier links.
+	courierSigner, err := courierjwt.ParseKeys(os.Getenv("COURIER_SIGNING_KEYS"), os.Getenv("COURIER_SIGNING_KEY_CURRENT"))
+	if err != nil {
+		return fmt.Errorf("gateway: config: COURIER_SIGNING_KEYS/COURIER_SIGNING_KEY_CURRENT: %w", err)
+	}
+	courierBase, err := parseURLBase("COURIER_URL_BASE", os.Getenv("COURIER_URL_BASE"))
+	if err != nil {
+		return fmt.Errorf("gateway: config: %w", err)
+	}
 	trackingRPC, err := newTrackingClient(os.Getenv("TRACKING_RPC_URL"), os.Getenv("INTERNAL_RPC_TOKEN"), clientTLS)
 	if err != nil {
 		return fmt.Errorf("gateway: config: %w", err)
@@ -128,6 +139,10 @@ func run(ctx context.Context, ready func(addr string)) error {
 		Setup: func(ctx context.Context, d bootstrap.Deps, mux *http.ServeMux) ([]bootstrap.Worker, error) {
 			// ACCOUNTS belongs to the accounts service; the consumer waits for it.
 			js.Store(&d.JS)
+			// The gateway owns GATEWAY (courier.session_*) and relays its outbox to it.
+			if err := outbox.EnsureStream(ctx, d.JS, outbox.StreamGateway); err != nil {
+				return nil, err
+			}
 			clock := systemClock{}
 			keys := postgres.New(d.DB)
 			limiter := redislimit.NewLimiter(d.Redis)
@@ -145,8 +160,14 @@ func run(ctx context.Context, ready func(addr string)) error {
 			})
 			httpapi.MountTrackPage(mux, httpapi.TrackPageDeps{Page: &app.TrackPage{Links: links, Settings: settings},
 				Config: pageCfg, Limiter: limiter, TrustedProxies: trusted, Log: d.Log})
+			courierSessions := &app.CourierSessions{Repo: postgres.NewCourierSessionStore(d.DB), Hasher: keyhash.New(pepper),
+				Signer: courierSigner, Deny: redislimit.NewCourierDenyList(d.Redis), Couriers: deliveriesadapter.NewCouriers(deliveries),
+				Audit: audit, RequestID: httpx.RequestIDFrom, Clock: clock, Log: d.Log}
+			httpapi.MountCourier(mux, httpapi.CourierDeps{Sessions: courierSessions, Deliveries: deliveries, Tracking: trackingRPC,
+				Limiter: limiter, TrustedProxies: trusted, Clock: clock, Log: d.Log})
 			httpapi.Mount(mux, httpapi.Routes(httpapi.Deps{Deliveries: deliveries, Idempotency: idem, Log: d.Log,
-				Links: links, TrackingURLBase: trackingBase, Tracking: trackingRPC}), httpapi.Middleware{
+				Links: links, TrackingURLBase: trackingBase, Tracking: trackingRPC,
+				CourierSessions: courierSessions, CourierURLBase: courierBase}), httpapi.Middleware{
 				Auth:           &app.Authenticator{Keys: keys, Hasher: keyhash.New(pepper), Clock: clock},
 				TrustedProxies: trusted,
 				Log:            d.Log,
@@ -187,7 +208,8 @@ func run(ctx context.Context, ready func(addr string)) error {
 			retention := &app.AuditRetention{Store: audit, Clock: clock, Log: d.Log}
 			linkRetention := &nightly.Job{Name: "gateway_retention", Lease: nightly.NewPostgresLease(d.DB, "gateway_retention"),
 				Holder: holder, Do: links.RunRetention, Log: d.Log}
-			return []bootstrap.Worker{consume, consumeTenants, consumeDeliveries, watchLag, sweeper.Run, retention.Run, linkRetention.Run}, nil
+			relay := &outbox.Relay{Pool: d.DB, JS: d.JS, Log: d.Log}
+			return []bootstrap.Worker{relay.Run, consume, consumeTenants, consumeDeliveries, watchLag, sweeper.Run, retention.Run, linkRetention.Run}, nil
 		},
 	})
 }
@@ -240,13 +262,18 @@ func rpcClient(name, baseURL, token string, tlsCfg *tls.Config, timeout time.Dur
 	return connect.NewClient(connecthttp.NewTransport(hc, baseURL), auth), nil
 }
 
-// parseTrackingURLBase checks TRACKING_URL_BASE: an absolute http(s) URL
-// without query or fragment; a trailing slash is dropped.
+// parseTrackingURLBase checks TRACKING_URL_BASE (see parseURLBase).
 func parseTrackingURLBase(s string) (string, error) {
+	return parseURLBase("TRACKING_URL_BASE", s)
+}
+
+// parseURLBase checks the base URL in env var name: an absolute http(s) URL
+// without query or fragment; a trailing slash is dropped.
+func parseURLBase(name, s string) (string, error) {
 	u, err := url.Parse(s)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.RawQuery != "" ||
 		u.Fragment != "" || u.User != nil {
-		return "", errors.New("TRACKING_URL_BASE must be an http(s) URL without query, fragment or credentials")
+		return "", errors.New(name + " must be an http(s) URL without query, fragment or credentials")
 	}
 	return strings.TrimRight(s, "/"), nil
 }

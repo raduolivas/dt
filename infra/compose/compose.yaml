@@ -109,6 +109,15 @@ services:
       # The public half is served at /.well-known/jwks.json.
       VIEWER_SIGNING_KEYS: "vw1:ZGV2LW9ubHktbm90LWEtc2VjcmV0LXZpZXdlci1rMDA=" # gitleaks:allow (dev-only placeholder)
       VIEWER_SIGNING_KEY_CURRENT: "vw1"
+      # Dev-only placeholder, never a real secret: the Ed25519 seed (id "cr1")
+      # that signs courier access tokens, base64 of
+      # "dev-only-not-a-secret-courier-k0". Not published in the JWKS: only the
+      # gateway verifies courier tokens.
+      COURIER_SIGNING_KEYS: "cr1:ZGV2LW9ubHktbm90LWEtc2VjcmV0LWNvdXJpZXItazA=" # gitleaks:allow (dev-only placeholder)
+      COURIER_SIGNING_KEY_CURRENT: "cr1"
+      # Courier links are <base>/s/<code>; the courier page is served here by
+      # the courier-page service (M5 Task 10).
+      COURIER_URL_BASE: "http://courier.localhost:8092"
       # Tracking links are <base>/t/<token>.
       TRACKING_URL_BASE: "http://localhost:8080"
       # The hosted page's assets and map (served by the cdn service, Task 14),

@@ -517,3 +517,27 @@ func TestExchangeAuditsStart(t *testing.T) {
 		t.Fatalf("audit = %+v", e)
 	}
 }
+
+func TestRefreshSessionNamesCurrentAndSupersededTokens(t *testing.T) {
+	f := newCourierFixture(t)
+	ctx := context.Background()
+	r := f.startSDK(t, cou1)
+	t2, err := f.svc.Refresh(ctx, r.Tokens.RefreshToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tok := range map[string]string{"current": t2.RefreshToken, "superseded": r.Tokens.RefreshToken} {
+		if id, err := f.svc.RefreshSession(ctx, tok); err != nil || id != r.Session.ID {
+			t.Errorf("%s: id = %q, err = %v, want %q", name, id, err, r.Session.ID)
+		}
+	}
+	// It changes nothing: the current token still rotates once.
+	if _, err := f.svc.Refresh(ctx, t2.RefreshToken); err != nil {
+		t.Fatalf("refresh after lookup: %v", err)
+	}
+	for _, bad := range []string{strings.Repeat("A", 43), "short"} {
+		if _, err := f.svc.RefreshSession(ctx, bad); !errors.Is(err, app.ErrRefreshInvalid) {
+			t.Errorf("RefreshSession(%q) = %v, want ErrRefreshInvalid", bad, err)
+		}
+	}
+}
