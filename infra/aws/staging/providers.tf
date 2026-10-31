@@ -20,3 +20,25 @@ provider "aws" {
     }
   }
 }
+
+# CloudFront takes its certificate only from ACM in us-east-1 (the region
+# lock SCP allows acm:* there). Only aws_acm_certificate.cdn and its
+# validation use this alias; same account, role and tags as the default.
+provider "aws" {
+  alias               = "us_east_1"
+  region              = "us-east-1"
+  allowed_account_ids = [var.staging_account_id]
+
+  assume_role {
+    role_arn     = "arn:aws:iam::${var.staging_account_id}:role/OrganizationAccountAccessRole"
+    session_name = "dt-staging-tofu"
+  }
+
+  default_tags {
+    tags = {
+      project   = "dt"
+      stack     = "staging"
+      managedby = "opentofu"
+    }
+  }
+}

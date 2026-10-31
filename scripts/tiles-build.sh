@@ -33,6 +33,9 @@ case "$target" in
     # Only z14 and only the layers the renderer draws, to stay under the size limit.
     minzoom=14
     layers="transportation,building,water,park,landuse,landcover"
+    # Tiny input: everything fits in a 2 GB heap.
+    heap=2g
+    storage=ram
     ;;
   nl)
     pbf_url="https://download.geofabrik.de/europe/netherlands-latest.osm.pbf"
@@ -42,6 +45,10 @@ case "$target" in
     bounds_label="planet extract"
     minzoom=0
     layers="transportation,building,water,park,landuse,landcover,waterway,boundary,place"
+    # The 1.4 GB extract does not fit a 2 GB heap with in-heap storage (OutOfMemoryError in osm_pass1): node
+    # locations and features go to memory-mapped temp files instead, so a 6-8 GB machine builds it.
+    heap="${TILES_HEAP:-3g}"
+    storage=mmap
     ;;
   *) echo "usage: $0 fixture|nl" >&2; exit 2 ;;
 esac
@@ -65,10 +72,10 @@ tmp="$cache/out-$target.pmtiles"
 rm -f "$tmp"
 # --network host: Planetiler downloads its auxiliary sources itself, and on some dev machines the default Docker
 # bridge network has no DNS. This is a dev script only.
-docker run --rm --network host -e JAVA_TOOL_OPTIONS=-Xmx2g -v "$cache:/data" -w /data "$PLANETILER_IMAGE" \
+docker run --rm --network host -e JAVA_TOOL_OPTIONS="-Xmx$heap" -v "$cache:/data" -w /data "$PLANETILER_IMAGE" \
   --osm-path="/data/$pbf" --output="/data/out-$target.pmtiles" \
   --download --force --maxzoom=14 --minzoom="$minzoom" --only-layers="$layers" "${bounds_args[@]}" \
-  --nodemap-type=sparsearray --storage=ram
+  --nodemap-type=sparsearray --storage="$storage"
 
 if [ "$target" = fixture ]; then
   size="$(stat -c %s "$tmp")"

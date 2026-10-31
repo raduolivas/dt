@@ -55,13 +55,17 @@ e2e: dtctl ## Run the Playwright end-to-end tests against the running stack (aft
 	DTCTL=$(CURDIR)/$(DTCTL) pnpm -C web --filter @dt/e2e e2e $(E2E_ARGS)
 
 # ---- map tiles --------------------------------------------------------------
-.PHONY: tiles-fixture tiles-nl
+.PHONY: tiles-fixture tiles-nl tiles-upload
 
 tiles-fixture: ## Build the committed Amsterdam z14 test fixture with Planetiler (Docker)
 	scripts/tiles-build.sh fixture
 
 tiles-nl: ## Build the Netherlands z14 PMTiles into build/tiles/nl.pmtiles (large)
 	scripts/tiles-build.sh nl
+
+# From a management-account Identity Center Admin session; see docs/runbooks/tiles.md.
+tiles-upload: ## Owner only: upload build/tiles/nl.pmtiles to the staging CDN (tiles/nl.pmtiles) and invalidate it
+	scripts/tiles-upload.sh
 
 # ---- contracts --------------------------------------------------------------
 .PHONY: gen lint-contracts

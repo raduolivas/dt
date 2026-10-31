@@ -38,11 +38,14 @@ export interface Tracking {
 }
 
 // Defaults baked in at build time per environment (VITE_DT_API, VITE_DT_TILES); without them, the local stack and
-// the OpenFreeMap tiles used in development.
-const env = import.meta.env as Record<string, string | undefined>;
-export const DEFAULT_API = env.VITE_DT_API || 'http://localhost:8080/v1';
-export const DEFAULT_TILES: TileSourceSpec = env.VITE_DT_TILES
-  ? { kind: 'pmtiles', url: env.VITE_DT_TILES }
+// the OpenFreeMap tiles used in development. Each is read as `import.meta.env.VITE_DT_*` (the cast is erased), so Vite
+// replaces it with a literal and the minifier drops the unused fallback: a staging build carries no localhost URL
+// (scripts/web-staging-build.sh checks that).
+type BuildEnv = Record<string, string | undefined>;
+export const DEFAULT_API = (import.meta.env as BuildEnv).VITE_DT_API || 'http://localhost:8080/v1';
+const BUILD_TILES = (import.meta.env as BuildEnv).VITE_DT_TILES;
+export const DEFAULT_TILES: TileSourceSpec = BUILD_TILES
+  ? { kind: 'pmtiles', url: BUILD_TILES }
   : { kind: 'zxy', tilejson: 'https://tiles.openfreemap.org/planet' };
 
 const CHEVRON =

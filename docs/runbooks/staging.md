@@ -104,6 +104,10 @@ The tenant settings are what `scripts/smoke-m3.sh` expects when it runs with `DT
   `cd backend/tools/latency && DT_API_KEY=<key> go run . -api https://api.staging.deliveryontrack.io -stream https://api.staging.deliveryontrack.io -deliveries 20 -viewers 5 -duration 2m` reports p95 < 1000 ms.
 - After the first full day, Cost Explorer's month-end forecast stays under the budget (about EUR 82 before VAT).
 
+### 12. Web CDN, map tiles and the hosted tracking page (M4)
+
+`infra/aws/staging/cdn.tf` adds the CDN (`cdn.staging.deliveryontrack.io`), the `track.staging.deliveryontrack.io` host and the gateway's `TRACKING_PAGE_*` settings; the deploy builds and uploads the page and the SDK. Owner steps (apply, `make tiles-upload`, first deploy, check on a phone): `docs/runbooks/tiles.md`.
+
 ## Operating staging
 
 ### Working hours
@@ -126,9 +130,10 @@ What the schedule implies:
 
 `.github/workflows/deploy-staging.yml` runs after the `ci` workflow succeeds on a push to `main`, in the `staging` environment, with the OIDC role `dt-deploy-staging` (no AWS keys anywhere):
 
+0. Builds the hosted tracking page and the SDK with the staging API and tiles (`scripts/web-staging-build.sh`, before the AWS credentials are configured), and, once credentials are in place, uploads them to `s3://dt-staging-cdn-<account>/page/<sha>/` and `sdk/tracking/<sha>/` with `Cache-Control: public, max-age=31536000, immutable` (the deploy role may only `s3:PutObject` under `page/*` and `sdk/*`; old prefixes stay, so open pages keep working).
 1. Builds `linux/amd64` images, pushes them to ECR as `dt-<svc>:<commit sha>` (immutable tags, scan on push) and signs them with cosign keyless (GitHub OIDC, Rekor); the signature is verified before going on. A re-run skips images that exist and only signs what is unsigned.
 2. Runs `dt-staging-db-bootstrap` (creates roles and schemas on a fresh database, sets the role passwords; idempotent), then `dt-staging-migrate-<svc>` for each service (`MIGRATIONS=only`, as `mig_<svc>`), each run by its full task-definition ARN, waited for and required to exit 0. The bootstrap is one transaction: a failure leaves nothing behind and the next run starts clean. Only these one-off tasks get the `mig_<svc>` (schema owner) URL; the services run with `MIGRATIONS=skip` and only their `svc_<svc>` URL.
-3. Registers new task definition revisions (the latest revision of each family with only the image changed) and updates the services. Deployment circuit breaker with rollback is on.
+3. Registers new task definition revisions (the latest revision of each family with only the image changed, and the gateway's `TRACKING_PAGE_BASE` set to this deploy's `page/<sha>/`) and updates the services. Deployment circuit breaker with rollback is on.
 4. Waits until the services are stable and checks that each one runs the new revision (a rollback fails the job), then `GET /livez`.
 5. Runs `scripts/smoke-m3.sh` against `https://api.staging.deliveryontrack.io` with `DT_SMOKE_KEY` = `STAGING_TEST_KEY` (public API only, no dtctl).
 
@@ -191,8 +196,10 @@ Assumptions: 21.75 weekdays per month; host up 12 h per weekday (261 h), databas
 | CloudWatch: logs 2 GB, 4 alarms, 1 agent metric | 0.63/GB ingest; 0.10/alarm metric; 0.30/metric | 1.96 |
 | ECR storage (about 2 GB: 30 artifacts per repository) | 0.10/GB-mo | 0.20 |
 | S3 OSRM data (about 2 GB) and requests; S3 gateway endpoint | 0.0245/GB-mo; endpoint free | 0.10 |
-| ACM certificate, EventBridge Scheduler, SNS email, NAT (none) | free | 0.00 |
-| **Staging total** | | **56.08 (EUR 48-53)** |
+| S3 CDN bucket (tiles about 0.5 GB, page and SDK about 2.5 MB per deploy) | 0.0245/GB-mo | 0.05 |
+| CloudFront `cdn.staging` (team and test traffic) | always-free tier: 1 TB out, 10 M requests per month | 0.00 |
+| ACM certificates (ALB and CloudFront), EventBridge Scheduler, SNS email, NAT (none) | free | 0.00 |
+| **Staging total** | | **56.13 (EUR 48-53)** |
 | Bootstrap (KMS keys, S3, CloudTrail; aws-account-setup runbook) | | EUR 3-4 |
 | **Everything, before VAT** | | **about EUR 51-57** |
 | Everything including 21 % VAT | | about EUR 62-69 |

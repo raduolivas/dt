@@ -32,10 +32,22 @@ variable "api_hostname" {
   default     = "api.staging.deliveryontrack.io"
 }
 
-variable "tracking_url_base" {
-  description = "Base of tracking links (<base>/t/<token>); the hosted page arrives in M4."
+variable "track_hostname" {
+  description = "Hostname of the hosted tracking page: tracking links are https://<this>/t/<token> (TRACKING_URL_BASE). A SAN on the ALB certificate, routed to the gateway."
   type        = string
-  default     = "https://track.staging.deliveryontrack.io"
+  default     = "track.staging.deliveryontrack.io"
+}
+
+variable "cdn_hostname" {
+  description = "CloudFront hostname of the web CDN (page/, sdk/, tiles/ in the CDN bucket)."
+  type        = string
+  default     = "cdn.staging.deliveryontrack.io"
+}
+
+variable "tiles_object" {
+  description = "Key of the map tiles in the CDN bucket, uploaded by the owner with make tiles-upload."
+  type        = string
+  default     = "tiles/nl.pmtiles"
 }
 
 variable "vpc_cidr" {
