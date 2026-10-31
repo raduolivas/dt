@@ -29,6 +29,11 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
-    }
+    },
+    "./framing": {
+      "types": "./src/view/framing.ts",
+      "import": "./src/view/framing.ts"
+    },
+    "./scene.css": "./src/view/scene.css"
   }
 }
