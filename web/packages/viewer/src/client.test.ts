@@ -10,7 +10,11 @@ const T0 = Date.parse('2026-10-22T14:00:00Z');
 const snap = (version: number) => ({ version, status: 'out_for_delivery' }) as unknown as TrackingSnapshot;
 const iso = (ms: number) => new Date(ms).toISOString();
 const json = (body: unknown, init: ResponseInit = {}) =>
-  new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' }, ...init });
+  new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+    ...init,
+  });
 const session = (token: string, expMs: number, version = 1) =>
   json({ viewer_token: token, expires_at: iso(expMs), snapshot: snap(version), branding: null });
 
@@ -108,12 +112,15 @@ describe('session and websocket', () => {
     const enc = new TextEncoder();
     const body = new ReadableStream<Uint8Array>({
       start(c) {
-        c.enqueue(enc.encode(`event: snapshot\ndata: ${JSON.stringify({ type: 'snapshot', data: snap(2) })}\n\n`));
+        c.enqueue(
+          enc.encode(`event: snapshot\ndata: ${JSON.stringify({ type: 'snapshot', data: snap(2) })}\n\n`),
+        );
       },
     });
     const { viewer, states, calls } = make({
       'POST /tracking/session': () => session('VT1', T0 + 900_000),
-      'GET /tracking/stream/sse': () => new Response(body, { headers: { 'Content-Type': 'text/event-stream' } }),
+      'GET /tracking/stream/sse': () =>
+        new Response(body, { headers: { 'Content-Type': 'text/event-stream' } }),
       'GET /tracking/snapshot': () => json(snap(1)),
     });
     viewer.start();
@@ -145,16 +152,57 @@ describe('503 warming', () => {
     expect(last(states)).toMatchObject({ kind: 'live' });
   });
 
-  it('gives up with inactive after 5 s of 503', async () => {
-    const { viewer, states } = make({
-      'POST /tracking/session': () => new Response('{}', { status: 503, headers: { 'Retry-After': '1' } }),
+  const unavailable = () => new Response('{}', { status: 503, headers: { 'Retry-After': '1' } });
+  /** Advance the fake timers and the injected clock together, in small steps. */
+  const advance = async (ms: number, step = 50) => {
+    for (let t = 0; t < ms; t += step) {
+      clock += step;
+      await tick(step);
+    }
+  };
+
+  it('stays warming through a long 503 outage and never goes inactive (R30)', async () => {
+    const { viewer, states, calls } = make({ 'POST /tracking/session': unavailable });
+    viewer.start();
+    await advance(120_000, 250);
+    expect(last(states)).toEqual({ kind: 'warming' });
+    expect(states.some((s) => s.kind === 'inactive')).toBe(false);
+    expect(calls.length).toBeGreaterThan(10);
+    viewer.stop();
+  });
+
+  it('follows Retry-After for about 5 s, then backs off with full jitter capped at 30 s', async () => {
+    const at: number[] = [];
+    const { viewer } = make({
+      'POST /tracking/session': () => {
+        at.push(clock - T0);
+        return unavailable();
+      },
     });
     viewer.start();
-    for (let i = 0; i < 6; i++) {
-      await tick(1000);
-      clock += 1000;
-    }
-    expect(last(states)).toEqual({ kind: 'inactive', last: null });
+    await tick(); // the first answer arrives before the clock moves
+    await advance(120_000);
+    const gaps = at.slice(1).map((t, i) => t - at[i]!);
+    expect(gaps.slice(0, 5)).toEqual([1000, 1000, 1000, 1000, 1000]); // Retry-After: 1
+    expect(gaps.slice(5, 9)).toEqual([250, 500, 1000, 2000]); // 0.5 x 500 ms x 2^n
+    expect(Math.max(...gaps)).toBeLessThanOrEqual(30_000);
+    expect(gaps.at(-1)).toBe(15_000); // 0.5 x the 30 s cap
+    viewer.stop();
+  });
+
+  it('recovers to live when the 503s stop', async () => {
+    let down = true;
+    const { viewer, states } = make({
+      'POST /tracking/session': () => (down ? unavailable() : session('VT1', clock + 900_000)),
+    });
+    viewer.start();
+    await advance(20_000);
+    expect(last(states)).toEqual({ kind: 'warming' });
+    down = false;
+    await advance(31_000);
+    expect(last(states)).toMatchObject({ kind: 'live', snapshot: { version: 1 } });
+    expect(FakeWS.instances).toHaveLength(1);
+    viewer.stop();
   });
 
   it('401 link_invalid is inactive at once', async () => {
@@ -191,15 +239,86 @@ describe('snapshots', () => {
     expect(last(states)).toEqual({ kind: 'inactive', last: snap(5) });
   });
 
-  it('close code 4401 is inactive and does not reconnect', async () => {
-    const { viewer, states } = make({ 'POST /tracking/session': () => session('VT1', T0 + 900_000) });
+  it('close code 4401 recovers once with a refreshed token and opens a new socket', async () => {
+    const { viewer, states, calls } = make({
+      'POST /tracking/session': () => session('VT1', T0 + 900_000),
+      'POST /tracking/session/refresh': () => json({ viewer_token: 'VT2', expires_at: iso(T0 + 1_800_000) }),
+      'GET /tracking/snapshot': () => json(snap(1)),
+    });
+    viewer.start();
+    await tick();
+    FakeWS.instances[0]!.open();
+    FakeWS.instances[0]!.closeWith(4401);
+    await tick();
+    expect(calls.filter((c) => c.path === '/tracking/session/refresh')).toHaveLength(1);
+    expect(FakeWS.instances).toHaveLength(2);
+    FakeWS.instances[1]!.open();
+    expect(FakeWS.instances[1]!.sent[0]).toBe(JSON.stringify({ type: 'auth', token: 'VT2' }));
+    await tick();
+    expect(states.some((s) => s.kind === 'inactive')).toBe(false);
+    expect(last(states)).toMatchObject({ kind: 'live' });
+    viewer.stop();
+  });
+
+  it('close code 4401 is inactive when the refresh and the new session both answer 401', async () => {
+    let n = 0;
+    const { viewer, states, calls } = make({
+      'POST /tracking/session': () =>
+        ++n === 1 ? session('VT1', T0 + 900_000, 3) : new Response('{}', { status: 401 }),
+      'POST /tracking/session/refresh': () => new Response('{}', { status: 401 }),
+    });
     viewer.start();
     await tick();
     FakeWS.instances[0]!.open();
     FakeWS.instances[0]!.closeWith(4401);
     await tick(60_000);
-    expect(last(states)).toMatchObject({ kind: 'inactive' });
+    expect(calls.filter((c) => c.path === '/tracking/session')).toHaveLength(2);
+    expect(last(states)).toEqual({ kind: 'inactive', last: snap(3) });
     expect(FakeWS.instances).toHaveLength(1);
+  });
+
+  it('a second 4401 straight after a recovery is inactive, not another recover cycle', async () => {
+    let refreshes = 0;
+    const { viewer, states, calls } = make({
+      'POST /tracking/session': () => session('VT1', T0 + 900_000),
+      'POST /tracking/session/refresh': () =>
+        json({ viewer_token: `VT${++refreshes + 1}`, expires_at: iso(T0 + 1_800_000) }),
+      'GET /tracking/snapshot': () => json(snap(1)),
+    });
+    viewer.start();
+    await tick();
+    FakeWS.instances[0]!.open();
+    FakeWS.instances[0]!.closeWith(4401);
+    await tick();
+    FakeWS.instances[1]!.open();
+    FakeWS.instances[1]!.closeWith(4401); // refused again before any message
+    await tick(60_000);
+    expect(calls.filter((c) => c.path === '/tracking/session/refresh')).toHaveLength(1);
+    expect(FakeWS.instances).toHaveLength(2);
+    expect(last(states)).toMatchObject({ kind: 'inactive' });
+  });
+
+  it('a 4401 after the recovered socket delivered messages may recover again', async () => {
+    let refreshes = 0;
+    const { viewer, states, calls } = make({
+      'POST /tracking/session': () => session('VT1', T0 + 900_000),
+      'POST /tracking/session/refresh': () =>
+        json({ viewer_token: `VT${++refreshes + 1}`, expires_at: iso(T0 + 1_800_000) }),
+      'GET /tracking/snapshot': () => json(snap(1)),
+    });
+    viewer.start();
+    await tick();
+    FakeWS.instances[0]!.open();
+    FakeWS.instances[0]!.closeWith(4401);
+    await tick();
+    FakeWS.instances[1]!.open();
+    FakeWS.instances[1]!.message({ type: 'ping' }); // accepted: the guard resets
+    FakeWS.instances[1]!.closeWith(4401);
+    await tick();
+    expect(calls.filter((c) => c.path === '/tracking/session/refresh')).toHaveLength(2);
+    expect(FakeWS.instances).toHaveLength(3);
+    expect(last(states)).toMatchObject({ kind: 'live' });
+    viewer.stop();
   });
 
   it('close code 1012 reconnects with backoff and resyncs from the snapshot endpoint', async () => {
@@ -302,7 +421,8 @@ describe('refresh', () => {
   it('a revoked link found on resume is inactive', async () => {
     let n = 0;
     const { viewer, states } = make({
-      'POST /tracking/session': () => (++n === 1 ? session('VT1', T0 + 900_000) : new Response('{}', { status: 401 })),
+      'POST /tracking/session': () =>
+        ++n === 1 ? session('VT1', T0 + 900_000) : new Response('{}', { status: 401 }),
       'POST /tracking/session/refresh': () => new Response('{}', { status: 401 }),
     });
     viewer.start();
@@ -323,7 +443,8 @@ describe('link token secrecy', () => {
     const spies = (['log', 'warn', 'error', 'info', 'debug'] as const).map((k) => vi.spyOn(console, k));
     let n = 0;
     const { viewer, errors } = make({
-      'POST /tracking/session': () => (++n === 1 ? new Response('boom', { status: 500 }) : session('VT1', T0 + 900_000)),
+      'POST /tracking/session': () =>
+        ++n === 1 ? new Response('boom', { status: 500 }) : session('VT1', T0 + 900_000),
     });
     viewer.start();
     await tick(2_000);
@@ -374,7 +495,9 @@ describe('resume', () => {
     let n = 0;
     const { viewer, calls } = make({
       'POST /tracking/session': () =>
-        ++n < 3 ? new Response('{}', { status: 503, headers: { 'Retry-After': '1' } }) : session('VT1', T0 + 900_000),
+        ++n < 3
+          ? new Response('{}', { status: 503, headers: { 'Retry-After': '1' } })
+          : session('VT1', T0 + 900_000),
     });
     viewer.start();
     await tick();

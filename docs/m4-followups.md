@@ -82,7 +82,9 @@ These are marked done in `docs/m3-followups.md` too.
 - **M3-R14 (OSRM `/match`):** the renderer snaps the courier to the route (within 25 m) and dead-reckons between
   fixes (R8). No matching on the ingest path.
 - **M3 follow-up 5 (503 right after creation):** the gateway sends `Retry-After: 1` on the 503
-  `tracking_unavailable`; the viewer client retries for up to 5 s and shows "Getting your delivery ready…".
+  `tracking_unavailable`; the viewer client shows "Getting your delivery ready…" and keeps retrying: it follows
+  `Retry-After` for about the first 5 s, then the normal backoff (full jitter, up to 30 s). A 503 never ends in the
+  inactive card (final review ruling R30); only 401 `link_invalid` or `revoked` does.
 - **`frame-ancestors`:** the gateway builds it per tenant from `embed_origins`; unknown tokens get `'none'`.
 
 ## Controller rulings

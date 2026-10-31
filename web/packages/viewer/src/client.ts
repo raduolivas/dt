@@ -5,6 +5,7 @@ import type { ServerMessage, StreamConn } from './stream';
 import type { ViewerClient, ViewerError, ViewerOptions, ViewerState } from './types';
 
 const REFRESH_LEAD_MS = 120_000;
+/** How long a 503's Retry-After is followed before the normal backoff takes over. */
 const WARMING_LIMIT_MS = 5_000;
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS = 30_000;
@@ -31,7 +32,8 @@ export function createViewer(o: ViewerOptions): ViewerClient {
   let attempt = 0;
   let recovering: Promise<boolean> | null = null;
   let refreshSeq = 0;
-  let reconnecting = false; // a backoff sleep is pending; only reconnect() may open the next stream
+  let reconnecting = false; // a backoff sleep or a re-auth is pending; only that path may open the next stream
+  let authRetried = false; // a 4401 was answered with a recovery and no message has arrived since
 
   const setState = (s: ViewerState) => {
     for (const cb of [...stateCbs]) cb(s);
@@ -84,7 +86,7 @@ export function createViewer(o: ViewerOptions): ViewerClient {
     void scheduleRefresh(g);
   };
 
-  /** Exchange the link token for a viewer token, retrying a 503 for up to 5 s. Returns false when it ended. */
+  /** Exchange the link token for a viewer token, retrying a 503 until it succeeds. Returns false when it ended. */
   async function startSession(g: number): Promise<boolean> {
     let warmingSince: number | null = null;
     for (;;) {
@@ -103,13 +105,14 @@ export function createViewer(o: ViewerOptions): ViewerClient {
         return false;
       }
       if (r.reason === 'unavailable') {
-        warmingSince ??= now();
-        if (now() - warmingSince >= WARMING_LIMIT_MS) {
-          goInactive();
-          return false;
+        // An outage is not an end state (R30): stay warming and keep trying. Follow Retry-After for the
+        // first seconds after creation, then fall back to the normal backoff.
+        if (warmingSince === null) {
+          warmingSince = now();
+          setState({ kind: 'warming' });
         }
-        setState({ kind: 'warming' });
-        if (!(await sleep(r.retryAfterMs ?? 1000, g))) return false;
+        const wait = now() - warmingSince < WARMING_LIMIT_MS ? (r.retryAfterMs ?? 1000) : backoff();
+        if (!(await sleep(wait, g))) return false;
         continue;
       }
       fail('session_failed', `status ${r.status}`);
@@ -170,12 +173,13 @@ export function createViewer(o: ViewerOptions): ViewerClient {
       onMessage: (m: ServerMessage) => {
         if (g !== gen || c !== conn) return;
         attempt = 0;
+        authRetried = false; // the stream accepted our token
         onMessage(m);
       },
       onClose: ({ code, opened }: { code: number | null; opened: boolean }) => {
         if (g !== gen || c !== conn) return;
         conn = null;
-        if (code === 4401) return goInactive();
+        if (code === 4401) return void reauth(g);
         if (transport === 'ws' && !opened) {
           transport = 'sse';
           fail('websocket_unavailable');
@@ -199,6 +203,23 @@ export function createViewer(o: ViewerOptions): ViewerClient {
       reconnecting = false;
       if (g === gen) void reconnect(g);
       return;
+    }
+    reconnecting = false;
+    if (g === gen) openStream(g);
+  }
+
+  /**
+   * The stream refused the viewer token (4401): recover once (refresh, else a new session from the link token) and
+   * open a new stream. recover() itself goes inactive on 401 link_invalid. A second 4401 before the new stream
+   * delivered anything means the server keeps refusing fresh tokens, so it ends there instead of cycling.
+   */
+  async function reauth(g: number) {
+    if (authRetried) return goInactive();
+    authRetried = true;
+    reconnecting = true;
+    while (!(await recover(g))) {
+      if (g !== gen) return;
+      if (!(await sleep(backoff(), g))) return;
     }
     reconnecting = false;
     if (g === gen) openStream(g);
@@ -231,6 +252,7 @@ export function createViewer(o: ViewerOptions): ViewerClient {
       lastSnapshot = null;
       viewerToken = '';
       reconnecting = false;
+      authRetried = false;
       transport = 'ws';
       attempt = 0;
       setState({ kind: 'connecting' });

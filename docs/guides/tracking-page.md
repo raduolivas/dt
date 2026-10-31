@@ -36,8 +36,13 @@ You can also redirect the customer to it. Your own page, for example `https://sh
 answers with an HTTP redirect to `tracking.url` (status 302). Keep the token on your server side until you
 redirect: it is a credential for that one delivery.
 
-An unknown, rotated or expired link shows a calm card: "This tracking link is no longer active". The page
-does not tell the visitor whether the link ever existed.
+An unknown, rotated, revoked or expired link shows a calm card: "This tracking link is no longer active". The
+page does not tell the visitor whether the link ever existed. A delivery that has already ended shows its final
+summary instead, when the page saw it.
+
+If DeliveryOnTrack is briefly unavailable, for example in the first seconds after you create the delivery or
+during an outage, the page shows "Getting your delivery ready…" and keeps trying in the background until the
+tracking is back. An outage never shows the inactive card: that card means the link itself is no longer valid.
 
 ## Embed the hosted page in an iframe
 
