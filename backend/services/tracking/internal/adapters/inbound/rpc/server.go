@@ -95,9 +95,9 @@ func (s *Server) IngestLocations(ctx context.Context, req *trackingv1.IngestRequ
 		return nil, invalid(ctx, "courier_id must be a cou_ id")
 	}
 	switch req.GetSource() {
-	case "relay", "simulator":
+	case "relay", "simulator", "sdk", "link":
 	default:
-		return nil, invalid(ctx, "source must be relay or simulator")
+		return nil, invalid(ctx, "source must be relay, simulator, sdk or link")
 	}
 	if n := len(req.GetFixes()); n == 0 || n > MaxFixes {
 		return nil, invalid(ctx, fmt.Sprintf("fixes must hold 1 to %d entries", MaxFixes))
