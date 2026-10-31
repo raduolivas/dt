@@ -61,17 +61,28 @@ as a post-merge check, and any fixes become follow-up pull requests (R28).
 
 Approval: _not given yet_.
 
-## Do before the PR
+## Done before the PR
 
-- **Bump `happy-dom`** (a test dependency of `@dt/tracking`, 20.14.6) to 21.0.4 or later. `pnpm audit` reports a
-  high advisory, so the web CI job fails until then.
-- **gosec G705 at `idempotency.go:259`.** It is not from M4 (it is on `main` too), but it keeps `make ci` red.
-- **Look baselines.** The Playwright look screenshots were generated on the build machine (R25). If the CI
-  runner's fonts or GPU change them, regenerate them in the CI environment and commit.
+- `happy-dom` bumped to 21.0.4 (the high advisories are gone), and gosec G705 in `idempotency.go` is justified (M4-R31).
+- **Look baselines come from the CI runner** (M4-R32). Its fonts differ from the build machine, so the screenshots
+  are made there: run the `ci` workflow by hand with `update_look_baselines` checked, download the `look-baselines`
+  artifact and commit it. Locally, `look.spec` shows font differences; that is expected.
 - **Never ship a local web build.** `make web-assets` builds the SDK into `web/packages/tracking/dist` with
   localhost defaults. The staging deploy uses `scripts/web-staging-build.sh`, which deletes the output, builds with
   the staging values and refuses output that names localhost, the fixture or the test hook. The `mount.ts`
   localhost fallback now drops out of staging builds.
+- CI also found and fixed: a stale `go.work.sum` line, an old `apikey` test that failed about 1 run in 60, and a
+  CodeQL alert in the SDK demo page (it no longer loads a script or a frame from any URL in its query string).
+
+## New follow-ups from CI
+
+- **Slow devices and the 5 s stream auth window.** On the GPU-less CI runner, software WebGL kept the page busy
+  long enough that the WebSocket auth message missed the server's 5 s window (close 4401). The viewer recovered
+  correctly (M4-R34) but resynced past the statuses in between. A very slow phone could do the same. Options: send
+  the auth message from a microtask that rendering can't delay, pause rendering until the stream is authenticated,
+  or give the server a longer window. Check on the iPhone SE at the staging gate.
+- **M3 smoke flake.** Once, `make smoke` saw an empty courier trail ("the trail is empty"); it passed on the runs
+  before and after. Not changed by M4; look at the trail write timing if it repeats.
 
 ## M3 items closed by M4
 
@@ -204,6 +215,9 @@ decision, why, and what it costs if wrong. The build order was tasks 1-14, then 
   courier hidden when the link goes inactive mid-delivery, a size check for the hosted page, `statuschange` and
   `delivered` when the first final snapshot arrives as inactive, and the branding wording in the guide. If wrong: a
   slightly larger fix wave.
+- **M4-R35:** on CI, the desktop Chromium e2e project uses a 1000 × 640 window (still wide enough for the side
+  panel). At 1280 × 720, software WebGL on the GPU-less runner starved the page (see "New follow-ups from CI"). If
+  wrong: the 1280-wide desktop layout is covered only by WebKit, Firefox and the look screenshots.
 
 ## Deferred minors, by area
 
