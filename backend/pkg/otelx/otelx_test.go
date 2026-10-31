@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/otel"
@@ -94,5 +95,42 @@ func TestPublicEndpointStartsNewTrace(t *testing.T) {
 	links := span.Links()
 	if len(links) != 1 || links[0].SpanContext.TraceID().String() != traceID {
 		t.Fatalf("links = %v, want one link to the caller's trace", links)
+	}
+}
+
+func TestHTTPSpansNeverCarryCredentialPaths(t *testing.T) {
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() { otel.SetTracerProvider(prev); _ = tp.Shutdown(context.Background()) })
+
+	var seen, pattern string
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /t/{token}", func(_ http.ResponseWriter, r *http.Request) { seen, pattern = r.URL.Path, r.Pattern })
+	h := otelx.HTTP(mux, "test")
+	for _, m := range []string{http.MethodGet, http.MethodPost} {
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(m, "/t/secretsecret?x=1", nil))
+	}
+
+	if seen != "/t/secretsecret" || pattern != "GET /t/{token}" {
+		t.Fatalf("inner handler saw path %q pattern %q", seen, pattern)
+	}
+	spans := rec.Ended()
+	if len(spans) != 2 {
+		t.Fatalf("got %d spans", len(spans))
+	}
+	for _, s := range spans {
+		if strings.Contains(s.Name(), "secretsecret") {
+			t.Fatalf("span name %q", s.Name())
+		}
+		for _, kv := range s.Attributes() {
+			if strings.Contains(kv.Value.String(), "secretsecret") {
+				t.Fatalf("attribute %s = %s", kv.Key, kv.Value.String())
+			}
+		}
+	}
+	if spans[0].Name() != "GET /t/{token}" {
+		t.Fatalf("span name = %q", spans[0].Name())
 	}
 }

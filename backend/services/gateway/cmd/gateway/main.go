@@ -41,6 +41,7 @@ import (
 	redislimit "github.com/raduolivas/dt/backend/services/gateway/internal/adapters/outbound/redis"
 	trackingadapter "github.com/raduolivas/dt/backend/services/gateway/internal/adapters/outbound/tracking"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
+	"github.com/raduolivas/dt/backend/services/gateway/internal/domain"
 	"github.com/raduolivas/dt/backend/services/gateway/migrations"
 )
 
@@ -91,6 +92,10 @@ func run(ctx context.Context, ready func(addr string)) error {
 	if err != nil {
 		return fmt.Errorf("gateway: config: %w", err)
 	}
+	pageCfg, err := trackPageConfig(trackingBase)
+	if err != nil {
+		return fmt.Errorf("gateway: config: %w", err)
+	}
 	trackingRPC, err := newTrackingClient(os.Getenv("TRACKING_RPC_URL"), os.Getenv("INTERNAL_RPC_TOKEN"), clientTLS)
 	if err != nil {
 		return fmt.Errorf("gateway: config: %w", err)
@@ -131,11 +136,15 @@ func run(ctx context.Context, ready func(addr string)) error {
 
 			revoker := redislimit.NewRevoker(d.Redis)
 			links := &app.TrackingLinks{Store: postgres.NewTrackingLinkStore(d.DB), Hasher: keyhash.New(pepper), Revoker: revoker, Expiries: revoker, Clock: clock, Log: d.Log}
+			settings := postgres.NewViewerSettingsStore(d.DB)
 			httpapi.MountViewer(mux, httpapi.ViewerDeps{
 				Viewer: &app.Viewer{Links: links, Tokens: app.SignerTokens{Signer: signer, Verifier: signer.Verifier()},
-					Snapshots: trackingadapter.NewSnapshots(trackingRPC), Limiter: limiter},
+					Snapshots: trackingadapter.NewSnapshots(trackingRPC), Limiter: limiter, Settings: settings},
 				Limiter: limiter, JWKS: signer.JWKS(), TrustedProxies: trusted, Clock: clock, Log: d.Log,
+				TrackingURLBase: trackingBase,
 			})
+			httpapi.MountTrackPage(mux, httpapi.TrackPageDeps{Page: &app.TrackPage{Links: links, Settings: settings},
+				Config: pageCfg, Limiter: limiter, TrustedProxies: trusted, Log: d.Log})
 			httpapi.Mount(mux, httpapi.Routes(httpapi.Deps{Deliveries: deliveries, Idempotency: idem, Log: d.Log,
 				Links: links, TrackingURLBase: trackingBase, Tracking: trackingRPC}), httpapi.Middleware{
 				Auth:           &app.Authenticator{Keys: keys, Hasher: keyhash.New(pepper), Clock: clock},
@@ -160,6 +169,12 @@ func run(ctx context.Context, ready func(addr string)) error {
 				}
 				return outbox.Consume(ctx, d.JS, d.DB, d.Log, consumer.DeliveriesStream, consumer.DeliveriesConfig, consumer.Deliveries(links))
 			}
+			consumeTenants := func(ctx context.Context) error {
+				if err := outbox.WaitForStream(ctx, d.JS, consumer.APIKeysStream, d.Log); err != nil {
+					return err
+				}
+				return outbox.Consume(ctx, d.JS, d.DB, d.Log, consumer.APIKeysStream, consumer.TenantsConfig, consumer.Tenants(settings))
+			}
 			lag, err := consumer.NewLagMonitor(otel.Meter("github.com/raduolivas/dt/backend/services/gateway"),
 				d.Log, consumer.APIKeysConfig.Durable)
 			if err != nil {
@@ -172,7 +187,7 @@ func run(ctx context.Context, ready func(addr string)) error {
 			retention := &app.AuditRetention{Store: audit, Clock: clock, Log: d.Log}
 			linkRetention := &nightly.Job{Name: "gateway_retention", Lease: nightly.NewPostgresLease(d.DB, "gateway_retention"),
 				Holder: holder, Do: links.RunRetention, Log: d.Log}
-			return []bootstrap.Worker{consume, consumeDeliveries, watchLag, sweeper.Run, retention.Run, linkRetention.Run}, nil
+			return []bootstrap.Worker{consume, consumeTenants, consumeDeliveries, watchLag, sweeper.Run, retention.Run, linkRetention.Run}, nil
 		},
 	})
 }
@@ -234,6 +249,56 @@ func parseTrackingURLBase(s string) (string, error) {
 		return "", errors.New("TRACKING_URL_BASE must be an http(s) URL without query, fragment or credentials")
 	}
 	return strings.TrimRight(s, "/"), nil
+}
+
+// trackPageConfig reads the hosted page's TRACKING_PAGE_* settings. All are
+// optional so the gateway runs without a CDN (dev): the assets then come
+// from "/page/" on the gateway's own origin, the CSP names 'self' for the
+// CDN, and the page calls the API at <TRACKING_URL_BASE>/v1.
+//
+//	TRACKING_PAGE_BASE           URL prefix of entry.js/entry.css (default "/page/")
+//	TRACKING_PAGE_CDN            the assets' origin (default: the page's own)
+//	TRACKING_PAGE_TILES          TileJSON or PMTiles URL (default: none)
+//	TRACKING_PAGE_API            public API base (default <TRACKING_URL_BASE>/v1)
+//	TRACKING_PAGE_CONNECT_EXTRA  extra connect-src origins, space separated (dev)
+func trackPageConfig(trackingBase string) (httpapi.TrackPageConfig, error) {
+	c := httpapi.TrackPageConfig{
+		Base:  os.Getenv("TRACKING_PAGE_BASE"),
+		CDN:   strings.TrimRight(os.Getenv("TRACKING_PAGE_CDN"), "/"),
+		Tiles: os.Getenv("TRACKING_PAGE_TILES"),
+		API:   strings.TrimRight(os.Getenv("TRACKING_PAGE_API"), "/"),
+		Extra: strings.Fields(os.Getenv("TRACKING_PAGE_CONNECT_EXTRA")),
+	}
+	if c.API == "" {
+		c.API = trackingBase + "/v1"
+	}
+	for name, v := range map[string]string{"TRACKING_PAGE_BASE": c.Base, "TRACKING_PAGE_CDN": c.CDN,
+		"TRACKING_PAGE_TILES": c.Tiles, "TRACKING_PAGE_API": c.API} {
+		if v == "" || (name == "TRACKING_PAGE_BASE" && strings.HasPrefix(v, "/")) {
+			continue
+		}
+		if u, err := url.Parse(v); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return c, errors.New(name + " must be an http(s) URL")
+		}
+	}
+	for _, e := range c.Extra {
+		if u, err := url.Parse(e); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || strings.ContainsAny(e, ";,'\"") {
+			return c, errors.New("TRACKING_PAGE_CONNECT_EXTRA must be space-separated http(s) origins")
+		}
+	}
+	// The CSP names origins only; the page's JSON config keeps the full URLs.
+	c.Origins = domain.PageOrigins{CDN: originOf(c.CDN), API: originOf(c.API), Tiles: originOf(c.Tiles), Extra: c.Extra}
+	return c, nil
+}
+
+// originOf reduces an http(s) URL (already validated) to scheme://host[:port];
+// "" stays "".
+func originOf(s string) string {
+	u, err := url.Parse(s)
+	if s == "" || err != nil {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 type systemClock struct{}

@@ -1,4 +1,4 @@
-import type { LatLng } from './types';
+import type { LatLng } from '@dt/contract';
 
 const EARTH_RADIUS_M = 6378137;
 const DEG = Math.PI / 180;

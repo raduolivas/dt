@@ -49,3 +49,23 @@ output "secret_arns" {
     mtls = aws_secretsmanager_secret.mtls.arn
   }
 }
+
+output "track_url" {
+  description = "Base of the tracking links (the hosted page, served by the gateway)."
+  value       = "https://${var.track_hostname}"
+}
+
+output "cdn_url" {
+  description = "Web CDN base URL (CloudFront)."
+  value       = local.cdn_url
+}
+
+output "cdn_bucket" {
+  description = "CDN bucket: page/ and sdk/ from the deploy workflow, tiles/ from make tiles-upload."
+  value       = aws_s3_bucket.cdn.bucket
+}
+
+output "cdn_distribution_id" {
+  description = "CloudFront distribution of the CDN (make tiles-upload invalidates the tiles in it)."
+  value       = aws_cloudfront_distribution.cdn.id
+}

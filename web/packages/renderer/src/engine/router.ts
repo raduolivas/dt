@@ -1,5 +1,5 @@
 import type { Vec2 } from './geo';
-import { BLOCK, GRID } from './world';
+import { BLOCK, GRID } from '../view/grid';
 
 function dedupe(points: Vec2[]): Vec2[] {
   return points.filter(

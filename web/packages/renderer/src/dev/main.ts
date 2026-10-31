@@ -1,0 +1,239 @@
+import './style.css';
+import type { Vehicle } from '@dt/contract';
+import { createRenderer, type TileSourceSpec } from '../index';
+import { DeliverySimulator } from './simulator';
+import { GRID_WORLD, amsterdamWorld, type DestinationPreset } from './world';
+import { Hud, courierLabel } from './ui';
+
+const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+
+// ?tiles=fixture (default: the committed Amsterdam PMTiles), ?tiles=openfreemap, ?tiles=grid (the procedural city),
+// or ?pmtiles=<url> for any OpenMapTiles PMTiles archive covering the Amsterdam route.
+const query = new URLSearchParams(location.search);
+const tilesParam = query.get('tiles') ?? 'fixture';
+const tiles: TileSourceSpec | undefined = query.get('pmtiles')
+  ? { kind: 'pmtiles', url: query.get('pmtiles')! }
+  : tilesParam === 'openfreemap'
+    ? { kind: 'zxy', tilejson: 'https://tiles.openfreemap.org/planet' }
+    : tilesParam === 'grid'
+      ? undefined
+      : { kind: 'pmtiles', url: new URL('amsterdam-z14.pmtiles', location.href).href };
+
+const sim = new DeliverySimulator(tiles ? amsterdamWorld() : GRID_WORLD);
+const sceneEl = $('scene');
+// ?reduced=1|0 forces reduced motion on or off (default: the system setting).
+const reducedParam = query.get('reduced');
+// ?theme=dark starts at night (light | dark | auto).
+const themeParam = query.get('theme') as 'light' | 'dark' | 'auto' | null;
+// ?mode=2d starts in the top-down view.
+let mode: '3d' | '2d' = query.get('mode') === '2d' ? '2d' : '3d';
+const fpsEl = $('fps');
+const scene = createRenderer(sceneEl, {
+  tiles,
+  mode,
+  theme: themeParam ?? undefined,
+  reducedMotion: reducedParam === null ? undefined : reducedParam !== '0',
+  onTiles: (t) => {
+    // Read by the screenshot / budget scripts.
+    document.body.dataset.tiles = JSON.stringify({ ...t, ms: Math.round(t.ms) });
+    console.info(`[dt] first tiles: ${t.tiles} tiles, ${t.bytes} bytes, ${Math.round(t.ms)} ms`);
+  },
+  onFrameStats: (f) => {
+    document.body.dataset.frame = JSON.stringify({ fps: Math.round(f.fps), drawCalls: f.drawCalls });
+    fpsEl.textContent = `${Math.round(f.fps)} fps · ${f.drawCalls} calls`;
+  },
+});
+const hud = new Hud();
+const courierTag = () => sceneEl.querySelector<HTMLElement>('.scene-label.courier');
+const devState = () => ({ running: sim.isRunning, phase: sim.currentStatus, elapsedSec: sim.elapsedSec });
+
+// engine -> view + HUD. Swap `sim` for any other snapshot source (WebSocket, polling...) and nothing else changes.
+sim.subscribe((snap) => {
+  scene.update(snap);
+  const tag = courierTag();
+  if (tag) tag.textContent = courierLabel(snap, sim.currentStatus);
+  hud.update(snap, devState());
+});
+
+const refresh = () => hud.update(sim.snapshot(), devState());
+
+// The cards cover part of the map: tell the renderer, so its framing keeps store, home and courier visible.
+const hudInsets = () => {
+  const W = innerWidth;
+  const H = innerHeight;
+  const i = { top: 0, right: 0, bottom: 0, left: 0 };
+  for (const el of document.querySelectorAll<HTMLElement>('.topbar, .stats, .order, .toolbar, .stepper')) {
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) continue;
+    if (r.height > H * 0.35 && r.right > W - 24 && r.width < W * 0.5) i.right = Math.max(i.right, W - r.left);
+    else if (r.top + r.height / 2 < H / 2) i.top = Math.max(i.top, r.bottom);
+    else i.bottom = Math.max(i.bottom, H - r.top);
+  }
+  return i;
+};
+const syncInsets = () => scene.setInsets(hudInsets());
+syncInsets();
+addEventListener('resize', syncInsets);
+
+// --- toolbar --------------------------------------------------------------
+const runOrPause = () => {
+  if (sim.currentStatus === 'delivered') {
+    sim.reset();
+    sim.start();
+  } else if (sim.isRunning) {
+    sim.pause();
+  } else {
+    sim.start();
+  }
+  refresh();
+};
+$('btn-run').addEventListener('click', runOrPause);
+$('btn-reset').addEventListener('click', () => {
+  sim.reset();
+  refresh();
+});
+const followBtn = $('btn-follow');
+let following = false; // the first view frames store, home and courier
+followBtn.addEventListener('click', () => {
+  following = !following;
+  scene.setFollow(following);
+  followBtn.classList.toggle('on', following);
+});
+$('btn-overview').addEventListener('click', () => {
+  scene.overview();
+  following = false;
+  followBtn.classList.remove('on');
+});
+// --- 2D / 3D --------------------------------------------------------------
+const modeBtn = $('btn-mode');
+modeBtn.classList.toggle('on', mode === '2d');
+modeBtn.addEventListener('click', () => {
+  mode = mode === '3d' ? '2d' : '3d';
+  scene.setMode(mode);
+  modeBtn.classList.toggle('on', mode === '2d');
+});
+const params = $('params');
+$('btn-params').addEventListener('click', () => (params.hidden = !params.hidden));
+$('params-close').addEventListener('click', () => (params.hidden = true));
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && !(e.target instanceof HTMLInputElement)) {
+    e.preventDefault();
+    runOrPause();
+  }
+});
+
+// --- parameters -----------------------------------------------------------
+const bindRange = (id: string, label: string, fmt: (v: number) => string, apply: (v: number) => void) => {
+  const input = $<HTMLInputElement>(id);
+  const out = $(label);
+  const sync = () => {
+    out.textContent = fmt(+input.value);
+    apply(+input.value);
+  };
+  input.addEventListener('input', sync);
+  sync();
+};
+bindRange('p-speed', 'v-speed', (v) => `${v} km/h`, (v) => sim.setParams({ courierSpeedKmh: v }));
+bindRange('p-prep', 'v-prep', (v) => `${v} s`, (v) => sim.setParams({ prepTimeSec: v }));
+bindRange('p-scale', 'v-scale', (v) => `${v}×`, (v) => sim.setParams({ timeScale: v }));
+// ?speed=<n> overrides the simulation speed (scripts and screenshots), ?dest=near|medium|far picks the destination.
+if (query.get('speed')) sim.setParams({ timeScale: Number(query.get('speed')) });
+const destParam = query.get('dest') as DestinationPreset | null;
+if (destParam && ['near', 'medium', 'far'].includes(destParam)) {
+  sim.setParams({ destination: destParam });
+  sim.reset();
+}
+
+const destButtons = Array.from($('p-dest').querySelectorAll<HTMLButtonElement>('button'));
+if (destParam) destButtons.forEach((o) => o.classList.toggle('on', o.dataset.v === destParam));
+destButtons.forEach((b) =>
+  b.addEventListener('click', () => {
+    const v = b.dataset.v as DestinationPreset;
+    destButtons.forEach((o) => o.classList.toggle('on', o === b));
+    sim.setParams({ destination: v });
+    sim.reset();
+    refresh();
+  }),
+);
+
+const modeButtons = Array.from($('p-model').querySelectorAll<HTMLButtonElement>('button'));
+modeButtons.forEach((b) =>
+  b.addEventListener('click', () => {
+    modeButtons.forEach((o) => o.classList.toggle('on', o === b));
+    sim.setParams({ model: b.dataset.v as 'direct' | 'end_to_end' });
+    sim.reset();
+    refresh();
+  }),
+);
+// --- vehicle (?vehicle=bicycle|e_bike|scooter|car|on_foot) -------------------
+const VEHICLES: Record<Vehicle, { label: string; kmh: number }> = {
+  bicycle: { label: 'Bicycle courier', kmh: 18 },
+  e_bike: { label: 'E-bike courier', kmh: 24 },
+  scooter: { label: 'Scooter courier', kmh: 32 },
+  car: { label: 'Car courier', kmh: 30 },
+  on_foot: { label: 'Courier on foot', kmh: 5 },
+};
+const speedInput = $<HTMLInputElement>('p-speed');
+const vehicleButtons = Array.from($('p-vehicle').querySelectorAll<HTMLButtonElement>('button'));
+const setVehicle = (v: Vehicle) => {
+  vehicleButtons.forEach((o) => o.classList.toggle('on', o.dataset.v === v));
+  $('courier-kind').textContent = VEHICLES[v].label;
+  speedInput.value = String(VEHICLES[v].kmh);
+  speedInput.dispatchEvent(new Event('input'));
+  sim.setParams({ vehicle: v });
+  refresh();
+};
+vehicleButtons.forEach((b) => b.addEventListener('click', () => setVehicle(b.dataset.v as Vehicle)));
+const vehicleParam = query.get('vehicle') as Vehicle | null;
+if (vehicleParam && vehicleParam in VEHICLES) setVehicle(vehicleParam);
+
+// --- day / night ------------------------------------------------------------
+const themeButtons = Array.from($('p-theme').querySelectorAll<HTMLButtonElement>('button'));
+const showTheme = (t: string) => themeButtons.forEach((o) => o.classList.toggle('on', o.dataset.v === t));
+if (themeParam === 'dark' || themeParam === 'light') showTheme(themeParam);
+themeButtons.forEach((b) =>
+  b.addEventListener('click', () => {
+    scene.setTheme(b.dataset.v as 'light' | 'dark');
+    showTheme(b.dataset.v!);
+  }),
+);
+
+// --- reduced motion: system -> on -> off ------------------------------------
+const motionBtn = $('btn-motion');
+let motion: 'system' | 'on' | 'off' = reducedParam === null ? 'system' : reducedParam !== '0' ? 'on' : 'off';
+const showMotion = () => {
+  motionBtn.textContent = `Reduced motion: ${motion}`;
+  motionBtn.classList.toggle('on', motion === 'on');
+};
+showMotion();
+motionBtn.addEventListener('click', () => {
+  motion = motion === 'system' ? 'on' : motion === 'on' ? 'off' : 'on';
+  scene.setReducedMotion(motion === 'on');
+  showMotion();
+});
+
+const signalBtn = $('btn-signal');
+signalBtn.addEventListener('click', () => {
+  const live = sim.courierSignal === 'live';
+  sim.setSignal(live ? 'lost' : 'live');
+  signalBtn.textContent = live ? 'Restore signal' : 'Drop signal';
+  refresh();
+});
+
+// ?t=<seconds> starts the order and jumps that far into it (screenshots of a given moment); ?pause keeps it there.
+if (query.get('t')) {
+  sim.advance(Number(query.get('t')));
+  if (query.has('pause')) sim.pause();
+  refresh();
+}
+if (query.has('follow')) followBtn.click();
+
+// --- simulator loop (the renderer runs its own frame loop) ------------------
+let last = performance.now();
+const loop = (now: number) => {
+  const dt = (now - last) / 1000;
+  last = now;
+  sim.update(dt);
+  requestAnimationFrame(loop);
+};
+requestAnimationFrame(loop);

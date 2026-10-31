@@ -85,9 +85,16 @@ locals {
         TRUSTED_PROXIES            = var.vpc_cidr # the ALB's nodes
         DELIVERIES_RPC_URL         = local.internal.deliveries_rpc
         TRACKING_RPC_URL           = local.internal.tracking_rpc
-        TRACKING_URL_BASE          = var.tracking_url_base
+        TRACKING_URL_BASE          = "https://${var.track_hostname}"
         DATA_KEY_CURRENT           = "gw1"
         VIEWER_SIGNING_KEY_CURRENT = "vw1"
+        # The hosted page (cdn.tf). Like the image, tofu's own revision names
+        # image_tag; each deploy uploads page/<sha>/ and sets both the image
+        # and TRACKING_PAGE_BASE to its sha in the revision it registers.
+        TRACKING_PAGE_BASE  = "${local.cdn_url}/page/${var.image_tag}/"
+        TRACKING_PAGE_CDN   = local.cdn_url
+        TRACKING_PAGE_TILES = "${local.cdn_url}/${var.tiles_object}"
+        TRACKING_PAGE_API   = "https://${var.api_hostname}/v1"
       }
       secrets = {
         DATABASE_URL        = local.db_key["svc_gateway_url"]

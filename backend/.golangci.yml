@@ -22,6 +22,8 @@ linters:
           list-mode: strict
           allow:
             - $gostd
+            # Pure in-memory image decoder (no I/O), used to check logo bounds.
+            - golang.org/x/image/webp
           deny:
             - pkg: "net$"
               desc: "domain layer is standard library only and does no I/O (onion rule, spec §8.2)"

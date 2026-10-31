@@ -18,7 +18,7 @@ doctor: ## Check that every required tool is installed
 	done
 
 # ---- web --------------------------------------------------------------------
-.PHONY: lint-web test-web build-web audit-web web-dev
+.PHONY: lint-web test-web build-web audit-web web-dev web-assets e2e
 
 lint-web: ## Lint and typecheck the web workspace
 	pnpm -C web lint
@@ -35,6 +35,37 @@ audit-web: ## Fail on high or critical vulnerabilities in web dependencies
 
 web-dev: ## Run the renderer prototype dev server
 	pnpm -C web --filter @dt/renderer dev
+
+# The local CDN (the cdn service serves build/cdn on :8090): the hosted page as page/dev/, the SDK as
+# sdk/tracking/dev/ and the tile fixture. The page is a dev build with the end-to-end test hooks; the SDK's defaults
+# point at the local stack and the fixture.
+CDN_DIR := build/cdn
+LOCAL_SDK_ENV := VITE_DT_API=http://localhost:8080/v1 VITE_DT_TILES=http://localhost:8090/tiles/amsterdam-z14.pmtiles
+
+web-assets: ## Build the hosted page and the SDK for the local CDN into build/cdn (served by the cdn service)
+	VITE_DT_TEST_HOOKS=1 pnpm -C web --filter @dt/tracking-page build
+	$(LOCAL_SDK_ENV) pnpm -C web --filter @dt/tracking build
+	rm -rf $(CDN_DIR)/page/dev $(CDN_DIR)/sdk/tracking/dev
+	mkdir -p $(CDN_DIR)/page $(CDN_DIR)/sdk/tracking $(CDN_DIR)/tiles
+	cp -R web/apps/tracking-page/dist $(CDN_DIR)/page/dev
+	cp -R web/packages/tracking/dist $(CDN_DIR)/sdk/tracking/dev
+	cp web/packages/renderer/fixtures/amsterdam-z14.pmtiles $(CDN_DIR)/tiles/
+
+e2e: dtctl ## Run the Playwright end-to-end tests against the running stack (after make dev and make web-assets)
+	DTCTL=$(CURDIR)/$(DTCTL) pnpm -C web --filter @dt/e2e e2e $(E2E_ARGS)
+
+# ---- map tiles --------------------------------------------------------------
+.PHONY: tiles-fixture tiles-nl tiles-upload
+
+tiles-fixture: ## Build the committed Amsterdam z14 test fixture with Planetiler (Docker)
+	scripts/tiles-build.sh fixture
+
+tiles-nl: ## Build the Netherlands z14 PMTiles into build/tiles/nl.pmtiles (large)
+	scripts/tiles-build.sh nl
+
+# From a management-account Identity Center Admin session; see docs/runbooks/tiles.md.
+tiles-upload: ## Owner only: upload build/tiles/nl.pmtiles to the staging CDN (tiles/nl.pmtiles) and invalidate it
+	scripts/tiles-upload.sh
 
 # ---- contracts --------------------------------------------------------------
 .PHONY: gen lint-contracts
@@ -102,6 +133,8 @@ osrm-data: ## Download and preprocess the Amsterdam OSRM routing data (idempoten
 
 dev: osrm-data ## Build and start the local stack, then wait until every service is ready
 	scripts/dev-certs.sh
+	@# the cdn service mounts build/cdn (make web-assets fills it); made here so Docker does not create it as root
+	mkdir -p build/cdn
 	$(COMPOSE) up --build -d
 	scripts/wait-ready.sh
 

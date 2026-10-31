@@ -52,4 +52,8 @@ type Tenant struct {
 	PickupConfirmation string
 	SettingsUpdatedAt  time.Time
 	DefaultPrepMinutes pgtype.Int4
+	EmbedOrigins       []string
+	Branding           []byte
+	Logo               []byte
+	LogoContentType    pgtype.Text
 }

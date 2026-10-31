@@ -48,6 +48,17 @@ message TenantSettings {
   string pickup_confirmation = 3; // "any" | "courier" | "store" | "courier_and_store"
   google.protobuf.Timestamp updated_at = 4;
   optional int32 default_prep_minutes = 5; // 1..240; unset = none
+  repeated string embed_origins = 6;
+  Branding branding = 7; // unset = DT defaults
+}
+
+// Branding is the tenant's viewer branding. The logo bytes are stored as-is.
+message Branding {
+  string display_name = 1;
+  string primary_color = 2; // "#rrggbb" or empty
+  string theme = 3; // "light" | "dark" | "auto"
+  bytes logo = 4;
+  string logo_content_type = 5;
 }
 
 // ApiKey is a key's metadata. It never carries the hash or the plaintext.
@@ -134,6 +145,8 @@ message SetTenantSettingsRequest {
   string default_model = 4;
   string pickup_confirmation = 5;
   optional int32 default_prep_minutes = 6; // 1..240; unset clears it
+  repeated string embed_origins = 7;
+  Branding branding = 8; // unset clears it
 }
 
 message SetTenantSettingsResponse {

@@ -59,6 +59,11 @@ mock_provider "aws" {
       arn = "arn:aws:kms:eu-central-1:123456789012:key/00000000-0000-0000-0000-000000000000"
     }
   }
+  mock_resource "aws_cloudfront_distribution" {
+    defaults = {
+      arn = "arn:aws:cloudfront::123456789012:distribution/EMOCK"
+    }
+  }
   mock_data "aws_availability_zones" {
     defaults = {
       names = ["eu-central-1a", "eu-central-1b", "eu-central-1c"]
@@ -70,6 +75,17 @@ mock_provider "aws" {
     }
   }
 }
+# The CloudFront certificate lives in us-east-1 (cdn.tf).
+mock_provider "aws" {
+  alias = "us_east_1"
+
+  mock_resource "aws_acm_certificate" {
+    defaults = {
+      arn = "arn:aws:acm:us-east-1:123456789012:certificate/mock"
+    }
+  }
+}
+
 mock_provider "random" {}
 mock_provider "tls" {}
 

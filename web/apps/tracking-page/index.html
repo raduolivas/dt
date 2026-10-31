@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- Local development only (`pnpm --filter @dt/tracking-page dev`, then /t/<token>): the same shell the gateway serves
+     at GET /t/{token}, with a config for the local stack and the CDN container's tile fixture. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Track your delivery</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="application/json" id="dt-config">
+      { "api": "http://localhost:8080/v1", "tiles": "http://localhost:8090/tiles/amsterdam-z14.pmtiles", "cdn": "" }
+    </script>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

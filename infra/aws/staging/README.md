@@ -7,14 +7,15 @@ OpenTofu stack for the lean AWS staging environment in `dt-staging` (`eu-central
 | File | Resources |
 |---|---|
 | `network.tf` | VPC `10.40.0.0/16` over 2 AZs: two public subnets (ALB, host), two private DB subnets with no route out, **no NAT gateway**, S3 gateway endpoint, locked default SG. Security groups: ALB 443/80 from the internet; host only from the ALB on 8080 (gateway) and 8082 (tracking), egress 443 and 5432 to RDS; RDS 5432 only from the host |
-| `dns.tf` | Hosted zone `staging.deliveryontrack.io` (`prevent_destroy`), ACM certificate for `api.staging.deliveryontrack.io` (DNS-validated), alias record to the ALB |
+| `dns.tf` | Hosted zone `staging.deliveryontrack.io` (`prevent_destroy`), ACM certificate for `api.staging.deliveryontrack.io` with `track.staging.deliveryontrack.io` as a SAN (DNS-validated), alias records `api` and `track` to the ALB |
+| `cdn.tf` | Web CDN: private bucket `dt-staging-cdn-<account>` (SSE-S3, versioning off, all public access blocked, ACLs disabled, TLS-only policy, readable only by the distribution) with `page/`, `sdk/`, `tiles/`; CloudFront at `cdn.staging.deliveryontrack.io` (origin access control, HTTP/2 and HTTP/3, compression, price class 100, managed CachingOptimized, response headers policy with CORS `*` and `Cross-Origin-Resource-Policy: cross-origin`); its ACM certificate in `us-east-1` (provider `aws.us_east_1`); A/AAAA aliases; inline policy `cdn-upload` on the bootstrap's `dt-deploy-staging` (`s3:PutObject` on `page/*` and `sdk/*` only) |
 | `kms.tf` | Key `alias/dt-staging-data` (rotation on, `prevent_destroy`) for Secrets Manager, RDS and the alarm topic |
 | `secrets.tf` | `random_bytes` for the internal RPC token, `APIKEY_PEPPER`, the gateway's and deliveries' `DATA_KEYS`, `VIEWER_SIGNING_KEYS`, the `svc_*`/`mig_*` passwords; the internal mTLS CA and certificates (`tls` provider). Stored as three JSON secrets `dt-staging/app`, `dt-staging/db`, `dt-staging/mtls` |
 | `rds.tf` | PostgreSQL 18 `db.t4g.micro`, 20 GB gp3, single-AZ, KMS-encrypted, `rds.force_ssl=1`, backups 3 days, RDS-managed master secret |
 | `ecr.tf` | Repositories `dt-<svc>`: immutable tags, scan on push, keep the last 30 artifacts (image + signature of the last 15 deploys) |
 | `ec2_ecs.tf` | Cluster `dt-staging`; ASG (min 0, max 1, `t3.medium`, ECS-optimized AL2023, 30 GB gp3 encrypted, IMDSv2 with hop limit 1, SSM, no key pair); capacity provider (managed scaling off); roles `dt-staging-task-execution`, `dt-staging-task`, `dt-staging-ecs-host`; log group `/dt/staging` (14 days) |
 | `services.tf` | Task definitions (bridge, static host ports) and services for the 5 services, NATS, Redis and OSRM car/bike; `dt-staging-migrate-<svc>` and `dt-staging-db-bootstrap` one-off tasks; the OSRM data bucket |
-| `alb.tf` | ALB (idle timeout 120 s), HTTPS listener (TLS 1.3/1.2 policy), HTTP → HTTPS redirect, `/v1/tracking/snapshot` and `/v1/tracking/stream*` → tracking, the rest → gateway |
+| `alb.tf` | ALB (idle timeout 120 s), HTTPS listener (TLS 1.3/1.2 policy), HTTP → HTTPS redirect, `/v1/tracking/snapshot` and `/v1/tracking/stream*` → tracking, the rest → gateway (on both `api` and `track`) |
 | `schedule.tf` | EventBridge Scheduler: database starts 07:50 and host scales to 1 at 08:00, both stop at 20:00, Monday–Friday, `Europe/Amsterdam` |
 | `alarms.tf` | SNS email topic (KMS); host CPU > 80 % for 10 min, host memory > 90 % (CloudWatch agent), ALB target 5xx > 5 per 5 min, RDS free storage < 2 GB |
 
@@ -28,7 +29,7 @@ The services read the mTLS certificate, key and CA from files. A `certs` init co
 
 ## Contract with the bootstrap
 
-The names are fixed by `infra/aws/bootstrap/oidc.tf` (the deploy role's permissions): cluster `dt-staging`, repositories `dt-*` (the brief's `dt/<svc>` would not match the deploy role's `dt-*`), task definition families `dt-staging-*`, roles `dt-staging-task-execution` and `dt-staging-task`. The deploy role has no `ecs:TagResource`, so services set `enable_ecs_managed_tags = false` and `propagate_tags = "NONE"`, and the deploy never passes tags.
+The names are fixed by `infra/aws/bootstrap/oidc.tf` (the deploy role's permissions): role `dt-deploy-staging` (this stack attaches the inline policy `cdn-upload` to it, so bootstrap phase B must have run), cluster `dt-staging`, repositories `dt-*` (the brief's `dt/<svc>` would not match the deploy role's `dt-*`), task definition families `dt-staging-*`, roles `dt-staging-task-execution` and `dt-staging-task`. The deploy role has no `ecs:TagResource`, so services set `enable_ecs_managed_tags = false` and `propagate_tags = "NONE"`, and the deploy never passes tags.
 
 ## Running it
 
@@ -45,6 +46,13 @@ trivy config --severity HIGH,CRITICAL infra/aws   # from the repository root
 ```
 
 Pinned: OpenTofu 1.13.2, AWS provider `~> 6.70.0`, random `~> 3.7`, tls `~> 4.1` (`.terraform.lock.hcl` committed for linux amd64/arm64 and macOS arm64).
+
+## Web CDN and the hosted page (M4)
+
+- The gateway serves the page shell at `https://track.staging.deliveryontrack.io/t/<token>` and links `entry.js`/`entry.css` from `TRACKING_PAGE_BASE` = `https://cdn.staging.deliveryontrack.io/page/<sha>/`. Tofu writes `<sha>` = `image_tag` (`bootstrap`, like its image tag); each deploy rewrites it to its own commit in the revisions it registers, right after uploading `page/<sha>/` and `sdk/tracking/<sha>/` (`scripts/web-staging-build.sh`, never the local `make web-assets` output).
+- The other page settings: `TRACKING_PAGE_CDN` = `https://cdn.staging.deliveryontrack.io`, `TRACKING_PAGE_TILES` = `https://cdn.staging.deliveryontrack.io/tiles/nl.pmtiles`, `TRACKING_PAGE_API` = `https://api.staging.deliveryontrack.io/v1`, `TRACKING_URL_BASE` = `https://track.staging.deliveryontrack.io`.
+- Old `page/` and `sdk/` prefixes stay (open pages keep working); the deploy role cannot delete or list. Tiles are the owner's: `make tiles-nl`, then `make tiles-upload` (Admin), see `docs/runbooks/tiles.md`.
+- `tests/cdn.tftest.hcl` (offline) guards the bucket's privacy, OAC, the `cdn.staging` alias, the deploy role's `page/*`/`sdk/*` limit, the `track` SAN and alias, and the gateway's five `TRACKING_*` values.
 
 ## Notes
 

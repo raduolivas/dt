@@ -295,6 +295,9 @@ func TestSettingsPersistAndEnqueue(t *testing.T) {
 	want := domain.TenantSettings{
 		AllowedModels: []string{"end_to_end"}, DefaultModel: "end_to_end",
 		PickupConfirmation: "courier_and_store", DefaultPrepMinutes: &prep, UpdatedAt: t0.Add(time.Hour),
+		EmbedOrigins: []string{"https://shop.example.com", "https://*.example.org"},
+		Branding: &domain.Branding{DisplayName: "Acme", PrimaryColor: "#112233", Theme: "auto",
+			Logo: []byte("\x89PNG\r\n\x1a\nrest"), LogoContentType: "image/png"},
 	}
 	payload := &eventsv1.TenantSettingsSet{TenantId: "ten_1", AllowedModels: want.AllowedModels,
 		DefaultModel: want.DefaultModel, PickupConfirmation: want.PickupConfirmation}
@@ -375,5 +378,35 @@ func TestSettingsPersistAndEnqueue(t *testing.T) {
 		if _, err := pool.Exec(context.Background(), q); err == nil {
 			t.Errorf("%s: want a constraint violation", q)
 		}
+	}
+}
+
+func TestSettingsBrandingPartsAndClear(t *testing.T) {
+	t.Parallel()
+	_, r := setup(t)
+	mustTx(t, r, func(ctx context.Context, tx app.Tx) error { return tx.InsertTenant(ctx, tenant("ten_1")) })
+	get := func() domain.TenantSettings {
+		var s domain.TenantSettings
+		mustTx(t, r, func(ctx context.Context, tx app.Tx) error {
+			ten, err := tx.GetTenant(ctx, "ten_1")
+			s = ten.Settings
+			return err
+		})
+		return s
+	}
+	if s := get(); s.Branding != nil || len(s.EmbedOrigins) != 0 {
+		t.Fatalf("defaults = %+v", s)
+	}
+	// A name-only branding (no logo) round-trips; clearing returns to nil.
+	s := tenant("ten_1").Settings
+	s.Branding = &domain.Branding{DisplayName: "Only name"}
+	mustTx(t, r, func(ctx context.Context, tx app.Tx) error { return tx.SetTenantSettings(ctx, "ten_1", s) })
+	if got := get(); !reflect.DeepEqual(got.Branding, s.Branding) {
+		t.Fatalf("branding = %+v", got.Branding)
+	}
+	s.Branding = nil
+	mustTx(t, r, func(ctx context.Context, tx app.Tx) error { return tx.SetTenantSettings(ctx, "ten_1", s) })
+	if got := get(); got.Branding != nil {
+		t.Fatalf("branding after clear = %+v", got.Branding)
 	}
 }

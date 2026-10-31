@@ -1,0 +1,74 @@
+<!doctype html>
+<!--
+  SDK demo and end-to-end test page (web/e2e/serve-demo.mjs serves it at https://localhost:5180, the embed origin the
+  tests allow, at https://localhost:5181, an origin they do not, and at http://localhost:5182). It stands in for a
+  partner's page:
+    ?token=<link token>  mounts <dt-tracking> from the SDK bundle on the local CDN
+    ?frame=<link URL>    embeds the hosted tracking page in an iframe
+    &sdk=<URL>           another SDK bundle (default: the local CDN's dev build)
+  The page records what it sees in window.dtDemo for the tests.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeliveryOnTrack SDK demo</title>
+    <style>
+      body { margin: 0; font: 15px/1.4 system-ui, sans-serif; color: #141b34; background: #f4f6fb; }
+      header { padding: 12px 16px; display: flex; gap: 12px; align-items: center; }
+      h1 { font-size: 16px; margin: 0; flex: 1; }
+      main { display: grid; gap: 16px; padding: 0 16px 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+      dt-tracking, iframe { display: block; width: 100%; height: 600px; border: 0; border-radius: 16px; overflow: hidden; }
+      #log { font: 12px ui-monospace, monospace; padding: 0 16px 16px; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Partner shop · order 1042</h1>
+      <button id="destroy" type="button">Remove tracking</button>
+    </header>
+    <main id="slots"></main>
+    <div id="log"></div>
+    <script type="module">
+      const q = new URLSearchParams(location.search);
+      const demo = (window.dtDemo = { events: [], frame: null });
+      const log = (line) => {
+        document.getElementById('log').textContent += line + '\n';
+      };
+      const slots = document.getElementById('slots');
+
+      const token = q.get('token');
+      if (token) {
+        await import('http://localhost:8090/sdk/tracking/dev/tracking.js');
+        const el = document.createElement('dt-tracking');
+        el.setAttribute('token', token);
+        el.setAttribute('lang', 'en');
+        for (const type of ['ready', 'statuschange', 'etachange', 'delivered', 'error']) {
+          el.addEventListener(type, (e) => {
+            demo.events.push({ type, detail: e.detail });
+            log(`${type} ${JSON.stringify(e.detail)}`);
+          });
+        }
+        slots.appendChild(el);
+        document.getElementById('destroy').addEventListener('click', () => el.destroy());
+      }
+
+      // Only the local stack's hosted page may be framed: an https URL on localhost with a /t/<token> path.
+      const frameUrl = (() => {
+        try {
+          const u = new URL(q.get('frame') ?? '');
+          return u.protocol === 'https:' && u.hostname === 'localhost' && u.pathname.startsWith('/t/') ? u : null;
+        } catch {
+          return null;
+        }
+      })();
+      if (frameUrl) {
+        const f = document.createElement('iframe');
+        f.title = 'Delivery tracking';
+        f.src = frameUrl.href;
+        f.addEventListener('load', () => (demo.frame = 'load'));
+        slots.appendChild(f);
+      }
+    </script>
+  </body>
+</html>

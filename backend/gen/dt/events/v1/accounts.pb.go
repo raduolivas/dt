@@ -238,6 +238,8 @@ type TenantSettingsSet struct {
 	PickupConfirmation string                 `protobuf:"bytes,4,opt,name=pickup_confirmation,json=pickupConfirmation,proto3" json:"pickup_confirmation,omitempty"`
 	UpdatedAt          *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	DefaultPrepMinutes *int32                 `protobuf:"varint,6,opt,name=default_prep_minutes,json=defaultPrepMinutes,proto3,oneof" json:"default_prep_minutes,omitempty"` // unset = none
+	EmbedOrigins       []string               `protobuf:"bytes,7,rep,name=embed_origins,json=embedOrigins,proto3" json:"embed_origins,omitempty"`
+	Branding           *Branding              `protobuf:"bytes,8,opt,name=branding,proto3" json:"branding,omitempty"` // unset = DT defaults
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -314,6 +316,97 @@ func (x *TenantSettingsSet) GetDefaultPrepMinutes() int32 {
 	return 0
 }
 
+func (x *TenantSettingsSet) GetEmbedOrigins() []string {
+	if x != nil {
+		return x.EmbedOrigins
+	}
+	return nil
+}
+
+func (x *TenantSettingsSet) GetBranding() *Branding {
+	if x != nil {
+		return x.Branding
+	}
+	return nil
+}
+
+// Branding mirrors dt.accounts.v1.Branding; events must not import the accounts API package.
+type Branding struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	DisplayName     string                 `protobuf:"bytes,1,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	PrimaryColor    string                 `protobuf:"bytes,2,opt,name=primary_color,json=primaryColor,proto3" json:"primary_color,omitempty"`
+	Theme           string                 `protobuf:"bytes,3,opt,name=theme,proto3" json:"theme,omitempty"`
+	Logo            []byte                 `protobuf:"bytes,4,opt,name=logo,proto3" json:"logo,omitempty"`
+	LogoContentType string                 `protobuf:"bytes,5,opt,name=logo_content_type,json=logoContentType,proto3" json:"logo_content_type,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *Branding) Reset() {
+	*x = Branding{}
+	mi := &file_dt_events_v1_accounts_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Branding) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Branding) ProtoMessage() {}
+
+func (x *Branding) ProtoReflect() protoreflect.Message {
+	mi := &file_dt_events_v1_accounts_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Branding.ProtoReflect.Descriptor instead.
+func (*Branding) Descriptor() ([]byte, []int) {
+	return file_dt_events_v1_accounts_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *Branding) GetDisplayName() string {
+	if x != nil {
+		return x.DisplayName
+	}
+	return ""
+}
+
+func (x *Branding) GetPrimaryColor() string {
+	if x != nil {
+		return x.PrimaryColor
+	}
+	return ""
+}
+
+func (x *Branding) GetTheme() string {
+	if x != nil {
+		return x.Theme
+	}
+	return ""
+}
+
+func (x *Branding) GetLogo() []byte {
+	if x != nil {
+		return x.Logo
+	}
+	return nil
+}
+
+func (x *Branding) GetLogoContentType() string {
+	if x != nil {
+		return x.LogoContentType
+	}
+	return ""
+}
+
 var File_dt_events_v1_accounts_proto protoreflect.FileDescriptor
 
 const file_dt_events_v1_accounts_proto_rawDesc = "" +
@@ -337,7 +430,7 @@ const file_dt_events_v1_accounts_proto_rawDesc = "" +
 	"\rApiKeyRevoked\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x129\n" +
 	"\n" +
-	"revoked_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\trevokedAt\"\xb8\x02\n" +
+	"revoked_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\trevokedAt\"\x91\x03\n" +
 	"\x11TenantSettingsSet\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12%\n" +
 	"\x0eallowed_models\x18\x02 \x03(\tR\rallowedModels\x12#\n" +
@@ -345,8 +438,16 @@ const file_dt_events_v1_accounts_proto_rawDesc = "" +
 	"\x13pickup_confirmation\x18\x04 \x01(\tR\x12pickupConfirmation\x129\n" +
 	"\n" +
 	"updated_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x125\n" +
-	"\x14default_prep_minutes\x18\x06 \x01(\x05H\x00R\x12defaultPrepMinutes\x88\x01\x01B\x17\n" +
-	"\x15_default_prep_minutesB\xaf\x01\n" +
+	"\x14default_prep_minutes\x18\x06 \x01(\x05H\x00R\x12defaultPrepMinutes\x88\x01\x01\x12#\n" +
+	"\rembed_origins\x18\a \x03(\tR\fembedOrigins\x122\n" +
+	"\bbranding\x18\b \x01(\v2\x16.dt.events.v1.BrandingR\bbrandingB\x17\n" +
+	"\x15_default_prep_minutes\"\xa8\x01\n" +
+	"\bBranding\x12!\n" +
+	"\fdisplay_name\x18\x01 \x01(\tR\vdisplayName\x12#\n" +
+	"\rprimary_color\x18\x02 \x01(\tR\fprimaryColor\x12\x14\n" +
+	"\x05theme\x18\x03 \x01(\tR\x05theme\x12\x12\n" +
+	"\x04logo\x18\x04 \x01(\fR\x04logo\x12*\n" +
+	"\x11logo_content_type\x18\x05 \x01(\tR\x0flogoContentTypeB\xaf\x01\n" +
 	"\x10com.dt.events.v1B\rAccountsProtoP\x01Z:github.com/raduolivas/dt/backend/gen/dt/events/v1;eventsv1\xa2\x02\x03DEX\xaa\x02\fDt.Events.V1\xca\x02\fDt\\Events\\V1\xe2\x02\x18Dt\\Events\\V1\\GPBMetadata\xea\x02\x0eDt::Events::V1b\x06proto3"
 
 var (
@@ -361,26 +462,28 @@ func file_dt_events_v1_accounts_proto_rawDescGZIP() []byte {
 	return file_dt_events_v1_accounts_proto_rawDescData
 }
 
-var file_dt_events_v1_accounts_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_dt_events_v1_accounts_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_dt_events_v1_accounts_proto_goTypes = []any{
 	(*ApiKeyCreated)(nil),         // 0: dt.events.v1.ApiKeyCreated
 	(*ApiKeyExpirySet)(nil),       // 1: dt.events.v1.ApiKeyExpirySet
 	(*ApiKeyRevoked)(nil),         // 2: dt.events.v1.ApiKeyRevoked
 	(*TenantSettingsSet)(nil),     // 3: dt.events.v1.TenantSettingsSet
-	(Environment)(0),              // 4: dt.events.v1.Environment
-	(*timestamppb.Timestamp)(nil), // 5: google.protobuf.Timestamp
+	(*Branding)(nil),              // 4: dt.events.v1.Branding
+	(Environment)(0),              // 5: dt.events.v1.Environment
+	(*timestamppb.Timestamp)(nil), // 6: google.protobuf.Timestamp
 }
 var file_dt_events_v1_accounts_proto_depIdxs = []int32{
-	4, // 0: dt.events.v1.ApiKeyCreated.environment:type_name -> dt.events.v1.Environment
-	5, // 1: dt.events.v1.ApiKeyCreated.created_at:type_name -> google.protobuf.Timestamp
-	5, // 2: dt.events.v1.ApiKeyExpirySet.expires_at:type_name -> google.protobuf.Timestamp
-	5, // 3: dt.events.v1.ApiKeyRevoked.revoked_at:type_name -> google.protobuf.Timestamp
-	5, // 4: dt.events.v1.TenantSettingsSet.updated_at:type_name -> google.protobuf.Timestamp
-	5, // [5:5] is the sub-list for method output_type
-	5, // [5:5] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	5, // 0: dt.events.v1.ApiKeyCreated.environment:type_name -> dt.events.v1.Environment
+	6, // 1: dt.events.v1.ApiKeyCreated.created_at:type_name -> google.protobuf.Timestamp
+	6, // 2: dt.events.v1.ApiKeyExpirySet.expires_at:type_name -> google.protobuf.Timestamp
+	6, // 3: dt.events.v1.ApiKeyRevoked.revoked_at:type_name -> google.protobuf.Timestamp
+	6, // 4: dt.events.v1.TenantSettingsSet.updated_at:type_name -> google.protobuf.Timestamp
+	4, // 5: dt.events.v1.TenantSettingsSet.branding:type_name -> dt.events.v1.Branding
+	6, // [6:6] is the sub-list for method output_type
+	6, // [6:6] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_dt_events_v1_accounts_proto_init() }
@@ -396,7 +499,7 @@ func file_dt_events_v1_accounts_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_dt_events_v1_accounts_proto_rawDesc), len(file_dt_events_v1_accounts_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

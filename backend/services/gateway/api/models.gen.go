@@ -7,6 +7,27 @@ import (
 	"time"
 )
 
+// Defines values for BrandingTheme.
+const (
+	Auto  BrandingTheme = "auto"
+	Dark  BrandingTheme = "dark"
+	Light BrandingTheme = "light"
+)
+
+// Valid indicates whether the value is a known member of the BrandingTheme enum.
+func (e BrandingTheme) Valid() bool {
+	switch e {
+	case Auto:
+		return true
+	case Dark:
+		return true
+	case Light:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CourierSignal.
 const (
 	CourierSignalLive    CourierSignal = "live"
@@ -417,6 +438,19 @@ type AssignCourierRequest struct {
 	// CourierId Examples: cou_01j9z3k8m2q4r6s8t0v2w4x6y8
 	CourierId CourierId `json:"courier_id"`
 }
+
+// Branding defines model for Branding.
+type Branding struct {
+	DisplayName *string `json:"display_name"`
+
+	// LogoUrl Absolute URL of the logo, served on the tracking host. `null` when no logo is set.
+	LogoUrl      *string       `json:"logo_url"`
+	PrimaryColor *string       `json:"primary_color"`
+	Theme        BrandingTheme `json:"theme"`
+}
+
+// BrandingTheme defines model for Branding.Theme.
+type BrandingTheme string
 
 // CancelDeliveryRequest defines model for CancelDeliveryRequest.
 type CancelDeliveryRequest struct {
@@ -914,8 +948,8 @@ type TrackingRoute struct {
 
 // TrackingSession defines model for TrackingSession.
 type TrackingSession struct {
-	// Branding Always `null` for now.
-	Branding  any       `json:"branding"`
+	// Branding The tenant's viewer branding, or `null` for the DT defaults. `logo_url`, when present, is served on the tracking host.
+	Branding  *Branding `json:"branding"`
 	ExpiresAt time.Time `json:"expires_at"`
 
 	// Snapshot What the customer's tracking page shows. `courier` is `null` while the courier is not visible (End-to-end: from assignment; Direct: from pickup) and `route.to_pickup` is `null` in the Direct model. Clients ignore a snapshot whose `version` is not greater than the last one applied.

@@ -126,3 +126,21 @@ WHERE revoked_at < @revoked_before::timestamptz OR expires_at < @expires_before:
 
 -- name: DeleteLinkExpiriesBefore :exec
 DELETE FROM tracking_link_expiry WHERE expires_at < @expires_before::timestamptz;
+
+-- name: PutViewerSettings :exec
+-- An event not newer than the stored one changes nothing.
+INSERT INTO tenant_viewer_settings (tenant_id, embed_origins, display_name, primary_color, theme, logo, logo_content_type, logo_sha256, updated_at)
+VALUES (@tenant_id, @embed_origins, sqlc.narg(display_name), sqlc.narg(primary_color), sqlc.narg(theme), @logo, sqlc.narg(logo_content_type), sqlc.narg(logo_sha256), @updated_at)
+ON CONFLICT (tenant_id) DO UPDATE SET
+  embed_origins = EXCLUDED.embed_origins, display_name = EXCLUDED.display_name, primary_color = EXCLUDED.primary_color,
+  theme = EXCLUDED.theme, logo = EXCLUDED.logo, logo_content_type = EXCLUDED.logo_content_type,
+  logo_sha256 = EXCLUDED.logo_sha256, updated_at = EXCLUDED.updated_at
+WHERE tenant_viewer_settings.updated_at < EXCLUDED.updated_at;
+
+-- name: GetViewerSettings :one
+SELECT embed_origins, display_name, primary_color, theme, logo_content_type, logo_sha256
+FROM tenant_viewer_settings WHERE tenant_id = $1;
+
+-- name: GetViewerLogo :one
+SELECT logo, logo_content_type FROM tenant_viewer_settings
+WHERE tenant_id = @tenant_id AND logo_sha256 = @logo_sha256 AND logo IS NOT NULL;

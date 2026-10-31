@@ -2542,8 +2542,27 @@ components:
         snapshot:
           $ref: '#/components/schemas/TrackingSnapshot'
         branding:
-          type: 'null'
-          description: Always `null` for now.
+          description: >-
+            The tenant's viewer branding, or `null` for the DT defaults. `logo_url`, when
+            present, is served on the tracking host.
+          oneOf:
+            - $ref: '#/components/schemas/Branding'
+            - type: 'null'
+    Branding:
+      type: object
+      required: [display_name, primary_color, theme, logo_url]
+      properties:
+        display_name:
+          type: [string, 'null']
+        primary_color:
+          type: [string, 'null']
+          pattern: '^#[0-9a-fA-F]{6}$'
+        theme:
+          type: string
+          enum: [light, dark, auto]
+        logo_url:
+          type: [string, 'null']
+          description: Absolute URL of the logo, served on the tracking host. `null` when no logo is set.
     ViewerTokenRefresh:
       type: object
       required: [viewer_token, expires_at]

@@ -9,9 +9,11 @@ resource "aws_route53_zone" "staging" {
   }
 }
 
+# The ALB's certificate: the API and the hosted tracking page (track.<zone>).
 resource "aws_acm_certificate" "api" {
-  domain_name       = var.api_hostname
-  validation_method = "DNS"
+  domain_name               = var.api_hostname
+  subject_alternative_names = [var.track_hostname]
+  validation_method         = "DNS"
 
   lifecycle {
     create_before_destroy = true
@@ -49,6 +51,21 @@ resource "aws_acm_certificate_validation" "api" {
 resource "aws_route53_record" "api" {
   zone_id = aws_route53_zone.staging.zone_id
   name    = var.api_hostname
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.api.dns_name
+    zone_id                = aws_lb.api.zone_id
+    evaluate_target_health = false
+  }
+}
+
+# The hosted tracking page: an alias to the ALB, whose default action
+# forwards to the gateway (GET /t/{token} serves the page shell). The page
+# then calls the API at api.<zone> (TRACKING_PAGE_API).
+resource "aws_route53_record" "track" {
+  zone_id = aws_route53_zone.staging.zone_id
+  name    = var.track_hostname
   type    = "A"
 
   alias {

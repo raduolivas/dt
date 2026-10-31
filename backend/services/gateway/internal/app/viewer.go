@@ -77,30 +77,56 @@ type Viewer struct {
 	// Limiter applies ViewerLink. Nil disables it; a failing limiter lets
 	// the request through (it never turns an outage into errors).
 	Limiter Limiter
+	// Settings supplies the tenant's branding for the session. Nil means no
+	// branding; a failing store also yields none (branding never blocks
+	// tracking).
+	Settings ViewerSettingsStore
+}
+
+// Session is the answer to a started tracking session.
+type Session struct {
+	ViewerToken string
+	ExpiresAt   time.Time
+	Snapshot    json.RawMessage
+	TenantID    string
+	// Branding is nil for the DT defaults.
+	Branding *domain.Branding
 }
 
 // Start resolves token to its link (ErrLinkInvalid), charges the link's rate
 // limit (*RateLimitedError), reads the snapshot (ErrTrackingUnavailable) and
 // signs a viewer token bound to the link. It returns the viewer token, its
-// expiry and the snapshot.
-func (v *Viewer) Start(ctx context.Context, token string, now time.Time) (string, time.Time, json.RawMessage, error) {
+// expiry, the snapshot and the tenant's branding.
+func (v *Viewer) Start(ctx context.Context, token string, now time.Time) (Session, error) {
 	l, err := v.Links.Resolve(ctx, token, now)
 	if err != nil {
-		return "", time.Time{}, nil, err
+		return Session{}, err
 	}
 	if err := v.limit(ctx, l.ID); err != nil {
-		return "", time.Time{}, nil, err
+		return Session{}, err
 	}
 	snap, err := v.Snapshots.Snapshot(ctx, l)
 	if err != nil {
-		return "", time.Time{}, nil, fmt.Errorf("%w: %w", ErrTrackingUnavailable, err)
+		return Session{}, fmt.Errorf("%w: %w", ErrTrackingUnavailable, err)
 	}
 	jwt, exp, err := v.Tokens.Sign(viewerjwt.Claims{DeliveryID: l.DeliveryID, TenantID: l.TenantID,
 		Env: string(l.Env), LinkID: l.ID}, now)
 	if err != nil {
-		return "", time.Time{}, nil, err
+		return Session{}, err
 	}
-	return jwt, exp, snap, nil
+	return Session{ViewerToken: jwt, ExpiresAt: exp, Snapshot: snap, TenantID: l.TenantID,
+		Branding: v.branding(ctx, l.TenantID)}, nil
+}
+
+func (v *Viewer) branding(ctx context.Context, tenantID string) *domain.Branding {
+	if v.Settings == nil {
+		return nil
+	}
+	s, ok, err := v.Settings.Get(ctx, tenantID)
+	if err != nil || !ok {
+		return nil
+	}
+	return s.Branding
 }
 
 // Refresh verifies a viewer token (ErrViewerTokenInvalid), charges its

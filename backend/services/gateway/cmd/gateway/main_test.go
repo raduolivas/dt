@@ -21,6 +21,7 @@ import (
 	"github.com/raduolivas/dt/backend/pkg/ids"
 	"github.com/raduolivas/dt/backend/pkg/outbox"
 	"github.com/raduolivas/dt/backend/pkg/testkit"
+	"github.com/raduolivas/dt/backend/services/gateway/internal/domain"
 )
 
 const testRPCToken = "test-only-internal-rpc-token-0123456789"
@@ -311,5 +312,42 @@ func TestGatewayServesWhenRedisHangs(t *testing.T) {
 	t.Logf("GET /readyz with a hung redis: %d after %v", status, took)
 	if status != http.StatusOK {
 		t.Fatalf("readyz = %d %s, want 200 (redis is non-fatal for the gateway)", status, body)
+	}
+}
+
+func TestTrackPageConfigReducesCSPToOrigins(t *testing.T) {
+	t.Setenv("TRACKING_PAGE_BASE", "http://localhost:8090/page/dev/")
+	t.Setenv("TRACKING_PAGE_CDN", "http://localhost:8090")
+	t.Setenv("TRACKING_PAGE_TILES", "http://localhost:8090/tiles/amsterdam-z14.pmtiles")
+	t.Setenv("TRACKING_PAGE_API", "http://localhost:8080/v1")
+	t.Setenv("TRACKING_PAGE_CONNECT_EXTRA", "https://tiles.openfreemap.org")
+	c, err := trackPageConfig("http://localhost:8080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.API != "http://localhost:8080/v1" || c.Tiles != "http://localhost:8090/tiles/amsterdam-z14.pmtiles" {
+		t.Fatalf("JSON config lost its full URLs: %+v", c)
+	}
+	csp := domain.PageCSP("'none'", c.Origins)
+	for _, want := range []string{
+		"connect-src http://localhost:8080 ws://localhost:8080 http://localhost:8090 http://localhost:8090 https://tiles.openfreemap.org;",
+		"script-src http://localhost:8090;",
+	} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP lacks %q:\n%s", want, csp)
+		}
+	}
+	if strings.Contains(csp, "/v1") || strings.Contains(csp, ".pmtiles") {
+		t.Errorf("CSP carries a path: %s", csp)
+	}
+}
+
+func TestTrackPageConfigRejectsBadURLs(t *testing.T) {
+	for _, env := range []string{"TRACKING_PAGE_API", "TRACKING_PAGE_TILES", "TRACKING_PAGE_CDN"} {
+		t.Setenv(env, "not a url")
+		if _, err := trackPageConfig("http://localhost:8080"); err == nil || !strings.Contains(err.Error(), env) {
+			t.Errorf("%s: err = %v", env, err)
+		}
+		t.Setenv(env, "")
 	}
 }

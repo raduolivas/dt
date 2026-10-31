@@ -22,11 +22,15 @@ env:
   CLUSTER: dt-staging
   SERVICES: gateway deliveries tracking webhooks accounts
   API_URL: https://api.staging.deliveryontrack.io
+  CDN_URL: https://cdn.staging.deliveryontrack.io
+  # Immutable: a deploy writes page/<sha>/ and sdk/tracking/<sha>/ once and never deletes an older prefix, so a page
+  # opened before this deploy keeps loading its chunks.
+  CDN_CACHE_CONTROL: public, max-age=31536000, immutable
 
 jobs:
   deploy:
     # Skipped until the owner has applied staging and set the variable
-    # AWS_DEPLOY_ROLE_ARN (docs/runbooks/staging.md, step 3).
+    # repository variable AWS_DEPLOY_ROLE_ARN (docs/runbooks/staging.md, step 3).
     if: >-
       vars.AWS_DEPLOY_ROLE_ARN != '' &&
       ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
@@ -46,6 +50,23 @@ jobs:
         with:
           ref: ${{ env.SHA }}
           persist-credentials: false
+
+      # The web build runs before the AWS credentials exist in the job, so no
+      # install or build script can see them. No dependency cache: this job can
+      # deploy, and a cache is writable by other workflows.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+      - run: pnpm -C web install --frozen-lockfile
+
+      # Never the dist of make web-assets (local-stack defaults, test hooks):
+      # the script deletes both dist folders, builds with the staging API and
+      # tiles, and refuses output that names localhost or the test hook.
+      - name: Build the hosted page and the SDK for staging
+        run: scripts/web-staging-build.sh "$SHA" build/cdn-staging
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
@@ -102,28 +123,53 @@ jobs:
             echo "::warning::Staging is asleep (outside 08:00-20:00 Mon-Fri). The images are pushed and signed and the task definitions registered, but nothing is migrated or rolled out (the services never migrate themselves). Re-run this workflow during working hours, or about 10 minutes after make staging-wake, to deploy."
           fi
 
+      # Before any task definition points at them. The deploy role may only
+      # s3:PutObject under page/* and sdk/* (cp, never sync: no list or delete).
+      - name: Upload the page and the SDK to the CDN
+        run: |
+          set -euo pipefail
+          account="$(aws sts get-caller-identity --query Account --output text)"
+          aws s3 cp build/cdn-staging/ "s3://dt-staging-cdn-${account}/" --recursive \
+            --cache-control "$CDN_CACHE_CONTROL" --only-show-errors
+          echo "uploaded page/${SHA}/ and sdk/tracking/${SHA}/"
+
       # New revisions of the task definitions: the latest revision of each
       # family (so environment changes made by tofu carry over) with only
       # the service image changed. No tags: the deploy role has no
-      # ecs:TagResource.
+      # ecs:TagResource. The gateway's TRACKING_PAGE_BASE moves to this
+      # deploy's page/<sha>/ (uploaded above).
       - name: Register task definitions with the new images
         run: |
           set -euo pipefail
-          register() { # family container image
-            aws ecs describe-task-definition --task-definition "$1" --query taskDefinition --output json |
-              jq --arg c "$2" --arg img "$3" '
-                .containerDefinitions |= map(if .name == $c then .image = $img else . end)
+          register() { # family container image [page base]
+            aws ecs describe-task-definition --task-definition "$1" --query taskDefinition --output json >td-latest.json
+            if [[ -n "${4:-}" ]] && ! jq -e --arg c "$2" \
+                '.containerDefinitions[] | select(.name == $c) | .environment[] | select(.name == "TRACKING_PAGE_BASE")' \
+                td-latest.json >/dev/null; then
+              echo "::error::$1 has no TRACKING_PAGE_BASE: run make staging-up with the M4 infrastructure first (docs/runbooks/tiles.md)" >&2
+              return 1
+            fi
+            jq --arg c "$2" --arg img "$3" --arg page "${4:-}" '
+                .containerDefinitions |= map(if .name == $c then
+                    .image = $img
+                    | (if $page != "" then .environment |= map(if .name == "TRACKING_PAGE_BASE" then .value = $page else . end) else . end)
+                  else . end)
                 | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities,
-                      .registeredAt, .registeredBy, .deregisteredAt)' >td.json
+                      .registeredAt, .registeredBy, .deregisteredAt)' td-latest.json >td.json
             aws ecs register-task-definition --cli-input-json file://td.json \
               --query taskDefinition.taskDefinitionArn --output text
           }
           for svc in $SERVICES; do
             image="${REGISTRY}/dt-${svc}:${SHA}"
-            echo "TD_MIGRATE_${svc}=$(register "dt-staging-migrate-${svc}" "$svc" "$image")" >>"$GITHUB_ENV"
-            echo "TD_${svc}=$(register "dt-staging-${svc}" "$svc" "$image")" >>"$GITHUB_ENV"
+            page=""
+            [[ "$svc" != gateway ]] || page="${CDN_URL}/page/${SHA}/"
+            # Plain assignments, so set -e stops on a failed register.
+            migrate_td="$(register "dt-staging-migrate-${svc}" "$svc" "$image" "$page")"
+            run_td="$(register "dt-staging-${svc}" "$svc" "$image" "$page")"
+            echo "TD_MIGRATE_${svc}=${migrate_td}" >>"$GITHUB_ENV"
+            echo "TD_${svc}=${run_td}" >>"$GITHUB_ENV"
           done
-          rm -f td.json
+          rm -f td.json td-latest.json
 
       # Step 2. Roles and passwords first (idempotent), then each service's
       # migrations as its mig_<svc> role (MIGRATIONS=only), one at a time.

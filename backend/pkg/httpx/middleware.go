@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
@@ -51,8 +52,27 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
+// CredentialPathPrefixes are URL path prefixes whose next segment is a bearer
+// credential (a tracking link token). Neither the access log nor trace spans
+// may carry it: RedactPath replaces the segment with a placeholder. The
+// gateway's hosted page is the one such route.
+var CredentialPathPrefixes = []string{"/t/"}
+
+// RedactPath returns path with the credential segment after any of
+// CredentialPathPrefixes replaced by "{token}" (the rest of the path is
+// dropped, as the credential is the last segment).
+func RedactPath(path string) string {
+	for _, p := range CredentialPathPrefixes {
+		if strings.HasPrefix(path, p) {
+			return p + "{token}"
+		}
+	}
+	return path
+}
+
 // AccessLog logs one line per request. It logs the path only, never the
-// query string, which may carry tokens.
+// query string, which may carry tokens, and passes the path through
+// RedactPath, whichever handler answered (200, 405, 429, ...).
 func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +84,7 @@ func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
 			}
 			log.InfoContext(r.Context(), "http_request",
 				"method", r.Method,
-				"path", r.URL.Path,
+				"path", RedactPath(r.URL.Path),
 				"status", rec.status,
 				"duration_ms", time.Since(start).Milliseconds(),
 				"request_id", RequestIDFrom(r.Context()))

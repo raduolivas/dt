@@ -311,6 +311,56 @@ func (q *Queries) GetTrackingLinkByHash(ctx context.Context, tokenHash []byte) (
 	return i, err
 }
 
+const getViewerLogo = `-- name: GetViewerLogo :one
+SELECT logo, logo_content_type FROM tenant_viewer_settings
+WHERE tenant_id = $1 AND logo_sha256 = $2 AND logo IS NOT NULL
+`
+
+type GetViewerLogoParams struct {
+	TenantID   string
+	LogoSha256 pgtype.Text
+}
+
+type GetViewerLogoRow struct {
+	Logo            []byte
+	LogoContentType pgtype.Text
+}
+
+func (q *Queries) GetViewerLogo(ctx context.Context, arg GetViewerLogoParams) (GetViewerLogoRow, error) {
+	row := q.db.QueryRow(ctx, getViewerLogo, arg.TenantID, arg.LogoSha256)
+	var i GetViewerLogoRow
+	err := row.Scan(&i.Logo, &i.LogoContentType)
+	return i, err
+}
+
+const getViewerSettings = `-- name: GetViewerSettings :one
+SELECT embed_origins, display_name, primary_color, theme, logo_content_type, logo_sha256
+FROM tenant_viewer_settings WHERE tenant_id = $1
+`
+
+type GetViewerSettingsRow struct {
+	EmbedOrigins    []string
+	DisplayName     pgtype.Text
+	PrimaryColor    pgtype.Text
+	Theme           pgtype.Text
+	LogoContentType pgtype.Text
+	LogoSha256      pgtype.Text
+}
+
+func (q *Queries) GetViewerSettings(ctx context.Context, tenantID string) (GetViewerSettingsRow, error) {
+	row := q.db.QueryRow(ctx, getViewerSettings, tenantID)
+	var i GetViewerSettingsRow
+	err := row.Scan(
+		&i.EmbedOrigins,
+		&i.DisplayName,
+		&i.PrimaryColor,
+		&i.Theme,
+		&i.LogoContentType,
+		&i.LogoSha256,
+	)
+	return i, err
+}
+
 const insertAuditEntry = `-- name: InsertAuditEntry :exec
 INSERT INTO audit_log (id, tenant_id, environment, actor_type, actor_id, action, target, status, ip, user_agent, request_id, occurred_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
@@ -541,6 +591,44 @@ func (q *Queries) LockIdempotencyRecord(ctx context.Context, arg LockIdempotency
 		&i.ExpiresAt,
 	)
 	return i, err
+}
+
+const putViewerSettings = `-- name: PutViewerSettings :exec
+INSERT INTO tenant_viewer_settings (tenant_id, embed_origins, display_name, primary_color, theme, logo, logo_content_type, logo_sha256, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+ON CONFLICT (tenant_id) DO UPDATE SET
+  embed_origins = EXCLUDED.embed_origins, display_name = EXCLUDED.display_name, primary_color = EXCLUDED.primary_color,
+  theme = EXCLUDED.theme, logo = EXCLUDED.logo, logo_content_type = EXCLUDED.logo_content_type,
+  logo_sha256 = EXCLUDED.logo_sha256, updated_at = EXCLUDED.updated_at
+WHERE tenant_viewer_settings.updated_at < EXCLUDED.updated_at
+`
+
+type PutViewerSettingsParams struct {
+	TenantID        string
+	EmbedOrigins    []string
+	DisplayName     pgtype.Text
+	PrimaryColor    pgtype.Text
+	Theme           pgtype.Text
+	Logo            []byte
+	LogoContentType pgtype.Text
+	LogoSha256      pgtype.Text
+	UpdatedAt       time.Time
+}
+
+// An event not newer than the stored one changes nothing.
+func (q *Queries) PutViewerSettings(ctx context.Context, arg PutViewerSettingsParams) error {
+	_, err := q.db.Exec(ctx, putViewerSettings,
+		arg.TenantID,
+		arg.EmbedOrigins,
+		arg.DisplayName,
+		arg.PrimaryColor,
+		arg.Theme,
+		arg.Logo,
+		arg.LogoContentType,
+		arg.LogoSha256,
+		arg.UpdatedAt,
+	)
+	return err
 }
 
 const reclaimIdempotencyRecord = `-- name: ReclaimIdempotencyRecord :exec

@@ -46,8 +46,13 @@ func TestVerify(t *testing.T) {
 	pepper := bytes.Repeat([]byte{7}, 32)
 	k, _ := apikey.Generate(apikey.Test)
 	h := apikey.Hash(pepper, k.Plaintext)
+	// Change the last character to a different one (a fixed "x" equals the key 1 time in ~60).
+	other := "x"
+	if strings.HasSuffix(k.Plaintext, "x") {
+		other = "y"
+	}
 	if !apikey.Verify(pepper, k.Plaintext, h) || apikey.Verify(bytes.Repeat([]byte{8}, 32), k.Plaintext, h) ||
-		apikey.Verify(pepper, k.Plaintext[:len(k.Plaintext)-1]+"x", h) {
+		apikey.Verify(pepper, k.Plaintext[:len(k.Plaintext)-1]+other, h) {
 		t.Fatal("verify")
 	}
 }

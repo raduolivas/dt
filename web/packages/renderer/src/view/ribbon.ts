@@ -1,14 +1,35 @@
 import * as THREE from 'three';
+import type { LatLng, TrackingSnapshot } from '@dt/contract';
 import type { Vec2 } from '../engine/geo';
+import { snapToLeg } from './motion';
+import { activeLeg, activeLegKind, isFinal, toLatLng } from '../snapshot';
 
-/** Flat ribbon (road-following line) lying at height `y`. */
-export function buildRibbon(points: Vec2[], width: number, y: number): THREE.BufferGeometry {
-  const pos: number[] = [];
-  const idx: number[] = [];
+/**
+ * Writes a flat ribbon (road-following line) lying at height `y` into `g`, reusing its buffers: they only grow (by
+ * doubling) when the route needs more room, so a ribbon refreshed every frame allocates nothing. Draw range is the
+ * part in use. The bounding sphere is not kept up to date: meshes using this geometry turn frustum culling off.
+ */
+export function fillRibbon(g: THREE.BufferGeometry, points: Vec2[], width: number, y: number): THREE.BufferGeometry {
+  const segs = Math.max(0, points.length - 1);
+  let posAttr = g.getAttribute('position') as THREE.BufferAttribute | undefined;
+  let index = g.getIndex();
+  if (!posAttr || posAttr.count < segs * 4 || !index) {
+    const cap = Math.max(16, segs * 4, posAttr ? posAttr.count * 2 : 0);
+    posAttr = new THREE.BufferAttribute(new Float32Array(cap * 3), 3);
+    posAttr.setUsage(THREE.DynamicDrawUsage);
+    g.setAttribute('position', posAttr);
+    index = new THREE.BufferAttribute(new Uint32Array((cap / 4) * 6), 1);
+    index.setUsage(THREE.DynamicDrawUsage);
+    g.setIndex(index);
+  }
+  const pos = posAttr.array as Float32Array;
+  const idx = index.array as Uint32Array;
   const hw = width / 2;
+  let v = 0; // vertices written
+  let n = 0; // indices written
   for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1];
-    const b = points[i];
+    const a = points[i - 1]!;
+    const b = points[i]!;
     const dx = b.x - a.x;
     const dz = b.z - a.z;
     const len = Math.hypot(dx, dz);
@@ -22,41 +43,53 @@ export function buildRibbon(points: Vec2[], width: number, y: number): THREE.Buf
     const az = a.z - uz * hw;
     const bx = b.x + ux * hw;
     const bz = b.z + uz * hw;
-    const base = pos.length / 3;
-    pos.push(
-      ax + nx * hw, y, az + nz * hw,
-      ax - nx * hw, y, az - nz * hw,
-      bx - nx * hw, y, bz - nz * hw,
-      bx + nx * hw, y, bz + nz * hw,
-    );
-    idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    let o = v * 3;
+    pos[o++] = ax + nx * hw; pos[o++] = y; pos[o++] = az + nz * hw;
+    pos[o++] = ax - nx * hw; pos[o++] = y; pos[o++] = az - nz * hw;
+    pos[o++] = bx - nx * hw; pos[o++] = y; pos[o++] = bz - nz * hw;
+    pos[o++] = bx + nx * hw; pos[o++] = y; pos[o++] = bz + nz * hw;
+    idx[n++] = v; idx[n++] = v + 1; idx[n++] = v + 2;
+    idx[n++] = v; idx[n++] = v + 2; idx[n++] = v + 3;
+    v += 4;
   }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setIndex(idx);
+  posAttr.needsUpdate = true;
+  index.needsUpdate = true;
+  g.setDrawRange(0, n);
   return g;
 }
 
-/** The part of `points` that is still ahead of position `p`. */
-export function trimRouteFrom(points: Vec2[], p: Vec2): Vec2[] {
-  if (points.length < 2) return points;
-  let best = 0;
-  let bestD = Infinity;
-  let bestPt: Vec2 = points[0];
-  for (let i = 0; i < points.length - 1; i++) {
-    const a = points[i];
-    const b = points[i + 1];
-    const abx = b.x - a.x;
-    const abz = b.z - a.z;
-    const l2 = abx * abx + abz * abz || 1;
-    const t = Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.z - a.z) * abz) / l2));
-    const q = { x: a.x + abx * t, z: a.z + abz * t };
-    const d = Math.hypot(p.x - q.x, p.z - q.z);
-    if (d < bestD) {
-      bestD = d;
-      best = i;
-      bestPt = q;
-    }
-  }
-  return [bestPt, ...points.slice(best + 1)];
+/** A new flat ribbon geometry; see `fillRibbon`. */
+export function buildRibbon(points: Vec2[], width: number, y: number): THREE.BufferGeometry {
+  return fillRibbon(new THREE.BufferGeometry(), points, width, y);
+}
+
+/**
+ * The part of `leg` still ahead of the courier: from its position snapped onto the leg (within 25 m) to the end.
+ * A courier drawn raw (further from the leg) leaves the leg whole.
+ */
+export function trimLegFrom(leg: Vec2[], courier: Vec2): Vec2[] {
+  const snap = snapToLeg(courier, leg);
+  return snap ? [snap.p, ...leg.slice(snap.index + 1)] : leg;
+}
+
+/**
+ * The two route ribbons for a snapshot: `active` is the leg the courier is on (`activeLeg()`), from the courier when
+ * it is drawn; `next` is the delivery leg while the courier is still on the way to the pickup. Final: none.
+ */
+export function routeLegs(
+  s: TrackingSnapshot,
+  toLocal: (p: LatLng) => Vec2,
+  courier: Vec2 | null,
+): { active: Vec2[]; next: Vec2[] } {
+  if (isFinal(s.status)) return { active: [], next: [] };
+  const leg = activeLeg(s).map(toLocal);
+  return {
+    active: courier ? trimLegFrom(leg, courier) : leg,
+    next: activeLegKind(s) === 'to_pickup' ? s.route.to_dropoff.map((p) => toLocal(toLatLng(p))) : [],
+  };
+}
+
+/** Ribbon width in metres: `minM` at close zoom, never thinner than `minPx` screen pixels when zoomed out. */
+export function ribbonWidth(minM: number, minPx: number, metresPerPx: number): number {
+  return Math.max(minM, minPx * metresPerPx);
 }

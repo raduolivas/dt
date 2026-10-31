@@ -256,7 +256,10 @@ func (c *recorder) flush() {
 		c.w.WriteHeader(c.status)
 	}
 	if c.buf.Len() > 0 {
-		_, _ = c.w.Write(c.buf.Bytes())
+		// The buffered body is the wrapped handler's own response (status and
+		// headers already set by it), replayed as-is: nothing from the request
+		// is written here.
+		_, _ = c.w.Write(c.buf.Bytes()) //nolint:gosec // G705: see above
 		c.buf.Reset()
 	}
 }
