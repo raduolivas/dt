@@ -13,8 +13,8 @@
     "@dt/tracking": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "24.19.2",
-    "vite": "^8.3.4"
+    "@types/node": "26.6.5",
+    "vite": "^8.3.5"
   },
   "sizeLimit": {
     "dist/entry.js": 254206,
