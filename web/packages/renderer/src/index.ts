@@ -108,6 +108,8 @@ export function createRenderer(container: HTMLElement, o: RendererOptions = {}, 
   let tilesOnScreen = false;
   let tilesTimer: ReturnType<typeof setTimeout> | null = null;
   let contextTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The WebGL context is lost and not restored: the fallback timer runs while the page is visible (R33). */
+  let contextLost = false;
   let alive = true;
   const clearTimers = () => {
     if (tilesTimer !== null) clearTimeout(tilesTimer);
@@ -138,8 +140,8 @@ export function createRenderer(container: HTMLElement, o: RendererOptions = {}, 
           o.onTiles?.(t);
         },
         onContext: (lost) => {
-          if (contextTimer !== null) clearTimeout(contextTimer);
-          contextTimer = lost ? setTimeout(toFallback, CONTEXT_FALLBACK_MS) : null;
+          contextLost = lost;
+          armContextTimer();
         },
       });
     } catch (err) {
@@ -158,15 +160,29 @@ export function createRenderer(container: HTMLElement, o: RendererOptions = {}, 
   let view: View = scene ?? makeFallback();
   container.appendChild(attribution); // over the canvas
 
+  /**
+   * A lost context gets 3 s of visible time to come back. A hidden page (iOS drops contexts in the background) does
+   * not count: the timer starts, from the beginning, when the page is visible again and the context is still lost.
+   */
+  function armContextTimer() {
+    if (contextTimer !== null) clearTimeout(contextTimer);
+    contextTimer = null;
+    const visible = typeof document === 'undefined' || document.visibilityState !== 'hidden';
+    if (contextLost && scene && alive && visible) contextTimer = setTimeout(toFallback, CONTEXT_FALLBACK_MS);
+  }
+  const onVisibility = () => armContextTimer();
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility);
+
   /** No WebGL picture to show (the context did not come back): the same handle draws the 2D map from now on. */
-  const toFallback = () => {
+  function toFallback() {
     clearTimers();
+    contextLost = false;
     if (!scene || !alive) return;
-    scene.dispose();
+    scene.dispose(); // releases the WebGL context (forceContextLoss) after removing its context listeners
     scene = null;
     view = makeFallback();
     container.appendChild(attribution);
-  };
+  }
 
   /** The map tiles did not come. */
   const tilesMissing = () => {
@@ -242,6 +258,7 @@ export function createRenderer(container: HTMLElement, o: RendererOptions = {}, 
       alive = false;
       clearTimers();
       media?.removeEventListener?.('change', onMedia);
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility);
       cancelAnimationFrame(raf);
       view.dispose();
       attribution.remove();

@@ -170,7 +170,16 @@ export function mockWebGL(doc: { createElement(tag: string): unknown } = documen
       r.renders++;
       r.lastScene = scene;
     },
-    dispose() {},
+    /** `forceContextLoss` and `dispose` calls, in order. */
+    calls: [] as string[],
+    /** Like the browser: the canvas fires `webglcontextlost` (at once here, which is stricter). */
+    forceContextLoss() {
+      r.calls.push('forceContextLoss');
+      canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    },
+    dispose() {
+      r.calls.push('dispose');
+    },
   };
   return r as unknown as typeof r & THREE.WebGLRenderer;
 }

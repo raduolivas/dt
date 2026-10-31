@@ -88,6 +88,8 @@ describe('createRenderer', () => {
     expect(fallbackCanvas()).toBeDefined();
     expect(dom.container.children).not.toContain(gl.domElement);
     expect(attribution()?.textContent).toBe(ATTRIBUTION);
+    // the WebGL context is released at once, not left to GC (spec 6.8)
+    expect(gl.calls).toEqual(['forceContextLoss', 'dispose']);
     // the latest snapshot is drawn, and later ones too
     r.update({ ...snap, version: 2 });
     dom.frame();
@@ -107,6 +109,7 @@ describe('createRenderer', () => {
     expect(fallbackCanvas()).toBeDefined();
     expect(dom.container.children).not.toContain(gl.domElement);
     expect(attribution()?.textContent).toBe(ATTRIBUTION);
+    expect(gl.calls).toEqual(['forceContextLoss', 'dispose']);
     // a late restore changes nothing: the fallback stays
     gl.domElement.dispatchEvent(new Event('webglcontextrestored'));
     r.update({ ...snap, version: 2 });
@@ -133,6 +136,109 @@ describe('createRenderer', () => {
     expect(fallbackCanvas()).toBeUndefined();
     expect(gl.renders).toBeGreaterThan(renders); // drawing again
     r.destroy();
+  });
+
+  it('destroy releases the WebGL context after removing the context listeners', async () => {
+    vi.useFakeTimers();
+    const gl = mockWebGL();
+    const r = createRenderer(container(), { reducedMotion: true }, { webgl: () => gl });
+    r.update(snap);
+    r.destroy();
+    expect(gl.calls).toEqual(['forceContextLoss', 'dispose']);
+    // the forced loss started no fallback timer and no rebuild
+    expect(vi.getTimerCount()).toBe(0);
+    expect(fallbackCanvas()).toBeUndefined();
+    expect(gl.shadowMap.needsUpdate).toBe(false);
+  });
+
+  it('a fallback swap releases the WebGL context without starting another swap', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubGlobal('fetch', () => Promise.reject(new Error('offline')));
+    const gl = mockWebGL();
+    const r = createRenderer(
+      container(),
+      { reducedMotion: true, tiles: { kind: 'pmtiles', url: 'https://tiles.invalid/nl.pmtiles' } },
+      { webgl: () => gl },
+    );
+    r.update(snap);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(gl.calls).toEqual(['forceContextLoss', 'dispose']);
+    expect(vi.getTimerCount()).toBe(1); // the next animation frame only: the forced loss armed no 3 s context timer
+    r.destroy();
+    expect(gl.calls).toEqual(['forceContextLoss', 'dispose']); // released once
+  });
+
+  describe('context timer and page visibility (R33)', () => {
+    const hidden = () => {
+      Object.assign(document, { visibilityState: 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+    const visible = () => {
+      Object.assign(document, { visibilityState: 'visible' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+
+    it('a context lost while hidden starts the 3 s timer only when the page is visible again', async () => {
+      vi.useFakeTimers();
+      const gl = mockWebGL();
+      const r = createRenderer(container(), { reducedMotion: true }, { webgl: () => gl });
+      r.update(snap);
+      hidden();
+      gl.domElement.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fallbackCanvas()).toBeUndefined();
+      visible();
+      await vi.advanceTimersByTimeAsync(2_900);
+      expect(fallbackCanvas()).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fallbackCanvas()).toBeDefined();
+      r.destroy();
+    });
+
+    it('a context restored before the page is visible again starts no timer', async () => {
+      vi.useFakeTimers();
+      const gl = mockWebGL();
+      const r = createRenderer(container(), { reducedMotion: true }, { webgl: () => gl });
+      r.update(snap);
+      hidden();
+      gl.domElement.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+      await vi.advanceTimersByTimeAsync(10_000);
+      gl.domElement.dispatchEvent(new Event('webglcontextrestored'));
+      visible();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(fallbackCanvas()).toBeUndefined();
+      r.destroy();
+    });
+
+    it('the timer pauses when the page is hidden and starts over when it is visible', async () => {
+      vi.useFakeTimers();
+      const gl = mockWebGL();
+      const r = createRenderer(container(), { reducedMotion: true }, { webgl: () => gl });
+      r.update(snap);
+      gl.domElement.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+      await vi.advanceTimersByTimeAsync(2_000);
+      hidden();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fallbackCanvas()).toBeUndefined();
+      visible();
+      await vi.advanceTimersByTimeAsync(2_900);
+      expect(fallbackCanvas()).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fallbackCanvas()).toBeDefined();
+      r.destroy();
+    });
+
+    it('destroy removes the visibility listener', () => {
+      const add = vi.spyOn(document, 'addEventListener');
+      const remove = vi.spyOn(document, 'removeEventListener');
+      const gl = mockWebGL();
+      const r = createRenderer(container(), { reducedMotion: true }, { webgl: () => gl });
+      const added = add.mock.calls.filter(([t]) => t === 'visibilitychange');
+      expect(added).toHaveLength(1);
+      r.destroy();
+      expect(remove.mock.calls.filter(([t]) => t === 'visibilitychange').map(([, f]) => f)).toEqual([added[0]![1]]);
+    });
   });
 
   it('cancels the context timer on destroy', async () => {

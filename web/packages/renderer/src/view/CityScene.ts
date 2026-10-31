@@ -669,6 +669,9 @@ export class CityScene {
     this.courierMats.forEach((m) => m.dispose());
     (this.courierGlow.material as THREE.Material).dispose();
     this.storeAccent.dispose();
+    // Release the context now instead of at GC (browsers cap live contexts at about 8-16). The context listeners are
+    // gone already, so this loss neither arms the fallback timer nor rebuilds anything.
+    this.renderer.forceContextLoss();
     this.renderer.dispose();
     this.renderer.domElement.remove();
     Object.values(this.labels).forEach((l) => l.remove());
