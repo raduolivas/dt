@@ -1,0 +1,33 @@
+{
+  "name": "@dt/courier",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build && node scripts/size.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src scripts"
+  },
+  "dependencies": {
+    "@dt/contract": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "fake-indexeddb": "^6.2.5",
+    "happy-dom": "21.0.4",
+    "vite": "^8.3.4",
+    "vitest": "5.0.5"
+  },
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "sizeLimit": {
+    "dist/courier.js": 4730
+  }
+}
