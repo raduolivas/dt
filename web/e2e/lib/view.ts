@@ -85,7 +85,14 @@ export async function record(target: Page | Frame): Promise<void> {
     };
     window.dtSamples = samples;
     take();
-    new MutationObserver(take).observe(root, { subtree: true, childList: true, characterData: true });
+    // attributes too: the scene shows and hides its labels with `style` (and marks them with `class`)
+    new MutationObserver(take).observe(root, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['style', 'class'],
+    });
   });
 }
 
