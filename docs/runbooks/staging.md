@@ -108,6 +108,13 @@ The tenant settings are what `scripts/smoke-m3.sh` expects when it runs with `DT
 
 `infra/aws/staging/cdn.tf` adds the CDN (`cdn.staging.deliveryontrack.io`), the `track.staging.deliveryontrack.io` host and the gateway's `TRACKING_PAGE_*` settings; the deploy builds and uploads the page and the SDK. Owner steps (apply, `make tiles-upload`, first deploy, check on a phone): `docs/runbooks/tiles.md`.
 
+**The courier page (M5).** `infra/aws/staging/cdn.tf` also adds a second CloudFront distribution, `courier.staging.deliveryontrack.io`, over `courier/current/` in the same bucket, and the gateway's `COURIER_URL_BASE` and courier signing keys. The deploy uploads `courier/<sha>/` and refreshes `courier/current/` only after the services are stable (see Deploys). It is not applied yet (D28); the first `make staging-up` after the AWS resume creates it. After the first deploy, check:
+
+- `https://courier.staging.deliveryontrack.io/` answers 200 with the courier page, and the response headers carry `Content-Security-Policy` (with `frame-ancestors 'none'`), `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex`.
+- Start a link session with a test key (`POST /v1/courier-sessions`, `mode: link`), open the `link_url` on the iPhone, and check consent, start, a simulated delivery and its taps. The customer page shows the courier moving.
+- Record the phone to viewer latency on the courier path and the battery use on the iPhone SE in `docs/m5-followups.md`.
+- Rollback of the page is a copy of `courier/<old sha>/` over `courier/current/` by the owner (see `docs/m5-followups.md`).
+
 ## Operating staging
 
 ### Working hours

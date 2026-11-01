@@ -32,4 +32,7 @@ regexes = [
   '''^Xk3m9QpL2vN7aB4cD8eF1g$''',
   '''^Zr7wT2nKd9sH4yJ6uB3xQa$''',
   '''^eyJhbGciOiJFZERTQSIsImtpZCI6InYxIn0\.eyJhdWQiOiJ2aWV3ZXIifQ\.(c2lnbmF0dXJl|bmV3c2ln)$''',
+  # courier session examples (M5): a dummy courier access token and three placeholder refresh tokens
+  '''^eyJhbGciOiJFZERTQSIsImtpZCI6ImMxIn0\.eyJhdWQiOiJjb3VyaWVyIn0\.c2ln$''',
+  '''^rt_(dGhpcyBpcyBhbiBleGFtcGxlIHJlZnJlc2ggdG9rZW4|bmV3IGV4YW1wbGUgcmVmcmVzaCB0b2tlbiAxMjM)$''',
 ]
