@@ -60,7 +60,7 @@ export default defineConfig({
     },
     {
       name: 'iphone-14',
-      testIgnore: [/look\.spec/, /fallback\.spec/],
+      testIgnore: [/look\.spec/, /fallback\.spec/, /courier\.spec/], // courier.spec runs on iphone-se and desktop-chromium
       use: {
         browserName: 'webkit',
         userAgent: devices['iPhone 14'].userAgent,
@@ -83,12 +83,12 @@ export default defineConfig({
     },
     {
       name: 'desktop-webkit',
-      testIgnore: [/look\.spec/, /fallback\.spec/],
+      testIgnore: [/look\.spec/, /fallback\.spec/, /courier\.spec/], // courier.spec runs on iphone-se and desktop-chromium
       use: { ...devices['Desktop Safari'] },
     },
     {
       name: 'desktop-firefox',
-      testIgnore: [/look\.spec/, /fallback\.spec/],
+      testIgnore: [/look\.spec/, /fallback\.spec/, /courier\.spec/], // courier.spec runs on iphone-se and desktop-chromium
       use: { ...devices['Desktop Firefox'] },
     },
     {
