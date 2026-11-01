@@ -46,6 +46,22 @@ export function fakeApi() {
     offline: false,
     deliveries: [delivery()] as CourierDelivery[],
     tokenSeq: 0,
+    /** event_id -> the delivery as it was answered: the server's duplicate detection (the real gateway, M5-R16). */
+    applied: new Map<string, CourierDelivery>(),
+    /**
+     * What the events route does: a known event_id is `duplicate` whatever the delivery's status now; a new one is
+     * applied, and a final one (delivered, failed) takes the delivery off the courier's list, as the real listing does.
+     */
+    event(call: Call): Response {
+      const prev = api.applied.get(call.body.event_id);
+      if (prev) return json(200, { outcome: 'duplicate', delivery: prev });
+      const id = call.path.split('/')[3];
+      const final = call.body.type === 'delivered' || call.body.type === 'failed';
+      const d = delivery(id, final ? { status: call.body.type, next_actions: [] } : { status: 'at_pickup' });
+      api.applied.set(call.body.event_id, d);
+      if (final) api.deliveries = api.deliveries.filter((x) => x.id !== id);
+      return json(200, { outcome: 'applied', delivery: d });
+    },
     sessionEnd: T0 + SESSION_MS,
     /** Queue a one-shot answer for "METHOD /path" (the path without query or ids is matched by prefix). */
     handle(route: string, h: Handler) {
@@ -83,7 +99,7 @@ export function fakeApi() {
         case 'POST /courier/locations':
           return json(200, { accepted: call.body.fixes.length, dropped: 0 });
         case 'POST /courier/deliveries/:id/events':
-          return json(200, { outcome: 'applied', delivery: delivery(path.split('/')[3], { status: 'at_pickup' }) });
+          return api.event(call);
         case 'POST /courier/session/end':
           return json(204);
         default:

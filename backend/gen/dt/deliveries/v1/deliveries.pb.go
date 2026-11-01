@@ -1363,15 +1363,20 @@ func (x *AssignCourierResponse) GetDelivery() *Delivery {
 }
 
 type ReportEventRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Scope         *Scope                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
-	Id            string                 `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"` // delivery id
-	EventId       string                 `protobuf:"bytes,3,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
-	Type          string                 `protobuf:"bytes,4,opt,name=type,proto3" json:"type,omitempty"`                               // at_pickup | pickup_confirmed | arriving | delivered | failed
-	OccurredAt    *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=occurred_at,json=occurredAt,proto3" json:"occurred_at,omitempty"` // unset = receipt time
-	By            string                 `protobuf:"bytes,6,opt,name=by,proto3" json:"by,omitempty"`                                   // "partner" | "store" | "courier"; only for pickup_confirmed
-	Reason        string                 `protobuf:"bytes,7,opt,name=reason,proto3" json:"reason,omitempty"`
-	Actor         string                 `protobuf:"bytes,8,opt,name=actor,proto3" json:"actor,omitempty"` // "" or "partner" | "courier"; the gateway never sets it
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Scope      *Scope                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	Id         string                 `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"` // delivery id
+	EventId    string                 `protobuf:"bytes,3,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	Type       string                 `protobuf:"bytes,4,opt,name=type,proto3" json:"type,omitempty"`                               // at_pickup | pickup_confirmed | arriving | delivered | failed
+	OccurredAt *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=occurred_at,json=occurredAt,proto3" json:"occurred_at,omitempty"` // unset = receipt time
+	By         string                 `protobuf:"bytes,6,opt,name=by,proto3" json:"by,omitempty"`                                   // "partner" | "store" | "courier"; only for pickup_confirmed
+	Reason     string                 `protobuf:"bytes,7,opt,name=reason,proto3" json:"reason,omitempty"`
+	Actor      string                 `protobuf:"bytes,8,opt,name=actor,proto3" json:"actor,omitempty"` // "" or "partner" | "courier"
+	// courier_id, when set (the gateway, for a courier session), is an
+	// ownership guard checked under the delivery's row lock: a delivery not
+	// assigned to this courier answers NotFound, whatever its status. Unset
+	// (a partner report) means no guard.
+	CourierId     string `protobuf:"bytes,9,opt,name=courier_id,json=courierId,proto3" json:"courier_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1458,6 +1463,13 @@ func (x *ReportEventRequest) GetReason() string {
 func (x *ReportEventRequest) GetActor() string {
 	if x != nil {
 		return x.Actor
+	}
+	return ""
+}
+
+func (x *ReportEventRequest) GetCourierId() string {
+	if x != nil {
+		return x.CourierId
 	}
 	return ""
 }
@@ -2426,7 +2438,7 @@ const file_dt_deliveries_v1_deliveries_proto_rawDesc = "" +
 	"\n" +
 	"courier_id\x18\x03 \x01(\tR\tcourierId\"O\n" +
 	"\x15AssignCourierResponse\x126\n" +
-	"\bdelivery\x18\x01 \x01(\v2\x1a.dt.deliveries.v1.DeliveryR\bdelivery\"\xfd\x01\n" +
+	"\bdelivery\x18\x01 \x01(\v2\x1a.dt.deliveries.v1.DeliveryR\bdelivery\"\x9c\x02\n" +
 	"\x12ReportEventRequest\x12-\n" +
 	"\x05scope\x18\x01 \x01(\v2\x17.dt.deliveries.v1.ScopeR\x05scope\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x19\n" +
@@ -2436,7 +2448,9 @@ const file_dt_deliveries_v1_deliveries_proto_rawDesc = "" +
 	"occurredAt\x12\x0e\n" +
 	"\x02by\x18\x06 \x01(\tR\x02by\x12\x16\n" +
 	"\x06reason\x18\a \x01(\tR\x06reason\x12\x14\n" +
-	"\x05actor\x18\b \x01(\tR\x05actor\"\x8a\x01\n" +
+	"\x05actor\x18\b \x01(\tR\x05actor\x12\x1d\n" +
+	"\n" +
+	"courier_id\x18\t \x01(\tR\tcourierId\"\x8a\x01\n" +
 	"\x13ReportEventResponse\x126\n" +
 	"\bdelivery\x18\x01 \x01(\v2\x1a.dt.deliveries.v1.DeliveryR\bdelivery\x12\x18\n" +
 	"\aoutcome\x18\x02 \x01(\tR\aoutcome\x12!\n" +

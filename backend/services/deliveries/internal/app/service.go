@@ -103,8 +103,20 @@ func (s *Service) Assign(ctx context.Context, sc Scope, deliveryID, courierID st
 // Report applies a status report, stamping ReceivedAt from the clock, and
 // returns what the domain did with it.
 func (s *Service) Report(ctx context.Context, sc Scope, id string, r domain.Report) (*domain.Delivery, domain.Outcome, error) {
+	return s.ReportFor(ctx, sc, id, "", r)
+}
+
+// ReportFor is Report with an ownership guard: when courierID is set, a
+// delivery that is not assigned to that courier, whatever its status, is
+// ErrNotFound. The guard runs under the row lock, so a reassignment cannot
+// slip between the check and the report, and a final delivery's own
+// repeated event still answers duplicate.
+func (s *Service) ReportFor(ctx context.Context, sc Scope, id, courierID string, r domain.Report) (*domain.Delivery, domain.Outcome, error) {
 	var out domain.Outcome
 	d, err := s.Repo.Mutate(ctx, sc, id, func(d *domain.Delivery) ([]domain.Event, error) {
+		if courierID != "" && !d.AssignedTo(courierID) {
+			return nil, ErrNotFound
+		}
 		r.ReceivedAt = s.Clock.Now()
 		o, evts, err := d.Report(r)
 		out = o

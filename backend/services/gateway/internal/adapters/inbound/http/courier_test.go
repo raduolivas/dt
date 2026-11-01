@@ -77,6 +77,7 @@ func newCourierEdge(t *testing.T, lim app.Limiter) *courierEdge {
 	e.dels.open = map[string][]*deliveriesv1.CourierDelivery{
 		openKey(tenantID, eventsv1.Environment_ENVIRONMENT_TEST, couID): {courierDelivery(delID)},
 	}
+	e.dels.assigned = map[string]string{openKey(tenantID, eventsv1.Environment_ENVIRONMENT_TEST, delID): couID}
 	log := logx.New(e.logs, slog.LevelDebug, "gateway")
 	mux := http.NewServeMux()
 	httpapi.Mount(mux, httpapi.Routes(httpapi.Deps{}), httpapi.Middleware{
@@ -360,17 +361,47 @@ func TestEventNotAssigned404(t *testing.T) {
 	e := newCourierEdge(t, nil)
 	tok := e.sdk(partnerTest).Tokens.AccessToken
 	// A real delivery of the tenant that is not this courier's, and an id
-	// that exists nowhere, look the same.
+	// that exists nowhere, look the same: deliveries refuses both under its
+	// row lock because the gateway sends the token's courier as the guard.
 	for _, id := range []string{delLive, "del_01j9z3k8m2q4r6s8t0v2w4x6zz"} {
 		wantProblem(t, e.do(cReq("POST", "/v1/courier/deliveries/"+id+"/events", tok, evtBody)), http.StatusNotFound, "not_found")
-	}
-	for _, c := range e.dels.calls {
-		if c == "event" {
-			t.Fatal("ReportEvent called for a delivery that is not assigned")
+		req := e.dels.last().(*deliveriesv1.ReportEventRequest)
+		if req.GetCourierId() != couID || req.GetId() != id {
+			t.Fatalf("ReportEvent = %v", req)
 		}
 	}
 	// A malformed id is a 400, not a lookup.
 	wantProblem(t, e.do(cReq("POST", "/v1/courier/deliveries/x/events", tok, evtBody)), http.StatusBadRequest, "validation_failed")
+}
+
+// TestEventRetryAfterFinalIsDuplicate pins Review Focus 4 on a final tap: a
+// delivered report whose answer was lost is retried with the same event id
+// after the delivery left the courier's open list, and the answer is still
+// 200 duplicate, not 404.
+func TestEventRetryAfterFinalIsDuplicate(t *testing.T) {
+	t.Parallel()
+	e := newCourierEdge(t, nil)
+	tok := e.sdk(partnerTest).Tokens.AccessToken
+	body := `{"event_id":"e-final","type":"delivered"}`
+	if rec := e.do(cReq("POST", "/v1/courier/deliveries/"+delID+"/events", tok, body)); rec.Code != http.StatusOK {
+		t.Fatalf("delivered = %d: %s", rec.Code, rec.Body.String())
+	}
+	// The delivery is final now: no longer among the courier's open ones.
+	e.dels.mu.Lock()
+	e.dels.open = map[string][]*deliveriesv1.CourierDelivery{}
+	e.dels.del.Status = "delivered"
+	e.dels.mu.Unlock()
+	rec := e.do(cReq("POST", "/v1/courier/deliveries/"+delID+"/events", tok, body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("retry = %d: %s", rec.Code, rec.Body.String())
+	}
+	out := decode[struct {
+		Outcome  string         `json:"outcome"`
+		Delivery map[string]any `json:"delivery"`
+	}](t, rec.Body.Bytes())
+	if out.Outcome != "duplicate" || out.Delivery["status"] != "delivered" {
+		t.Fatalf("retry = %s", rec.Body.String())
+	}
 }
 
 func TestEventSetsActorCourier(t *testing.T) {
@@ -388,7 +419,7 @@ func TestEventSetsActorCourier(t *testing.T) {
 		t.Fatalf("event = %d: %s", rec.Code, rec.Body.String())
 	}
 	req := e.dels.last().(*deliveriesv1.ReportEventRequest)
-	if req.GetActor() != "courier" || req.GetBy() != "" || req.GetId() != delID || req.GetEventId() != "e-1" ||
+	if req.GetActor() != "courier" || req.GetCourierId() != couID || req.GetBy() != "" || req.GetId() != delID || req.GetEventId() != "e-1" ||
 		req.GetType() != "pickup_confirmed" || req.GetScope().GetTenantId() != tenantID ||
 		req.GetOccurredAt().AsTime() != time.Date(2026, 10, 20, 11, 59, 0, 0, time.UTC) {
 		t.Fatalf("ReportEvent = %v", req)

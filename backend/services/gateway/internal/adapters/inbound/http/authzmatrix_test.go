@@ -934,6 +934,12 @@ func TestCourierAuthorizationMatrix(t *testing.T) {
 			e := newCourierEdge(t, nil)
 			tok := e.sdk(p).Tokens.AccessToken
 			wantProblem(t, e.do(cReq("POST", "/v1/courier/deliveries/"+delID+"/events", tok, evtBody)), http.StatusNotFound, "not_found")
+			// deliveries decides ownership under its row lock (M5-R16): the
+			// report runs in the token's own scope, with its courier as guard.
+			rep := e.dels.last().(*deliveriesv1.ReportEventRequest)
+			if rep.GetScope().GetTenantId() != p.TenantID || rep.GetCourierId() != couID {
+				t.Fatalf("ReportEvent = %v", rep)
+			}
 			rec := e.do(cReq("GET", "/v1/courier/deliveries", tok, ""))
 			if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"deliveries":[]}` {
 				t.Fatalf("list = %d: %s", rec.Code, rec.Body.String())
@@ -948,11 +954,6 @@ func TestCourierAuthorizationMatrix(t *testing.T) {
 			}
 			if ing.GetScope().GetTenantId() != p.TenantID || ing.GetScope().GetEnvironment() != wantEnv {
 				t.Fatalf("ingest scope = %v", ing.GetScope())
-			}
-			for _, c := range e.dels.calls {
-				if c == "event" {
-					t.Fatal("ReportEvent reached for a delivery outside the token's scope")
-				}
 			}
 		})
 	}

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # M5 end-to-end smoke test. Runs against the local stack (make dev): a courier link session, the code exchange, three
-# fixes, a pickup confirmation from the courier (policy "any"), then revocation and the used link code. The courier
-# page is served at the courier service (:8092) with its security headers.
+# fixes, a pickup confirmation from the courier (policy "any"), delivered twice with one event id (duplicate), then
+# revocation and the used link code. The courier page is served at the courier service (:8092) with its security
+# headers.
 # Usage: make smoke   (or DTCTL=backend/bin/dtctl scripts/smoke-m5.sh)
 #
 # Env: DTCTL (default backend/bin/dtctl), DT_GATEWAY_URL (default http://127.0.0.1:8080), DT_COURIER_PAGE_URL (default
@@ -160,6 +161,16 @@ field .outcome applied
 field .delivery.status picked_up
 expect 200 GET "/deliveries/${delivery}"
 field .status picked_up
+
+step "6b. delivered, then the same event again: duplicate (the delivery is final and off the courier's list)"
+delivered="$(jq -nc --arg e "smoke5-${run_id}-delivered" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  '{event_id: $e, type: "delivered", occurred_at: $t}')"
+cexpect 200 POST "/deliveries/${delivery}/events" "$delivered"
+field .outcome applied
+field .delivery.status delivered
+cexpect 200 POST "/deliveries/${delivery}/events" "$delivered"
+field .outcome duplicate
+field .delivery.status delivered
 
 step "7. revoke the session: the next location post is 401"
 expect 200 DELETE "/courier-sessions/${session}"

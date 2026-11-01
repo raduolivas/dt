@@ -473,6 +473,81 @@ func TestReportEventCourierPickupConfirmedBy(t *testing.T) {
 	}
 }
 
+// TestReportEventCourierGuard pins the ownership guard (M5-R16): with
+// courier_id set, the delivery must be assigned to that courier, whatever
+// its status, or the answer is NotFound. A final delivery's own repeated
+// event is still duplicate; without the guard (a partner) nothing changes.
+func TestReportEventCourierGuard(t *testing.T) {
+	t.Parallel()
+	srv, _ := realServer(t)
+	c := authed(srv)
+	ctx := context.Background()
+	courier := func(ext string) string {
+		t.Helper()
+		uc, err := c.UpsertCourier(ctx, &deliveriesv1.UpsertCourierRequest{
+			Scope: testScope, ExternalId: ext, DisplayName: ext, Vehicle: "bicycle"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return uc.GetCourier().GetId()
+	}
+	owner, other := courier("guard-owner"), courier("guard-other")
+	cr, err := c.CreateDelivery(ctx, createReq("ext-guard"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := cr.GetDelivery().GetId()
+	if _, err := c.AssignCourier(ctx, &deliveriesv1.AssignCourierRequest{Scope: testScope, Id: id, CourierId: owner}); err != nil {
+		t.Fatal(err)
+	}
+	report := func(eventID, typ, courierID string) (*deliveriesv1.ReportEventResponse, string, error) {
+		ctx2, info := connect.NewClientContext(ctx)
+		res, err := c.ReportEvent(ctx2, &deliveriesv1.ReportEventRequest{
+			Scope: testScope, Id: id, EventId: eventID, Type: typ, Actor: "courier", CourierId: courierID})
+		return res, dtCode(info), err
+	}
+
+	if _, code, err := report("g-0", "pickup_confirmed", other); connect.CodeOf(err) != connect.CodeNotFound || code != "not_found" {
+		t.Fatalf("other courier: %v / %q", err, code)
+	}
+	if res, _, err := report("g-1", "pickup_confirmed", owner); err != nil || res.GetDelivery().GetStatus() != "picked_up" {
+		t.Fatalf("owner pickup: %v %v", res, err)
+	}
+	if res, _, err := report("g-2", "delivered", owner); err != nil || res.GetOutcome() != "applied" {
+		t.Fatalf("owner delivered: %v %v", res, err)
+	}
+	// The delivery is final: the owner's retry of the same event is duplicate.
+	if res, _, err := report("g-2", "delivered", owner); err != nil || res.GetOutcome() != "duplicate" ||
+		res.GetDelivery().GetStatus() != "delivered" {
+		t.Fatalf("owner retry: %v %v", res, err)
+	}
+	// A new event on the final delivery follows the existing rules (refused).
+	if _, code, err := report("g-3", "failed", owner); connect.CodeOf(err) != connect.CodeFailedPrecondition || code != "invalid_transition" {
+		t.Fatalf("owner new event on final: %v / %q", err, code)
+	}
+	// The other courier is refused even for the known event id.
+	if _, code, err := report("g-2", "delivered", other); connect.CodeOf(err) != connect.CodeNotFound || code != "not_found" {
+		t.Fatalf("other courier retry: %v / %q", err, code)
+	}
+
+	// An unassigned delivery is not any courier's.
+	un, err := c.CreateDelivery(ctx, createReq("ext-guard-unassigned"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx2, info := connect.NewClientContext(ctx)
+	_, err = c.ReportEvent(ctx2, &deliveriesv1.ReportEventRequest{Scope: testScope, Id: un.GetDelivery().GetId(),
+		EventId: "g-4", Type: "at_pickup", Actor: "courier", CourierId: owner})
+	if connect.CodeOf(err) != connect.CodeNotFound || dtCode(info) != "not_found" {
+		t.Fatalf("unassigned: %v / %q", err, dtCode(info))
+	}
+	// Without the guard (a partner report) the duplicate answer is unchanged.
+	res, err := c.ReportEvent(ctx, &deliveriesv1.ReportEventRequest{Scope: testScope, Id: id, EventId: "g-2", Type: "delivered"})
+	if err != nil || res.GetOutcome() != "duplicate" {
+		t.Fatalf("partner retry: %v %v", res, err)
+	}
+}
+
 func TestGetCourierAndListCourierDeliveries(t *testing.T) {
 	t.Parallel()
 	srv, _ := realServer(t)

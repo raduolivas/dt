@@ -61,6 +61,12 @@ type fakeDeliveries struct {
 	// M5 courier routes; none by default). nextActions answers ReportEvent.
 	open        map[string][]*deliveriesv1.CourierDelivery
 	nextActions []string
+	// assigned, when set, makes ReportEvent behave like the real service
+	// for a courier report: it maps "tenant/env/delivery" to its courier, a
+	// courier_id guard that does not match is NotFound whatever the status,
+	// and a known event id answers duplicate (M5-R16).
+	assigned map[string]string
+	seen     map[string]bool
 	// fail, when set, makes every call fail like the service would.
 	fail func(ctx context.Context) error
 }
@@ -147,6 +153,22 @@ func (f *fakeDeliveries) AssignCourier(ctx context.Context, r *deliveriesv1.Assi
 func (f *fakeDeliveries) ReportEvent(ctx context.Context, r *deliveriesv1.ReportEventRequest) (*deliveriesv1.ReportEventResponse, error) {
 	if err := f.rec(ctx, "event", r); err != nil {
 		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.assigned != nil && r.GetCourierId() != "" {
+		sc := r.GetScope()
+		if f.assigned[sc.GetTenantId()+"/"+sc.GetEnvironment().String()+"/"+r.GetId()] != r.GetCourierId() {
+			return nil, rpcFail(connect.CodeNotFound, "not_found")(ctx)
+		}
+		if f.seen == nil {
+			f.seen = map[string]bool{}
+		}
+		key := r.GetId() + "/" + r.GetEventId()
+		if f.seen[key] {
+			return &deliveriesv1.ReportEventResponse{Delivery: f.del, Outcome: "duplicate", NextActions: f.nextActions}, nil
+		}
+		f.seen[key] = true
 	}
 	return &deliveriesv1.ReportEventResponse{Delivery: f.del, Outcome: f.outcome, NextActions: f.nextActions}, nil
 }

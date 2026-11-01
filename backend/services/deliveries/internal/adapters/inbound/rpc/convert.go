@@ -145,8 +145,8 @@ func toFilter(req *deliveriesv1.ListDeliveriesRequest) app.ListFilter {
 	return f
 }
 
-// toReport maps a report. The actor is the partner unless an internal caller
-// (the tracking simulator) says "courier"; the gateway never sets it. A
+// toReport maps a report. The actor is the partner unless the caller (the
+// gateway for a courier session, or the tracking simulator) says "courier". A
 // courier's confirmation is always by the courier.
 func toReport(req *deliveriesv1.ReportEventRequest) (domain.Report, error) {
 	r := domain.Report{

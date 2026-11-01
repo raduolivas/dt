@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
-	"slices"
 	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -417,8 +416,10 @@ func (a *courierAPI) listDeliveries(w http.ResponseWriter, r *http.Request) {
 	}{out})
 }
 
-// reportEvent serves POST /v1/courier/deliveries/{id}/events. A delivery that
-// is not among the courier's open ones, whoever owns it, is 404.
+// reportEvent serves POST /v1/courier/deliveries/{id}/events. The token's
+// courier is the ownership guard, checked by deliveries under the row lock
+// (M5-R16): a delivery not assigned to it, whoever owns it, is 404, and the
+// owner's retry of a final tap is still duplicate.
 func (a *courierAPI) reportEvent(w http.ResponseWriter, r *http.Request) {
 	sc, claims, ok := a.deliveriesScope(w, r)
 	if !ok {
@@ -433,18 +434,8 @@ func (a *courierAPI) reportEvent(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	id := r.PathValue("id")
-	list, err := a.listCourier(r, sc, claims.CourierID)
-	if err != nil {
-		writeRPCError(w, r, a.log, err)
-		return
-	}
-	if !slices.ContainsFunc(list.GetDeliveries(), func(d *deliveriesv1.CourierDelivery) bool { return d.GetId() == id }) {
-		httpx.WriteProblem(w, r, httpx.Problem{Status: http.StatusNotFound, Code: "not_found"})
-		return
-	}
-	req := &deliveriesv1.ReportEventRequest{Scope: sc, Id: id, EventId: in.EventID, Type: in.Type,
-		Reason: in.Reason, Actor: "courier"}
+	req := &deliveriesv1.ReportEventRequest{Scope: sc, Id: r.PathValue("id"), EventId: in.EventID, Type: in.Type,
+		Reason: in.Reason, Actor: "courier", CourierId: claims.CourierID}
 	if in.OccurredAt != nil {
 		req.OccurredAt = timestamppb.New(*in.OccurredAt)
 	}

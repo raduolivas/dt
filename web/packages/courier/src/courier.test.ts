@@ -389,8 +389,10 @@ describe('status taps', () => {
 
   it('same event_id on retry; second answer duplicate resolves applied-once', async () => {
     const c = await started();
-    // the server gets the first request and applies it, but the answer is lost on the way back
-    api.handle('POST /courier/deliveries/:id/events', () => {
+    // the server gets the first request and applies it (the delivery is final now and leaves the list), but the
+    // answer is lost on the way back
+    api.handle('POST /courier/deliveries/:id/events', (call) => {
+      api.event(call);
       throw new TypeError('network');
     });
     let resolved = 0;
@@ -401,10 +403,9 @@ describe('status taps', () => {
     await tick(0);
     expect(c.state.pendingTaps).toBe(1);
     expect(resolved).toBe(0);
+    expect(api.deliveries).toHaveLength(0);
 
-    api.handle('POST /courier/deliveries/:id/events', () =>
-      json(200, { outcome: 'duplicate', delivery: delivery('del_1', { status: 'delivered', next_actions: [] }) }),
-    );
+    // the retry carries the same event_id and the real server answers duplicate, not 404
     await tick(3000);
     const r = await p;
     expect(r.outcome).toBe('duplicate');
@@ -415,6 +416,7 @@ describe('status taps', () => {
     await tick(10_000);
     expect(resolved).toBe(1);
     expect(api.paths('/courier/deliveries/del_1/events')).toHaveLength(2);
+    expect(c.deliveries).toHaveLength(0);
   });
 
   it('a double tap makes one event', async () => {
