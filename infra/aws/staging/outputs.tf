@@ -61,11 +61,16 @@ output "cdn_url" {
 }
 
 output "cdn_bucket" {
-  description = "CDN bucket: page/ and sdk/ from the deploy workflow, tiles/ from make tiles-upload."
+  description = "CDN bucket: page/, sdk/ and courier/ from the deploy workflow, tiles/ from make tiles-upload."
   value       = aws_s3_bucket.cdn.bucket
 }
 
 output "cdn_distribution_id" {
   description = "CloudFront distribution of the CDN (make tiles-upload invalidates the tiles in it)."
   value       = aws_cloudfront_distribution.cdn.id
+}
+
+output "courier_url" {
+  description = "Base of the courier links (the hosted courier page, CloudFront over courier/current/)."
+  value       = "https://${var.courier_hostname}"
 }

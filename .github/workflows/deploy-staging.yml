@@ -23,7 +23,7 @@ env:
   SERVICES: gateway deliveries tracking webhooks accounts
   API_URL: https://api.staging.deliveryontrack.io
   CDN_URL: https://cdn.staging.deliveryontrack.io
-  # Immutable: a deploy writes page/<sha>/ and sdk/tracking/<sha>/ once and never deletes an older prefix, so a page
+  # Immutable: a deploy writes page/<sha>/, sdk/tracking/<sha>/ and courier/<sha>/ once and never deletes an older prefix, so a page
   # opened before this deploy keeps loading its chunks.
   CDN_CACHE_CONTROL: public, max-age=31536000, immutable
 
@@ -65,7 +65,7 @@ jobs:
       # Never the dist of make web-assets (local-stack defaults, test hooks):
       # the script deletes both dist folders, builds with the staging API and
       # tiles, and refuses output that names localhost or the test hook.
-      - name: Build the hosted page and the SDK for staging
+      - name: Build the hosted page, the SDK and the courier page for staging
         run: scripts/web-staging-build.sh "$SHA" build/cdn-staging
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
@@ -124,14 +124,21 @@ jobs:
           fi
 
       # Before any task definition points at them. The deploy role may only
-      # s3:PutObject under page/* and sdk/* (cp, never sync: no list or delete).
+      # s3:PutObject under page/*, sdk/* and courier/* (cp, never sync: no list or delete).
       - name: Upload the page and the SDK to the CDN
         run: |
           set -euo pipefail
           account="$(aws sts get-caller-identity --query Account --output text)"
           aws s3 cp build/cdn-staging/ "s3://dt-staging-cdn-${account}/" --recursive \
             --cache-control "$CDN_CACHE_CONTROL" --only-show-errors
-          echo "uploaded page/${SHA}/ and sdk/tracking/${SHA}/"
+          # courier.<zone> serves courier/current/ (origin path). Hashed assets are immutable and never deleted;
+          # index.html is the only file that changes, so it is revalidated.
+          cur="s3://dt-staging-cdn-${account}/courier/current/"
+          aws s3 cp "build/cdn-staging/courier/${SHA}/" "$cur" --recursive --exclude index.html \
+            --cache-control "$CDN_CACHE_CONTROL" --only-show-errors
+          aws s3 cp "build/cdn-staging/courier/${SHA}/index.html" "${cur}index.html" \
+            --cache-control "no-cache" --only-show-errors
+          echo "uploaded page/${SHA}/, sdk/tracking/${SHA}/ and courier/${SHA}/ (courier/current/ updated)"
 
       # New revisions of the task definitions: the latest revision of each
       # family (so environment changes made by tofu carry over) with only

@@ -44,6 +44,12 @@ variable "cdn_hostname" {
   default     = "cdn.staging.deliveryontrack.io"
 }
 
+variable "courier_hostname" {
+  description = "Hostname of the hosted courier page: courier links are https://<this>/s/<code> (COURIER_URL_BASE). A second CloudFront distribution over courier/current/ in the CDN bucket."
+  type        = string
+  default     = "courier.staging.deliveryontrack.io"
+}
+
 variable "tiles_object" {
   description = "Key of the map tiles in the CDN bucket, uploaded by the owner with make tiles-upload."
   type        = string

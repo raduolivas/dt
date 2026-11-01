@@ -79,15 +79,17 @@ locals {
       ports = [local.ports.gateway]
       mtls  = true
       env = {
-        PORT                       = tostring(local.ports.gateway)
-        REDIS_URL                  = local.internal.redis_url
-        NATS_URL                   = local.internal.nats_url
-        TRUSTED_PROXIES            = var.vpc_cidr # the ALB's nodes
-        DELIVERIES_RPC_URL         = local.internal.deliveries_rpc
-        TRACKING_RPC_URL           = local.internal.tracking_rpc
-        TRACKING_URL_BASE          = "https://${var.track_hostname}"
-        DATA_KEY_CURRENT           = "gw1"
-        VIEWER_SIGNING_KEY_CURRENT = "vw1"
+        PORT                        = tostring(local.ports.gateway)
+        REDIS_URL                   = local.internal.redis_url
+        NATS_URL                    = local.internal.nats_url
+        TRUSTED_PROXIES             = var.vpc_cidr # the ALB's nodes
+        DELIVERIES_RPC_URL          = local.internal.deliveries_rpc
+        TRACKING_RPC_URL            = local.internal.tracking_rpc
+        TRACKING_URL_BASE           = "https://${var.track_hostname}"
+        DATA_KEY_CURRENT            = "gw1"
+        VIEWER_SIGNING_KEY_CURRENT  = "vw1"
+        COURIER_URL_BASE            = "https://${var.courier_hostname}"
+        COURIER_SIGNING_KEY_CURRENT = "cr1"
         # The hosted page (cdn.tf). Like the image, tofu's own revision names
         # image_tag; each deploy uploads page/<sha>/ and sets both the image
         # and TRACKING_PAGE_BASE to its sha in the revision it registers.
@@ -97,11 +99,12 @@ locals {
         TRACKING_PAGE_API   = "https://${var.api_hostname}/v1"
       }
       secrets = {
-        DATABASE_URL        = local.db_key["svc_gateway_url"]
-        APIKEY_PEPPER       = local.app_key["apikey_pepper"]
-        INTERNAL_RPC_TOKEN  = local.app_key["internal_rpc_token"]
-        DATA_KEYS           = local.app_key["gateway_data_keys"]
-        VIEWER_SIGNING_KEYS = local.app_key["viewer_signing_keys"]
+        DATABASE_URL         = local.db_key["svc_gateway_url"]
+        APIKEY_PEPPER        = local.app_key["apikey_pepper"]
+        INTERNAL_RPC_TOKEN   = local.app_key["internal_rpc_token"]
+        DATA_KEYS            = local.app_key["gateway_data_keys"]
+        VIEWER_SIGNING_KEYS  = local.app_key["viewer_signing_keys"]
+        COURIER_SIGNING_KEYS = local.app_key["courier_signing_keys"]
       }
     }
     deliveries = {
