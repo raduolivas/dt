@@ -125,20 +125,13 @@ jobs:
 
       # Before any task definition points at them. The deploy role may only
       # s3:PutObject under page/*, sdk/* and courier/* (cp, never sync: no list or delete).
-      - name: Upload the page and the SDK to the CDN
+      - name: Upload the page, the SDK and the courier archive to the CDN
         run: |
           set -euo pipefail
           account="$(aws sts get-caller-identity --query Account --output text)"
           aws s3 cp build/cdn-staging/ "s3://dt-staging-cdn-${account}/" --recursive \
             --cache-control "$CDN_CACHE_CONTROL" --only-show-errors
-          # courier.<zone> serves courier/current/ (origin path). Hashed assets are immutable and never deleted;
-          # index.html is the only file that changes, so it is revalidated.
-          cur="s3://dt-staging-cdn-${account}/courier/current/"
-          aws s3 cp "build/cdn-staging/courier/${SHA}/" "$cur" --recursive --exclude index.html \
-            --cache-control "$CDN_CACHE_CONTROL" --only-show-errors
-          aws s3 cp "build/cdn-staging/courier/${SHA}/index.html" "${cur}index.html" \
-            --cache-control "no-cache" --only-show-errors
-          echo "uploaded page/${SHA}/, sdk/tracking/${SHA}/ and courier/${SHA}/ (courier/current/ updated)"
+          echo "uploaded page/${SHA}/, sdk/tracking/${SHA}/ and courier/${SHA}/"
 
       # New revisions of the task definitions: the latest revision of each
       # family (so environment changes made by tofu carry over) with only
@@ -243,6 +236,21 @@ jobs:
             fi
           done
           curl -fsS --max-time 10 "${API_URL}/livez" >/dev/null
+
+      # courier.<zone> serves courier/current/ (the distribution's origin path). It moves only once the gateway runs
+      # this deploy's revision, so the new page never meets an old gateway. Hashed assets first, then index.html.
+      # Rollback is manual: the owner copies courier/<old sha>/ over courier/current/ (docs/m5-followups.md).
+      - name: Publish the courier page (courier/current/)
+        if: steps.host.outputs.awake == 'true'
+        run: |
+          set -euo pipefail
+          account="$(aws sts get-caller-identity --query Account --output text)"
+          cur="s3://dt-staging-cdn-${account}/courier/current/"
+          aws s3 cp "build/cdn-staging/courier/${SHA}/" "$cur" --recursive --exclude index.html \
+            --cache-control "$CDN_CACHE_CONTROL" --only-show-errors
+          aws s3 cp "build/cdn-staging/courier/${SHA}/index.html" "${cur}index.html" \
+            --cache-control "no-cache" --only-show-errors
+          echo "courier/current/ now serves ${SHA}"
 
       # Step 5. Public API only: the test key's tenant was set up by the
       # owner with dtctl over SSM (runbook).

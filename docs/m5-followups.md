@@ -21,6 +21,10 @@ release pointer baked in, and the CDN's CORS `*` / CORP cross-origin policy woul
 traffic; no function, no WAF, no logs). Route 53 adds two alias records (alias queries to CloudFront are free). The
 ACM certificate is free. Total staging estimate unchanged (about EUR 100/month budget).
 
-**Notes:** `courier/current/` is not versioned, so a rollback re-runs the deploy for the older sha. Not applied:
-budget pause (D28); the first `make staging-up` after the pause creates it (the CloudFront certificate is replaced
-because it gains a SAN, which is free on a fresh stack).
+**Notes:** `courier/<sha>/` is uploaded on every deploy (immutable archive), but `courier/current/` (what the
+distribution serves) is refreshed only by the "Publish the courier page" step, after the services are stable and only
+when the host is awake. A failed or asleep-hours deploy leaves the old page in place. Rolling an ECS service back does
+not roll the page back: the owner copies `courier/<old sha>/` over `courier/current/` with their own credentials
+(assets with `--cache-control "public, max-age=31536000, immutable"` first, then `index.html` with `no-cache`); the
+deploy role has no GetObject. Not applied: budget pause (D28); the first `make staging-up` after the pause creates it
+(the CloudFront certificate is replaced because it gains a SAN, which is free on a fresh stack).
