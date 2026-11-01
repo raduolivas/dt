@@ -78,7 +78,8 @@ var (
 	// exchanges, keyed rl:courier:tok:<session id>.
 	CourierRefresh = Limit{Rate: 10, Period: time.Minute, Burst: 10}
 	// CourierLinkIP is applied per client IP to link-code exchanges, failed
-	// guesses included, keyed rl:courier:ip:<client ip>.
+	// guesses included, and to failed refreshes with an unknown token,
+	// keyed rl:courier:ip:<client ip>.
 	CourierLinkIP = Limit{Rate: 20, Period: time.Minute, Burst: 20}
 )
 

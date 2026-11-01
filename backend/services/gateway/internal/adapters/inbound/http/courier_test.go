@@ -241,6 +241,33 @@ func TestTokenIPLimitCountsFailures(t *testing.T) {
 	wantProblem(t, e.do(r), http.StatusUnauthorized, "link_code_invalid")
 }
 
+// TestTokenUnknownRefreshChargesIP: an unknown refresh token has no session
+// bucket, so its failure is charged to the client IP's link-code bucket,
+// like a failed link code. A valid refresh is never charged there.
+func TestTokenUnknownRefreshChargesIP(t *testing.T) {
+	t.Parallel()
+	e := newCourierEdge(t, &burstLimiterMem{n: map[string]int{}})
+	refresh := e.sdk(partnerTest).Tokens.RefreshToken
+	for i := 1; i <= 20; i++ {
+		wantProblem(t, e.do(tokenReq(`{"grant_type":"refresh_token","refresh_token":"guess-`+strconv.Itoa(i)+`"}`)), http.StatusUnauthorized, "refresh_token_invalid")
+	}
+	rec := e.do(tokenReq(`{"grant_type":"refresh_token","refresh_token":"guess-21"}`))
+	wantProblem(t, rec, http.StatusTooManyRequests, "rate_limited")
+	if rec.Header().Get("Retry-After") == "" {
+		t.Fatal("no Retry-After")
+	}
+	// The same bucket as the link codes.
+	wantProblem(t, e.do(tokenReq(`{"grant_type":"link_code","code":"guess"}`)), http.StatusTooManyRequests, "rate_limited")
+	// A real refresh from the same address still works: only failures count.
+	if rec := e.do(tokenReq(`{"grant_type":"refresh_token","refresh_token":"` + refresh + `"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("valid refresh = %d: %s", rec.Code, rec.Body.String())
+	}
+	// Another address has its own bucket.
+	r := tokenReq(`{"grant_type":"refresh_token","refresh_token":"guess"}`)
+	r.RemoteAddr = "198.51.100.77:5000"
+	wantProblem(t, e.do(r), http.StatusUnauthorized, "refresh_token_invalid")
+}
+
 func TestTokenRefreshLimitPerSession(t *testing.T) {
 	t.Parallel()
 	e := newCourierEdge(t, &burstLimiterMem{n: map[string]int{}})

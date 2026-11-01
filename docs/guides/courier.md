@@ -175,7 +175,7 @@ The SDK discards the saved fixes, stops, and the page shows the ended screen. It
 | `POST /courier/deliveries/{id}/events` | 10 per minute | session |
 | `GET /courier/deliveries` and `POST /courier/session/end` | 30 per minute (shared) | session |
 | `POST /courier/token`, refresh token | 10 per minute | session |
-| `POST /courier/token`, link code | 20 per minute, failed guesses included | client IP |
+| `POST /courier/token`, link code, and refresh with an unknown token | 20 per minute (shared), failed guesses included | client IP |
 
 A location batch holds at most 50 fixes and 16 KB. The SDK sends a batch every 3 seconds, polls the list every 10
 seconds (20 seconds when it is empty), and sends a backlog one batch per second.

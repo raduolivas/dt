@@ -237,6 +237,15 @@ func grantInvalid(w http.ResponseWriter, r *http.Request, field, detail string) 
 		Errors: []httpx.FieldError{{Field: field, Code: "invalid", Message: detail}}})
 }
 
+// courierIPKey is the client IP ("" when unknown) and its token-route
+// bucket, rl:courier:ip:<ip>, shared by link codes and unknown refresh tokens.
+func courierIPKey(r *http.Request) (string, string) {
+	if addr, ok := ClientIPFrom(r.Context()); ok && addr.IsValid() {
+		return addr.String(), "rl:courier:ip:" + addr.String()
+	}
+	return "", "rl:courier:ip:unknown"
+}
+
 // token serves POST /v1/courier/token. The contract's schema is a flat
 // object, so the pairing of grant_type and its field is checked here.
 func (a *courierAPI) token(w http.ResponseWriter, r *http.Request) {
@@ -252,12 +261,7 @@ func (a *courierAPI) token(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch {
 	case in.GrantType == "link_code" && in.Code != nil && in.RefreshToken == nil:
-		key := "rl:courier:ip:unknown"
-		ip := ""
-		if addr, ok := ClientIPFrom(r.Context()); ok && addr.IsValid() {
-			ip = addr.String()
-			key = "rl:courier:ip:" + ip
-		}
+		ip, key := courierIPKey(r)
 		if !a.charge(w, r, key, app.CourierLinkIP) {
 			return
 		}
@@ -269,6 +273,12 @@ func (a *courierAPI) token(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			tokens, err = a.svc.Refresh(r.Context(), *in.RefreshToken)
+		} else if errors.Is(err, app.ErrRefreshInvalid) {
+			// An unknown token has no session bucket: charge the failure to
+			// the client IP, like a failed link code. Only failures count.
+			if _, key := courierIPKey(r); !a.charge(w, r, key, app.CourierLinkIP) {
+				return
+			}
 		}
 	case in.GrantType == "link_code":
 		grantInvalid(w, r, "code", "is required with grant_type link_code, and refresh_token must be absent")
