@@ -133,6 +133,19 @@ describe('courier page', () => {
     expect(fake.report).toHaveBeenCalledWith('d1', 'pickup_confirmed', undefined);
   });
 
+  it('skips an unknown next action instead of failing to render', async () => {
+    fake = fakeCourier([
+      delivery({ status: 'at_pickup', next_actions: ['teleport', 'pickup_confirmed', 'failed'] as unknown as CourierDelivery['next_actions'] }),
+      delivery({ id: 'd2', next_actions: ['teleport'] as unknown as CourierDelivery['next_actions'] }),
+    ]);
+    mount('/');
+    await flush();
+    expect(q('[data-delivery=d1] .btn.main')!.getAttribute('data-act')).toBe('pickup_confirmed');
+    expect(q('[data-delivery=d2]')).not.toBeNull();
+    expect(q('[data-delivery=d2] .btn.main')).toBeNull();
+    expect(q('[data-act=teleport]')).toBeNull();
+  });
+
   it('store policy shows waiting text', async () => {
     fake = fakeCourier([delivery({ status: 'at_pickup', next_actions: ['failed'] })]);
     mount('/');

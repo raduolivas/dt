@@ -208,7 +208,8 @@ export function mountCourierPage(root: HTMLElement, deps: PageDeps): void {
   }
 
   function cardView(d: CourierDelivery): HTMLElement {
-    const main = d.next_actions.find((a) => a !== 'failed');
+    // An action this page does not know (a newer API) is skipped: there is no copy for it, and no button beats a broken page.
+    const main = d.next_actions.find((a) => a !== 'failed' && ACTIONS.has(a));
     const canFail = d.next_actions.includes('failed');
     const card = h('article', { class: 'card delivery', 'data-delivery': d.id });
 
@@ -235,7 +236,7 @@ export function mountCourierPage(root: HTMLElement, deps: PageDeps): void {
       const btn = h(
         'button',
         { class: 'btn primary main', type: 'button', 'data-act': main, disabled: pending.has(`${d.id}:${main}`) },
-        tr(`act_${main}` as CopyKey),
+        actionName(main),
       );
       btn.addEventListener('click', () => void tap(d, main));
       card.append(btn);
