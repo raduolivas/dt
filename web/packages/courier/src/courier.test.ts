@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createClient } from './client';
 import { createCourier, CourierError } from './index';
 import type { CourierNotice, CourierOptions } from './index';
-import { ACCESS_MS, delivery, fakeApi, fakeGeolocation, json, memoryStorage, problem, T0, tick } from './testkit';
+import { STORAGE_KEY } from './session';
+import { ACCESS_MS, delivery, fakeApi, fakeGeolocation, fakeLocks, json, memoryStorage, problem, T0, tick } from './testkit';
 
 let api: ReturnType<typeof fakeApi>;
 let geo: ReturnType<typeof fakeGeolocation>;
@@ -168,10 +169,12 @@ describe('session end', () => {
     const pending = c.report('del_1', 'at_pickup').catch((e) => e);
 
     api.offline = false;
-    api.handle('POST /courier/deliveries/:id/events', () => problem(401, 'session_ended'));
+    api.handle('POST /courier/deliveries/:id/events', () => problem(401, 'unauthenticated'));
+    api.handle('POST /courier/token', () => problem(401, 'session_ended')); // the one refresh the 401 earns
     await tick(3000);
 
     expect(c.state.session).toBe('ended');
+    expect(api.calls.filter((x) => x.body?.grant_type === 'refresh_token')).toHaveLength(1);
     expect(c.state.buffered).toBe(0);
     expect(c.state.pendingTaps).toBe(0);
     expect(c.state.gps).toBe('off');
@@ -633,5 +636,140 @@ describe('timeouts', () => {
     const ids = api.paths('/courier/deliveries/del_1/events').map((x) => x.body.event_id);
     expect(ids).toHaveLength(2);
     expect(ids[0]).toBe(ids[1]);
+  });
+});
+
+const refreshes = () => api.calls.filter((x) => x.body?.grant_type === 'refresh_token');
+
+describe('device clock skew', () => {
+  it.each([
+    ['behind', -10 * 60_000],
+    ['ahead', 10 * 60_000],
+  ])('a device clock %s by 10 min still refreshes 60 s before the server expiry', async (_, skew) => {
+    const c = await started({ now: () => Date.now() + skew });
+    await tick(ACCESS_MS - 61_000);
+    expect(refreshes()).toHaveLength(0);
+    await tick(1000);
+    expect(refreshes()).toHaveLength(1);
+    await tick(ACCESS_MS - 61_000);
+    expect(refreshes()).toHaveLength(1);
+    await tick(1000);
+    expect(refreshes()).toHaveLength(2);
+    expect(c.state.session).toBe('active');
+  });
+
+  it('a device clock ahead does not end the shift before the server does', async () => {
+    api.sessionEnd = T0 + 30 * 60_000;
+    const c = await started({ now: () => Date.now() + 20 * 60_000 });
+    await tick(25 * 60_000);
+    expect(c.state.session).toBe('active');
+  });
+
+  it('a reload keeps the measured offset', async () => {
+    const now = () => Date.now() - 10 * 60_000;
+    let tabDead = false; // the first tab is gone: only the reloaded one may talk to the server
+    await started({ now, fetch: ((...a) => (tabDead ? Promise.reject(new TypeError('x')) : api.fetch(...a))) as typeof fetch });
+    tabDead = true;
+    const second = await started({ now });
+    await tick(ACCESS_MS - 61_000);
+    expect(refreshes()).toHaveLength(0);
+    await tick(1000);
+    expect(refreshes()).toHaveLength(1);
+    expect(second.state.session).toBe('active');
+  });
+});
+
+describe('401 on a bearer route', () => {
+  it('tries one refresh, and ends when that is refused too (no loop)', async () => {
+    const c = await started();
+    const seen = notices(c);
+    api.handle('GET /courier/deliveries', () => problem(401, 'unauthenticated'));
+    api.handle('POST /courier/token', () => problem(401, 'session_ended'));
+    await tick(10_000);
+    expect(c.state.session).toBe('ended');
+    expect(seen).toEqual([{ kind: 'ended' }]);
+    expect(refreshes()).toHaveLength(1);
+    const before = api.calls.length;
+    await tick(120_000);
+    expect(api.calls.length).toBe(before);
+  });
+
+  it('keeps the shift when the refresh works, and uses the new pair', async () => {
+    const c = await started();
+    api.handle('GET /courier/deliveries', () => problem(401, 'unauthenticated'));
+    await tick(10_000);
+    expect(c.state.session).toBe('active');
+    expect(refreshes()).toHaveLength(1);
+    await tick(10_000);
+    expect(api.paths('/courier/deliveries').at(-1)!.auth).toBe('Bearer access-2');
+  });
+
+  it('a 401 on the fresh pair too ends the session: one refresh per 401 chain', async () => {
+    const c = await started();
+    api.handle('GET /courier/deliveries', () => problem(401, 'unauthenticated'));
+    api.handle('GET /courier/deliveries', () => problem(401, 'unauthenticated'));
+    await tick(10_000);
+    expect(c.state.session).toBe('active');
+    await tick(10_000);
+    expect(c.state.session).toBe('ended');
+    expect(refreshes()).toHaveLength(1);
+  });
+
+  it('a 401 after the session expiry is expired, with no refresh', async () => {
+    api.sessionEnd = T0 + ACCESS_MS * 2;
+    const c = await started();
+    vi.setSystemTime(T0 + ACCESS_MS * 2 + 1000);
+    api.handle('GET /courier/deliveries', () => problem(401, 'unauthenticated'));
+    await tick(10_000);
+    expect(c.state.session).toBe('expired');
+  });
+});
+
+describe('two tabs on one session', () => {
+  it('with Web Locks, a refresh in two tabs at once makes one call and both keep the same pair', async () => {
+    const locks = fakeLocks();
+    const a = await started({ locks });
+    const b = await started({ locks }); // the courier taps the SMS link again: a second tab resumes from storage
+    expect(api.calls.filter((x) => x.body?.grant_type === 'link_code')).toHaveLength(1);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    api.handle('POST /courier/token', async () => {
+      await gate;
+      return json(200, api.tokens());
+    });
+    await tick(ACCESS_MS - 60_000); // both timers fire together
+    expect(refreshes()).toHaveLength(1);
+    release();
+    await tick(10_000);
+    expect(refreshes()).toHaveLength(1);
+    expect(refreshes()[0].body.refresh_token).toBe('refresh-1');
+    expect(locks.requests).toBe(2);
+    expect(JSON.parse(storage.data.get(STORAGE_KEY)!).tokens.refresh_token).toBe('refresh-2');
+    expect(a.state.session).toBe('active');
+    expect(b.state.session).toBe('active');
+    const auths = new Set(api.paths('/courier/deliveries').slice(-2).map((x) => x.auth));
+    expect(auths).toEqual(new Set(['Bearer access-2']));
+    // and the next round is one call again, from the pair both now hold
+    await tick(ACCESS_MS - 60_000);
+    expect(refreshes()).toHaveLength(2);
+    expect(refreshes()[1].body.refresh_token).toBe('refresh-2');
+  });
+
+  it('without Web Locks, a tab adopts the pair another tab rotated (storage event)', async () => {
+    let bOffline = false;
+    const bFetch = ((...x: Parameters<typeof fetch>) =>
+      bOffline ? Promise.reject(new TypeError('offline')) : api.fetch(...x)) as typeof fetch;
+    const a = await started({ locks: null });
+    const b = await started({ locks: null, fetch: bFetch });
+    bOffline = true;
+    await tick(ACCESS_MS - 60_000); // both refresh: A's lands, B's never leaves the device
+    expect(refreshes()).toHaveLength(1);
+    window.dispatchEvent(new StorageEvent('storage', { key: STORAGE_KEY, newValue: storage.data.get(STORAGE_KEY)! }));
+    bOffline = false;
+    await tick(10_000);
+    expect(refreshes()).toHaveLength(1); // B never presents refresh-1 again
+    expect(a.state.session).toBe('active');
+    expect(b.state.session).toBe('active');
+    expect(api.paths('/courier/deliveries').at(-1)!.auth).toBe('Bearer access-2');
   });
 });

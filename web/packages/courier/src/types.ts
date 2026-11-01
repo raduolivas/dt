@@ -23,6 +23,11 @@ export interface CourierOptions {
   geolocation?: Geolocation;
   now?: () => number;
   indexedDB?: IDBFactory;
+  /**
+   * Web Locks, so two tabs of one session never refresh at once. Default `navigator.locks`; `null` turns it off (the
+   * SDK then adopts a pair another tab rotated from the `storage` event, best effort).
+   */
+  locks?: LockManager | null;
 }
 
 export interface CourierState {

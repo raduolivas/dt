@@ -67,11 +67,14 @@ export function fakeApi() {
     handle(route: string, h: Handler) {
       overrides.set(route, [...(overrides.get(route) ?? []), h]);
     },
+    /** The server's clock is the (faked) real one; a test skews the device through the SDK's `now` option. */
     tokens(): CourierTokens {
       const n = ++api.tokenSeq;
+      const exp = Math.min(Date.now() + ACCESS_MS, api.sessionEnd);
       return {
         access_token: `access-${n}`,
-        access_expires_at: new Date(Math.min(Date.now() + ACCESS_MS, api.sessionEnd)).toISOString(),
+        access_expires_at: new Date(exp).toISOString(),
+        expires_in: Math.floor((exp - Date.now()) / 1000),
         refresh_token: `refresh-${n}`,
         session_expires_at: new Date(api.sessionEnd).toISOString(),
       };
@@ -120,6 +123,21 @@ export function fakeApi() {
     }) as typeof fetch,
   };
   return api;
+}
+
+/** An in-page Web Locks stand-in: one exclusive lock per name, granted in request order. Shared by "tabs" in a test. */
+export function fakeLocks() {
+  const tails = new Map<string, Promise<unknown>>();
+  const l = {
+    requests: 0,
+    request(name: string, cb: (lock: unknown) => Promise<unknown>) {
+      l.requests++;
+      const run = (tails.get(name) ?? Promise.resolve()).then(() => cb({ name, mode: 'exclusive' }));
+      tails.set(name, run.catch(() => undefined));
+      return run;
+    },
+  };
+  return l as typeof l & LockManager;
 }
 
 export function fakeGeolocation() {

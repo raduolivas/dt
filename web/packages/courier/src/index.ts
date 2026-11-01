@@ -100,6 +100,7 @@ export function createCourier(o: CourierOptions): Courier {
     now,
     tokens: o.tokens,
     linkCode: o.linkCode,
+    locks: o.locks,
     onNetwork: net,
     onDead: (why) => void finish(why, true),
   });
@@ -131,12 +132,16 @@ export function createCourier(o: CourierOptions): Courier {
     if (notify) emit('notice', { kind: 'ended' });
   }
 
-  /** Runs a bearer call; a 401 anywhere ends the session (ended, revoked and expired look the same to us). */
+  /**
+   * Runs a bearer call. A 401 earns one refresh; when that is refused too the session is over (ended, revoked and
+   * expired look the same to us) and `over` is set before this returns. The refused call itself is not retried here:
+   * a tap or a batch stays queued for the next flush.
+   */
   async function authed<T>(f: (token: string) => Promise<ApiResult<T>>): Promise<ApiResult<T>> {
     const token = await session.token();
     if (token === null) return { kind: 'unauthorized' };
     const r = await f(token);
-    if (r.kind === 'unauthorized') session.unauthorized();
+    if (r.kind === 'unauthorized') await session.unauthorized(token);
     else if (r.kind === 'network') net(false);
     else net(true);
     return r;
@@ -216,7 +221,7 @@ export function createCourier(o: CourierOptions): Courier {
         { token: t, body: { event_id: eventId, type, occurred_at: occurredAt, ...(reason ? { reason } : {}) } },
       ),
     );
-    if (over) return false; // a 401: finish() already failed the waiters
+    if (over) return false; // a 401 the refresh could not cure: finish() already failed the waiters
     const settle = (res: ReportResult | Error) => {
       queue.ackTap(tap);
       for (const w of tap.waiters) {
