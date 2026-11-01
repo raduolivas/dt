@@ -90,7 +90,19 @@ export function fakeApi() {
       calls.push(call);
       const route = `${call.method} ${path.replace(/^(\/courier\/deliveries)\/[^/]+/, '$1/:id')}`;
       const queued = overrides.get(route);
-      if (queued?.length) return queued.shift()!(call);
+      if (queued?.length) {
+        // like a real fetch, an aborted request rejects even when the server never answers
+        const signal = init?.signal;
+        const answer = Promise.resolve(queued.shift()!(call));
+        if (!signal) return answer;
+        return Promise.race([
+          answer,
+          new Promise<Response>((_, reject) => {
+            if (signal.aborted) reject(signal.reason);
+            signal.addEventListener('abort', () => reject(signal.reason));
+          }),
+        ]);
+      }
       switch (route) {
         case 'POST /courier/token':
           return json(200, api.tokens());

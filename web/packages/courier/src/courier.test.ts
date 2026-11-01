@@ -1,5 +1,6 @@
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createClient } from './client';
 import { createCourier, CourierError } from './index';
 import type { CourierNotice, CourierOptions } from './index';
 import { ACCESS_MS, delivery, fakeApi, fakeGeolocation, json, memoryStorage, problem, T0, tick } from './testkit';
@@ -606,5 +607,31 @@ describe('review fixes', () => {
     const c = make();
     await expect(c.report('del_1', 'at_pickup')).rejects.toMatchObject({ code: 'not_started' });
     expect(api.calls).toHaveLength(0);
+  });
+});
+
+describe('timeouts', () => {
+  it('a request with no answer gives up after 15 s as a network error', async () => {
+    api.handle('GET /courier/deliveries', () => new Promise<Response>(() => {}));
+    const client = createClient('https://api.test/v1', api.fetch);
+    let r: unknown;
+    void client.call('GET', '/courier/deliveries', { token: 't' }).then((x) => (r = x));
+    await tick(14_999);
+    expect(r).toBeUndefined();
+    await tick(1);
+    expect(r).toEqual({ kind: 'network' });
+  });
+
+  it('a hanging tap stays queued with its event_id and goes out again', async () => {
+    const c = await started();
+    api.handle('POST /courier/deliveries/:id/events', () => new Promise<Response>(() => {}));
+    const tap = c.report('del_1', 'at_pickup');
+    await tick(14_999);
+    expect(c.state.pendingTaps).toBe(1);
+    await tick(3001); // given up at 15 s, then sent again
+    expect((await tap).outcome).toBe('applied');
+    const ids = api.paths('/courier/deliveries/del_1/events').map((x) => x.body.event_id);
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toBe(ids[1]);
   });
 });
