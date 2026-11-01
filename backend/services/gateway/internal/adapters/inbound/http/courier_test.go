@@ -135,6 +135,7 @@ func tokenReq(body string) *http.Request { return cReq("POST", "/v1/courier/toke
 type tokensJSON struct {
 	AccessToken      string    `json:"access_token"`
 	AccessExpiresAt  time.Time `json:"access_expires_at"`
+	ExpiresIn        *int      `json:"expires_in"`
 	RefreshToken     string    `json:"refresh_token"`
 	SessionExpiresAt time.Time `json:"session_expires_at"`
 }
@@ -152,7 +153,8 @@ func TestTokenLinkCodeExchange(t *testing.T) {
 	}
 	got := decode[tokensJSON](t, rec.Body.Bytes())
 	if got.AccessToken == "" || got.RefreshToken == "" || !got.AccessExpiresAt.Equal(fixedClock{}.Now().Add(courierjwt.TTL)) ||
-		!got.SessionExpiresAt.Equal(fixedClock{}.Now().Add(domain.DefaultSessionLength)) {
+		!got.SessionExpiresAt.Equal(fixedClock{}.Now().Add(domain.DefaultSessionLength)) ||
+		got.ExpiresIn == nil || *got.ExpiresIn != int(courierjwt.TTL/time.Second) {
 		t.Fatalf("tokens = %+v", got)
 	}
 	if rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("Access-Control-Allow-Origin") != "*" {

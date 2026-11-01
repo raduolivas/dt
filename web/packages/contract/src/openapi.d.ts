@@ -479,7 +479,7 @@ export interface paths {
         put?: never;
         /**
          * Get courier tokens
-         * @description Exchanges a link code (from a `link` session's `link_url`) or a refresh token for a new token pair. No bearer token is needed. Each refresh token works once; using an old one ends the session with `end_reason: refresh_reuse`. A link code works once and expires after 15 minutes. Any origin may call it. Rate limits: refresh 10 requests/minute per session; link code 20 requests/minute per IP, failed guesses included. Problem codes: `validation_failed` (400), `link_code_invalid` (401, unknown or expired code), `link_code_used` (401, the code was already exchanged), `refresh_token_invalid` (401, unknown, already used or expired), `session_ended` (401), `rate_limited` (429).
+         * @description Exchanges a link code (from a `link` session's `link_url`) or a refresh token for a new token pair. No bearer token is needed. Each refresh token works once; using an old one ends the session with `end_reason: refresh_reuse`. A link code works once and expires after 15 minutes. Any origin may call it. Rate limits: refresh 10 requests/minute per session; link code 20 requests/minute per IP, failed guesses included, shared with failed refreshes that present an unknown token. Problem codes: `validation_failed` (400), `link_code_invalid` (401, unknown or expired code), `link_code_used` (401, the code was already exchanged), `refresh_token_invalid` (401, unknown, already used or expired), `session_ended` (401), `rate_limited` (429).
          */
         post: operations["createCourierToken"];
         delete?: never;
@@ -1143,6 +1143,8 @@ export interface components {
             access_token: string;
             /** Format: date-time */
             access_expires_at: string;
+            /** @description Seconds from this answer until `access_expires_at`, by the server's clock. A client compares it with its own clock to correct for a device clock that is off (the SDK does). Set on every `POST /courier/token` answer. */
+            expires_in?: number;
             /** @description Replaces the one you sent; keep only this one. */
             refresh_token: string;
             /** Format: date-time */

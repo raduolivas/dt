@@ -773,6 +773,9 @@ type CourierTokens struct {
 	AccessExpiresAt time.Time `json:"access_expires_at"`
 	AccessToken     string    `json:"access_token"`
 
+	// ExpiresIn Seconds from this answer until `access_expires_at`, by the server's clock. A client compares it with its own clock to correct for a device clock that is off (the SDK does). Set on every `POST /courier/token` answer.
+	ExpiresIn *int `json:"expires_in,omitempty"`
+
 	// RefreshToken Replaces the one you sent; keep only this one.
 	RefreshToken     string    `json:"refresh_token"`
 	SessionExpiresAt time.Time `json:"session_expires_at"`

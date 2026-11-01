@@ -307,12 +307,16 @@ func (a *courierAPI) token(w http.ResponseWriter, r *http.Request) {
 		internalError(w, r)
 		return
 	}
+	// expires_in is relative, so a client whose clock is off can still time
+	// its refresh (M5-R18).
+	expiresIn := max(0, int64(tokens.AccessExpiresAt.Sub(a.clock.Now())/time.Second))
 	writeJSON(w, http.StatusOK, struct {
 		AccessToken      string    `json:"access_token"`
 		AccessExpiresAt  time.Time `json:"access_expires_at"`
+		ExpiresIn        int64     `json:"expires_in"`
 		RefreshToken     string    `json:"refresh_token"`
 		SessionExpiresAt time.Time `json:"session_expires_at"`
-	}{tokens.AccessToken, tokens.AccessExpiresAt.UTC(), tokens.RefreshToken, tokens.SessionExpiresAt.UTC()})
+	}{tokens.AccessToken, tokens.AccessExpiresAt.UTC(), expiresIn, tokens.RefreshToken, tokens.SessionExpiresAt.UTC()})
 }
 
 // deliveriesScope is the RPC scope of the authenticated courier session.

@@ -1490,7 +1490,7 @@ paths:
         No bearer token is needed. Each refresh token works once; using an old one ends the session with
         `end_reason: refresh_reuse`. A link code works once and expires after 15 minutes. Any origin may
         call it. Rate limits: refresh 10 requests/minute per session; link code 20 requests/minute per IP,
-        failed guesses included. Problem codes: `validation_failed` (400), `link_code_invalid` (401, unknown
+        failed guesses included, shared with failed refreshes that present an unknown token. Problem codes: `validation_failed` (400), `link_code_invalid` (401, unknown
         or expired code), `link_code_used` (401, the code was already exchanged), `refresh_token_invalid`
         (401, unknown, already used or expired), `session_ended` (401), `rate_limited` (429).
       tags: [Courier]
@@ -1524,6 +1524,7 @@ paths:
                   value:
                     access_token: eyJhbGciOiJFZERTQSIsImtpZCI6ImMxIn0.eyJhdWQiOiJjb3VyaWVyIn0.c2ln
                     access_expires_at: '2026-10-31T08:15:00Z'
+                    expires_in: 900
                     refresh_token: rt_bmV3IGV4YW1wbGUgcmVmcmVzaCB0b2tlbiAxMjM
                     session_expires_at: '2026-10-31T20:00:00Z'
         '400':
@@ -3114,6 +3115,13 @@ components:
         access_expires_at:
           type: string
           format: date-time
+        expires_in:
+          type: integer
+          minimum: 0
+          description: >-
+            Seconds from this answer until `access_expires_at`, by the server's clock. A client compares it with
+            its own clock to correct for a device clock that is off (the SDK does). Set on every
+            `POST /courier/token` answer.
         refresh_token:
           type: string
           description: Replaces the one you sent; keep only this one.
