@@ -1,6 +1,6 @@
 # M5 follow-ups and controller rulings
 
-Written at the M5 close-out (Task 14). It replaces the git-ignored build ledger as the committed record. M5 is courier
+Written at the M5 close-out (Task 14). It is the committed record of the rulings made during the build. M5 is courier
 sessions (partner API and gateway), the `@dt/courier` SDK and the courier web link page. The design is
 `docs/superpowers/specs/2026-10-31-m5-courier-design.md`. The plan is `docs/superpowers/plans/2026-10-31-m5-courier.md`.
 The partner-facing guide is `docs/guides/courier.md`.
@@ -96,7 +96,7 @@ the decision, why, and what it costs if wrong.
   JWKS endpoint are unchanged. Recorded in `docs/ARCHITECTURE.md` §12.2. If wrong: a partner or third party that
   wants to verify courier tokens needs the keys another way (nothing planned needs it).
 
-The numbers R1-R13 follow the build ledger; R14 and R15 are the Task 11 ruling and the plan's JWKS ruling.
+The numbers R1-R13 follow the order the rulings were made during the build; R14 and R15 are the Task 11 ruling and the plan's JWKS ruling.
 
 ## Deferred minors
 

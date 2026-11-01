@@ -154,7 +154,8 @@ Errors are `application/problem+json` with a `code`.
 | 404 | `not_found` | the delivery does not exist or is not assigned to this courier |
 | 404 | `courier_not_found` | starting a session: no such courier (register it first) |
 | 409 | `invalid_transition` | the event is not allowed in the delivery's status |
-| 413 | `payload_too_large` | more than 50 fixes or 16 KB |
+| 400 | `validation_failed` | also for a batch of more than 50 fixes (or none) |
+| 413 | `payload_too_large` | the body is larger than 16 KB |
 | 429 | `rate_limited` | wait for `Retry-After`; the SDK does |
 | 503 | `tracking_unavailable` | try again shortly |
 

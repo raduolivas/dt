@@ -45,7 +45,7 @@ The answer is `{"accepted": 1, "dropped": 0}`. Requires scope `couriers:write`.
 
 ### Limits
 
-- A batch holds at most 50 fixes and 16 KB (`413 payload_too_large` above that).
+- A batch holds at most 50 fixes and 16 KB (more than 50 fixes is `400 validation_failed`, more than 16 KB is `413 payload_too_large`).
 - Rate limit: 1 request per second per courier, with a burst of 5, counted within your tenant and
   environment (your test and live couriers never share a bucket). On top of that your tenant has a ceiling of
   500 requests per second (burst 1000). These limits are separate from your API key's own limit, so relaying
