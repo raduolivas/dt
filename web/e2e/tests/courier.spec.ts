@@ -102,3 +102,48 @@ test('revoked mid-ride shows the ended screen', async ({ browser }) => {
     await ctx.close();
   }
 });
+
+test('revoked while offline with fixes buffered: 401 on reconnect discards the buffer and ends the shift', async ({
+  browser,
+}) => {
+  const ride = await createRide();
+  const ctx = await browser.newContext({
+    geolocation: { ...route(10)[0], accuracy: 8 },
+    permissions: ['geolocation'],
+    ...(test.info().project.use as object),
+  });
+  const page = await ctx.newPage();
+  const posts: number[] = []; // times of the location posts that reached the network
+  page.on('request', (r) => {
+    if (r.method() === 'POST' && /\/v1\/courier\/locations/.test(r.url())) posts.push(Date.now());
+  });
+  try {
+    await page.goto(ride.link);
+    await page.getByRole('button', { name: 'Start shift' }).click();
+    await expect(page.locator('article.delivery')).toHaveCount(1);
+
+    await ctx.setOffline(true);
+    // fixes keep coming while the phone has no network: they are buffered, not sent
+    await expect(async () => {
+      await ctx.setGeolocation({ ...route(10)[Math.floor(Math.random() * 10)], accuracy: 8 });
+      await expect(page.locator('[data-role=status] .chip', { hasText: /updates waiting/ })).toBeVisible({
+        timeout: 1500,
+      });
+    }).toPass({ timeout: 20_000 });
+
+    await revokeSession(ride.sessionId);
+    const before = posts.length;
+    await ctx.setOffline(false);
+    await expect(page.getByRole('heading', { name: 'Your shift has ended' })).toBeVisible({ timeout: 30_000 });
+    // the buffer was discarded with the 401 (the status bar is gone with the deliveries view)
+    await expect(page.getByText(/updates waiting/)).toHaveCount(0);
+
+    // no retry loop: at most one post (the one answered 401) after reconnecting, and none afterwards
+    const after = posts.length;
+    await page.waitForTimeout(5000);
+    expect(posts.length).toBe(after);
+    expect(after - before).toBeLessThanOrEqual(1);
+  } finally {
+    await ctx.close();
+  }
+});
