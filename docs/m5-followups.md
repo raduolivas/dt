@@ -96,11 +96,34 @@ the decision, why, and what it costs if wrong.
   JWKS endpoint are unchanged. Recorded in `docs/ARCHITECTURE.md` §12.2. If wrong: a partner or third party that
   wants to verify courier tokens needs the keys another way (nothing planned needs it).
 
-The numbers R1-R13 follow the order the rulings were made during the build; R14 and R15 are the Task 11 ruling and the plan's JWKS ruling.
+- **M5-R16:** courier ownership of a delivery is decided by deliveries, under the row lock. `ReportEventRequest`
+  gains `courier_id`; the gateway sets it from the token's courier, and `Mutate` answers NotFound when the delivery
+  is not assigned to that courier, whatever its status. The gateway's earlier check against the courier's open
+  deliveries is gone. Why: a retried final tap (`delivered` applied, answer lost) found the delivery off the open list
+  and got 404 instead of `duplicate`, so the page said "no longer yours" (Review Focus 4); and a reassignment could
+  slip between the listing and the report. A partner report (no `courier_id`) is unchanged. Cost: a proto field and a
+  deliveries change late in the milestone. If wrong: one more field on an internal RPC.
+- **M5-R17:** two tabs of one session refresh under a Web Lock (`navigator.locks`, `dt.courier.refresh`). Inside the
+  lock the SDK re-reads storage and adopts a pair another tab already rotated instead of presenting its superseded
+  refresh token. Without Web Locks it adopts rotated pairs from the `storage` event (best effort). **No server-side
+  grace window** for the previous refresh token in M5. Why: a second tab (the courier taps the SMS link again) ended
+  the shift as `refresh_reuse`; the fix is in the client and keeps reuse detection strict. Cost: a refresh answer lost
+  on the network still ends the shift (the retry presents the old token) until the owner decides OQ29. If wrong: a
+  courier on a bad network loses a shift now and then and needs a new link.
+- **M5-R18:** the SDK times tokens on the server's clock and gives a 401 one refresh. `POST /courier/token` answers
+  `expires_in` (seconds until `access_expires_at`); the SDK stores the offset between the server's clock and the
+  device's when a pair arrives and schedules the refresh and the session end from it. A 401 on a bearer route triggers
+  one refresh; a refused refresh, or a 401 on the pair it produced, ends the session (no loop). Review Focus 3 still
+  holds: a revoked session ends after that one refresh attempt, with the buffer discarded. Why: a phone whose clock
+  was minutes off refreshed too late (401, shift over) or ended a shift early. Cost: one extra request on a session
+  that is really over. If wrong: one refresh call per ended session.
+
+The numbers R1-R13 follow the order the rulings were made during the build; R14 and R15 are the Task 11 ruling and the plan's JWKS ruling; R16-R18 are the final whole-branch review's rulings.
 
 ## Deferred minors
 
-Found in the task reviews and not fixed. None blocks the PR. Grouped by area.
+Found in the task reviews and not fixed. None blocks the PR. Grouped by area. Items marked **Fixed** were fixed after
+the final whole-branch review (2026-11-01).
 
 ### Contract and API (OpenAPI, gateway)
 
@@ -115,8 +138,10 @@ Found in the task reviews and not fixed. None blocks the PR. Grouped by area.
 - No test for the 51-fix batch limit on `/courier/locations`.
 - Table-driven tests discard the case name (no `t.Run`) in some gateway tests; one comment ("session survives") is
   unasserted.
-- Unknown refresh tokens are not charged to a rate bucket (a database lookup per attempt). Refresh reads the database
-  twice. Reuse detection is delayed while the refresh bucket is exhausted.
+- **Fixed:** unknown refresh tokens are now charged to the client IP bucket `rl:courier:ip:<ip>` on failure, like a
+  failed link code (a valid refresh is never charged there). Still open: an exhausted IP still costs one lookup per
+  attempt (the charge follows the lookup), refresh reads the database twice, and reuse detection is delayed while the
+  refresh bucket is exhausted.
 - The nginx route for the courier API was not exercised by `make dev` plus `curl`.
 - Unreachable branches are untested (`ErrSessionMode`, `ErrSessionLength`, a nil service). `expires_in_seconds` is
   converted from int to `Duration` and relies on the schema maximum. Link-mode idempotent replay is untested.
@@ -140,22 +165,28 @@ Found in the task reviews and not fixed. None blocks the PR. Grouped by area.
 
 ### `@dt/courier` SDK
 
-- `fetch` has no timeout.
+- **Fixed:** `fetch` gives up after 15 s (AbortController) as a network error.
 - A second `start()` returns early without saying so.
 - A late denied callback after `gps.stop()` can set the state to `denied`.
 - An old-format stored origin no longer matches (only matters for builds from before the release).
 - The reload test leaves the first SDK instance running.
 - `testkit.ts` lives in `src/` and ships in the package source.
 - The SDK needs a refresh token to survive: a concurrent or retried refresh by another client kills the session
-  (by design, M5-R4 and the reuse rule). Partners who write their own client must single-flight refresh.
+  (by design, M5-R4 and the reuse rule). Partners who write their own client must single-flight refresh. **Fixed for
+  several tabs of the SDK** (M5-R17); a lost refresh answer is OQ29.
+- **Fixed:** the SDK compared the device clock with server timestamps (M5-R18).
 
 ### Courier page
 
 - `endShift` has no `catch`.
-- The main-button label lookup is not guarded for an unknown `next_action`: the render throws.
+- **Fixed:** an unknown `next_action` is skipped (it used to throw in the render).
 - A production build silently defaults `VITE_DT_API` to localhost (the staging build script refuses it).
 - A wake-lock test is misnamed. There are no tests for the expired screen or for notices on the resume path.
 - A redundant CSS rule. The CSP `<meta>` lacks `base-uri` and `form-action`.
+
+- **M7 follow-up:** the link code is in the URL path (`/s/<code>`), so it appears in CDN and nginx access logs.
+  Staging logging is off, and the code is single use and valid for 15 minutes. Move it to the URL fragment
+  (`/#<code>`), which never reaches a server. Documented in `docs/guides/courier.md`.
 
 ### Local stack, edge and e2e
 
@@ -165,8 +196,9 @@ Found in the task reviews and not fixed. None blocks the PR. Grouped by area.
 - e2e: the courier presence check uses `[data-card="courier"]`, not the 3D label (hidden on iphone-se). An unescaped
   regex is built from `HEAD` strings (`courier.spec.ts`). `createRide` retries orphan deliveries. The project `use`
   spread comes after geolocation and permissions. A second 10 s fix-resend loop slows the test.
-- e2e: the offline-revoke test allows 0 POSTs after reconnect. It should assert exactly one, or wait for the 401 on
-  the locations POST. The 5 s quiet window misses longer backoffs, and the page exposes no readable buffered count.
+- **Fixed:** the e2e offline-revoke test waits for the 401 on the locations POST, asserts exactly one answered post
+  and at most one refused refresh (M5-R18). It holds the list poll offline so the first answer is the batch's. Still
+  open: the 5 s quiet window misses longer backoffs, and the page exposes no readable buffered count.
 
 ### Staging infrastructure
 

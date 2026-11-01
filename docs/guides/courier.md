@@ -63,7 +63,14 @@ Only then does the page exchange the link code for tokens and ask the phone for 
 in English and Dutch, follows the phone's language, and has large touch targets.
 
 The tokens stay on that phone. If the courier reloads the page or the browser closes the tab, the page resumes the
-shift from the stored refresh token. A used link code is never tried again.
+shift from the stored refresh token. A used link code is never tried again. If the courier taps the link again and
+the phone opens a second tab, both tabs share the one session; only one of them refreshes at a time (see Token
+handling).
+
+The link code is part of the URL path (`/s/<code>`), so it appears in the access logs of the CDN or web server that
+serves the page. Staging has those logs turned off, and the code is single use and valid for 15 minutes, so a logged
+code is of no use once the courier has opened the link. Moving the code into the URL fragment, which never reaches a
+server, is planned for M7.
 
 ## The SDK
 
@@ -92,16 +99,34 @@ what is collected, why, and who sees it. `start()` asks the phone for location p
 
 Use `courier.deliveries` for the list. `courier.report(deliveryId, type)` takes `at_pickup`, `pickup_confirmed`,
 `delivered` or `failed` (and an optional `{ reason }`). It resolves with `{ outcome, delivery }`. If the courier
-taps twice, the SDK sends one event: the same `event_id` goes with every retry, so the transition happens once.
+taps twice, the SDK sends one event: the same `event_id` goes with every retry, so the transition happens once. A
+retry whose first try was applied but whose answer was lost resolves with `outcome: duplicate`, also after a final
+tap (`delivered`, `failed`) has taken the delivery off the courier's list.
+
+Every request gives up after 15 seconds without a complete answer and counts as a network failure: a tap stays
+queued with its `event_id`, and fixes stay buffered.
 
 ## Token handling
 
 - The **access token** lasts 15 minutes (a 30 second leeway applies on the clock). It is never longer than the
   session: near the end of a shift it is cut at the session's end time.
 - The **refresh token** works once. Every refresh returns a new pair; the old refresh token stops working.
-- The SDK refreshes before the access token runs out, and only one refresh runs at a time. It stores the new pair
-  before it uses it. Keep this in mind if you build your own client: two refreshes at once, or a retry with an old
-  token, count as reuse.
+- The SDK refreshes 60 seconds before the access token runs out, and only one refresh runs at a time. It stores the
+  new pair before it uses it. Keep this in mind if you build your own client: two refreshes at once, or a retry with
+  an old token, count as reuse.
+- **Several tabs:** the SDK refreshes under a Web Lock (`navigator.locks`, name `dt.courier.refresh`), so two tabs of
+  one session never refresh at once. Inside the lock it first reads the stored pair: if another tab has already
+  rotated it, it takes that pair and makes no call. Browsers without Web Locks fall back to the `storage` event (best
+  effort: two refreshes at the very same moment can still end the session).
+- **Device clocks:** `POST /courier/token` answers `expires_in` (seconds until `access_expires_at`, by the server's
+  clock). The SDK measures the server's clock from it and times the refresh and the session end on that, so a phone
+  whose clock is minutes off keeps its shift.
+- **A 401 on a bearer route** earns one refresh before the SDK gives up. If that refresh is refused, or the new pair
+  gets a 401 too, the session is over: the SDK stops, discards what it buffered and sends the `ended` notice. It
+  never loops.
+- A network failure during a refresh is retried with the same refresh token (there is no other). If the server did
+  receive the lost request, that retry counts as reuse and ends the session. This is rare: it needs the answer to a
+  refresh to be lost after the server sent it.
 - **Reusing an old refresh token ends the session** with `end_reason: refresh_reuse`. This is on purpose: a copied
   token cannot be used quietly next to the real one.
 - By default the SDK keeps the pair in `localStorage` (or memory if that is blocked). Pass `storage` to use
@@ -150,7 +175,7 @@ Errors are `application/problem+json` with a `code`.
 | 401 | `link_code_used` | the code was already used: ask for a new link |
 | 401 | `refresh_token_invalid` | unknown, used or expired: start a new session |
 | 401 | `session_ended` | on `POST /courier/token` only; the session is over |
-| 401 | `unauthenticated` | bad, expired or revoked token; the SDK treats any 401 as the end of the shift |
+| 401 | `unauthenticated` | bad, expired or revoked token; the SDK tries one refresh, then ends the shift |
 | 404 | `not_found` | the delivery does not exist or is not assigned to this courier |
 | 404 | `courier_not_found` | starting a session: no such courier (register it first) |
 | 409 | `invalid_transition` | the event is not allowed in the delivery's status |
@@ -165,7 +190,8 @@ session exists. Only `POST /courier/token` says `session_ended`. A courier whose
 on the tap: the SDK drops the tap and sends a `reassigned` notice.
 
 If you revoke a session while the phone is offline with fixes saved, the first call after it reconnects gets `401`.
-The SDK discards the saved fixes, stops, and the page shows the ended screen. It does not retry.
+The SDK tries one refresh, which is refused (`session_ended`), then discards the saved fixes, stops, and the page
+shows the ended screen. It does not retry.
 
 ## Rate limits
 

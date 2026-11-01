@@ -1,7 +1,7 @@
 # DT: Open Questions
 
 > Standalone file for sharing with another AI or a person. It's self-contained, so it can be read without the other files.
-> **Last updated:** 2026-10-27 (M3 close-out added OQ25-OQ27; dispatch-lite scheduled, see R26; pricing decided, see R25; product name decided, see R24; OQ16–OQ24 answered 2026-10-23, see R22; cloud provider chosen, see R23; OQ14 tech part and OQ15 answered 2026-10-20) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+> **Last updated:** 2026-11-01 (M5 final review added OQ29) · 2026-10-27 (M3 close-out added OQ25-OQ27; dispatch-lite scheduled, see R26; pricing decided, see R25; product name decided, see R24; OQ16–OQ24 answered 2026-10-23, see R22; cloud provider chosen, see R23; OQ14 tech part and OQ15 answered 2026-10-20) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
 ## Context in 30 seconds
 
@@ -17,6 +17,7 @@
 | OQ26 | **Accept that staging deploys outside working hours only register task definitions?** The database and host are asleep, so migrations, rollout and the smoke test do not run; the services keep their old task revisions until the deploy workflow is re-run in working hours (the workflow warns about it). | The alternative is waking the stack on every off-hours merge (more cost). Recommendation: accept. |
 | OQ27 | **AWS Budgets currency: EUR or USD?** AWS Budgets may only accept USD for the account; the staging cost estimate is about USD 56 per month (about EUR 51-57 before VAT). | Decide at apply time; the bootstrap has a `budget_unit` variable. |
 | OQ28 | **Does M4 merge before its staging gate?** The staging gate (device measurements and the owner's final look review, design §2) needs the AWS apply, which is paused until next month (D28). Option A: merge after the final review and CI, then run the gate on staging as a post-merge check, with fixes as follow-up PRs. Option B: hold the PR until the gate passes. | **Answered 2026-10-31: A** (owner merged PR #20; the staging gate runs after the AWS resume). Claude's lean was A: the code needs no AWS account, and the Dutch copy review is a copy-only change. The risk of A is a budget miss found after merge (`docs/m4-followups.md`, R28). |
+| OQ29 | **A grace window for the previous courier refresh token?** Today a refresh token works once, and presenting an old one ends the session (`refresh_reuse`). If the answer to a refresh is lost after the server rotated the pair (a phone dropping off the network at that moment), the SDK's retry presents the old token and the shift ends. A shift of 12 h makes about 50 refreshes, each one a chance. Option A (today, M5-R17): no grace; a lost refresh answer ends the shift and the courier needs a new link. Option B: accept the previous token for a short window (for example 30 s) and answer with the same new pair, which weakens reuse detection: a stolen token used inside the window is not caught. | Decide before production couriers. Claude's lean: B with a short window, answered idempotently (the same pair), and reuse detection unchanged outside it. Recorded in `docs/m5-followups.md`. |
 
 ---
 

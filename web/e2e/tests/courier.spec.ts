@@ -113,9 +113,16 @@ test('revoked while offline with fixes buffered: 401 on reconnect discards the b
     ...(test.info().project.use as object),
   });
   const page = await ctx.newPage();
-  const posts: number[] = []; // times of the location posts that reached the network
-  page.on('request', (r) => {
-    if (r.method() === 'POST' && /\/v1\/courier\/locations/.test(r.url())) posts.push(Date.now());
+  // the answers to location posts and the refresh calls, as the network saw them (a request that failed offline has
+  // no answer)
+  const answers: number[] = [];
+  const refreshes: number[] = [];
+  page.on('response', (r) => {
+    if (r.request().method() !== 'POST') return;
+    if (/\/v1\/courier\/locations/.test(r.url())) answers.push(r.status());
+    if (/\/v1\/courier\/token/.test(r.url()) && r.request().postDataJSON()?.grant_type === 'refresh_token') {
+      refreshes.push(r.status());
+    }
   });
   try {
     await page.goto(ride.link);
@@ -132,17 +139,29 @@ test('revoked while offline with fixes buffered: 401 on reconnect discards the b
     }).toPass({ timeout: 20_000 });
 
     await revokeSession(ride.sessionId);
-    const before = posts.length;
+    // the list poll stays without network, so the first answer after reconnecting is the buffered batch's
+    await page.route('**/v1/courier/deliveries', (r) =>
+      r.request().method() === 'GET' ? r.abort('internetdisconnected') : r.fallback(),
+    );
+    const answersBefore = answers.length;
+    const refreshesBefore = refreshes.length;
+    const denied = page.waitForResponse(
+      (r) => r.request().method() === 'POST' && /\/v1\/courier\/locations/.test(r.url()) && r.status() === 401,
+      { timeout: 30_000 },
+    );
     await ctx.setOffline(false);
+    await denied; // the 401 came from the buffered location batch
     await expect(page.getByRole('heading', { name: 'Your shift has ended' })).toBeVisible({ timeout: 30_000 });
     // the buffer was discarded with the 401 (the status bar is gone with the deliveries view)
     await expect(page.getByText(/updates waiting/)).toHaveCount(0);
 
-    // no retry loop: at most one post (the one answered 401) after reconnecting, and none afterwards
-    const after = posts.length;
+    // no retry loop: exactly one location post answered (the 401), at most the one refresh the 401 earns (refused),
+    // and nothing afterwards
     await page.waitForTimeout(5000);
-    expect(posts.length).toBe(after);
-    expect(after - before).toBeLessThanOrEqual(1);
+    expect(answers.slice(answersBefore)).toEqual([401]);
+    const tried = refreshes.slice(refreshesBefore);
+    expect(tried.length).toBeLessThanOrEqual(1);
+    expect(tried.every((s) => s === 401)).toBe(true);
   } finally {
     await ctx.close();
   }
