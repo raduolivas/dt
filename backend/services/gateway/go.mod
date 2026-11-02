@@ -3,12 +3,12 @@ module github.com/raduolivas/dt/backend/services/gateway
 go 1.27.3
 
 require (
-	connectrpc.com/connect/v2 v2.0.1
-	github.com/getkin/kin-openapi v0.151.0
+	connectrpc.com/connect/v2 v2.0.2
+	github.com/getkin/kin-openapi v0.152.0
 	github.com/go-redis/redis_rate/v10 v10.0.1
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/nats-io/nats.go v1.54.0
-	github.com/oapi-codegen/nethttp-middleware v1.2.0
+	github.com/nats-io/nats.go v1.55.0
+	github.com/oapi-codegen/nethttp-middleware v1.3.1
 	github.com/raduolivas/dt/backend/gen v0.0.0
 	github.com/raduolivas/dt/backend/pkg v0.0.0
 	github.com/redis/go-redis/v9 v9.23.0
