@@ -613,6 +613,14 @@ describe('review fixes', () => {
   });
 });
 
+describe('client', () => {
+  it('trims any trailing slashes from the API base', async () => {
+    const client = createClient('https://api.test/v1///', api.fetch);
+    await client.call('GET', '/courier/deliveries', { token: 't' });
+    expect(api.calls.map((x) => x.path)).toEqual(['/courier/deliveries']);
+  });
+});
+
 describe('timeouts', () => {
   it('a request with no answer gives up after 15 s as a network error', async () => {
     api.handle('GET /courier/deliveries', () => new Promise<Response>(() => {}));

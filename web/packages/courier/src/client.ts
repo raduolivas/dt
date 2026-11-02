@@ -15,7 +15,10 @@ export interface Client {
 }
 
 export function createClient(api: string, fetchFn?: typeof fetch): Client {
-  const base = api.replace(/\/+$/, '');
+  // A loop, not /\/+$/: that regex is quadratic on a string of many slashes (CodeQL js/polynomial-redos).
+  let end = api.length;
+  while (end > 0 && api[end - 1] === '/') end--;
+  const base = api.slice(0, end);
   const f: typeof fetch = fetchFn ?? ((...a) => globalThis.fetch(...a));
   return {
     async call<T>(method: 'GET' | 'POST', path: string, opts: { token?: string; body?: unknown } = {}) {
