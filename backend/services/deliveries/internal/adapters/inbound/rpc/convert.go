@@ -145,8 +145,8 @@ func toFilter(req *deliveriesv1.ListDeliveriesRequest) app.ListFilter {
 	return f
 }
 
-// toReport maps a report. The actor is the partner unless an internal caller
-// (the tracking simulator) says "courier"; the gateway never sets it. A
+// toReport maps a report. The actor is the partner unless the caller (the
+// gateway for a courier session, or the tracking simulator) says "courier". A
 // courier's confirmation is always by the courier.
 func toReport(req *deliveriesv1.ReportEventRequest) (domain.Report, error) {
 	r := domain.Report{
@@ -202,12 +202,38 @@ func fromDelivery(d *domain.Delivery) *deliveriesv1.Delivery {
 			Id: c.ID, ExternalId: c.ExternalID, DisplayName: c.DisplayName, Vehicle: string(c.Vehicle),
 		}
 	}
+	out.PickupConfirmations = fromConfirmations(d)
+	return out
+}
+
+func fromConfirmations(d *domain.Delivery) []*deliveriesv1.PickupConfirmation {
+	var out []*deliveriesv1.PickupConfirmation
 	for _, h := range d.History {
 		if h.Type == string(domain.ReportPickupConfirmed) {
-			out.PickupConfirmations = append(out.PickupConfirmations,
-				&deliveriesv1.PickupConfirmation{By: string(h.By), At: ts(h.OccurredAt)})
+			out = append(out, &deliveriesv1.PickupConfirmation{By: string(h.By), At: ts(h.OccurredAt)})
 		}
 	}
+	return out
+}
+
+// fromCourierDelivery is the courier-safe view: no customer, metadata or
+// history, and the notes only as the dropoff's.
+func fromCourierDelivery(d *domain.Delivery) *deliveriesv1.CourierDelivery {
+	out := &deliveriesv1.CourierDelivery{
+		Id: d.ID, Reference: d.ExternalID, Model: string(d.Model), Status: string(d.Status),
+		Pickup:       &deliveriesv1.CourierPickup{Location: fromLocation(d.Pickup), Label: d.PickupName},
+		Dropoff:      &deliveriesv1.CourierDropoff{Location: fromLocation(d.Dropoff), Label: d.DropoffLabel, Notes: d.Notes},
+		ItemsSummary: d.ItemsSummary,
+		NextActions:  d.CourierNextActions(),
+	}
+	if d.ReadyAt != nil {
+		out.ReadyAt = ts(*d.ReadyAt)
+	}
+	if d.ItemCount != nil {
+		n := int32(min(*d.ItemCount, 999)) //nolint:gosec // bounded by the domain (0-999)
+		out.ItemCount = &n
+	}
+	out.PickupConfirmations = fromConfirmations(d)
 	return out
 }
 

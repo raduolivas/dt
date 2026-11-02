@@ -1,0 +1,52 @@
+# Courier page over HTTPS for the owner's phone on the LAN (scripts/lan-https.sh fills in the placeholders and writes
+# build/lan/courier.conf). iOS exposes geolocation to secure contexts only, and an https page may only call an https API,
+# so the page here is built for the https API on port 8444 (api-lan.conf).
+#   8443  the courier page (build/courier-lan), same headers as the local courier service
+#   8445  plain HTTP, serving only the local CA certificate, to install it on the phone
+server {
+    listen 8443 ssl;
+    root /srv/courier;
+    server_tokens off;
+
+    ssl_certificate /etc/nginx/lan/server.pem;
+    ssl_certificate_key /etc/nginx/lan/server.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    types {
+        text/html html;
+        application/javascript js mjs;
+        text/css css;
+        image/svg+xml svg;
+    }
+    default_type application/octet-stream;
+
+    location /assets/ {
+        add_header Content-Security-Policy "default-src 'self'; connect-src __API_ORIGIN__; frame-ancestors 'none'" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header X-Robots-Tag "noindex" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        try_files $uri =404;
+    }
+    location / {
+        add_header Content-Security-Policy "default-src 'self'; connect-src __API_ORIGIN__; frame-ancestors 'none'" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header X-Robots-Tag "noindex" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Cache-Control "no-cache" always;
+        try_files /index.html =404;
+    }
+}
+
+server {
+    listen 8445;
+    server_tokens off;
+    location = /dt-local-ca.crt {
+        alias /etc/nginx/lan/ca.pem;
+        # iOS offers to install a certificate only for this type
+        default_type application/x-x509-ca-cert;
+    }
+    location / {
+        return 404;
+    }
+}

@@ -28,7 +28,7 @@ type AuditEntry struct {
 	ActorID   string // credential id, e.g. ak_…
 	Action    string // route name, e.g. "deliveries.create"
 	Target    string // the route's path value; "" when it has none
-	Status    int    // the status the client received
+	Status    int    // the status the client received; 0: no HTTP response, written by the app layer
 	IP        netip.Addr
 	UserAgent string
 	RequestID string

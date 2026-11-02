@@ -642,8 +642,8 @@ func TestMiddlewareHookOrder(t *testing.T) {
 func TestRoutesTable(t *testing.T) {
 	t.Parallel()
 	rs := httpapi.Routes(httpapi.Deps{})
-	if len(rs) != 16 { // me.get, the ten delivery and courier routes, the four tracking routes, the simulator
-		t.Fatalf("routes = %d, want 16", len(rs))
+	if len(rs) != 19 { // me.get, the ten delivery and courier routes, the four tracking routes, the simulator, the three courier-session routes
+		t.Fatalf("routes = %d, want 19", len(rs))
 	}
 	type props struct {
 		method, pattern string

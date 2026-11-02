@@ -23,6 +23,8 @@ const (
 	// sandbox simulator run.
 	TrackingLink = "tl"
 	Simulation   = "sim"
+	// CourierSession identifies a gateway courier session.
+	CourierSession = "cs"
 )
 
 var (

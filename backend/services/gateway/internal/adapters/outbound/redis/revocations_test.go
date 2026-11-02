@@ -7,6 +7,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/raduolivas/dt/backend/pkg/courierjwt"
 	"github.com/raduolivas/dt/backend/pkg/testkit"
 	"github.com/raduolivas/dt/backend/pkg/viewerjwt"
 	redislimit "github.com/raduolivas/dt/backend/services/gateway/internal/adapters/outbound/redis"
@@ -80,5 +81,39 @@ func TestAnnounceExpirySetsKeyAndPublishes(t *testing.T) {
 	ttl := c.TTL(ctx, viewerjwt.ExpiryKey(id)).Val()
 	if ttl < 30*time.Minute || ttl > 30*time.Minute+viewerjwt.RevokedTTL+time.Second {
 		t.Fatalf("expiry key ttl = %v, want until a token past the expiry dies", ttl)
+	}
+}
+
+func TestCourierDenyList(t *testing.T) {
+	t.Parallel()
+	opts, err := redis.ParseURL(testkit.StartRedis(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := redis.NewClient(opts)
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	d := redislimit.NewCourierDenyList(c)
+
+	const sid = "cs_01j9z3k8m2q4r6s8t0v2w4x6y8"
+	if denied, err := d.Denied(ctx, sid); err != nil || denied {
+		t.Fatalf("before deny = %v, %v", denied, err)
+	}
+	if err := d.Deny(ctx, sid); err != nil {
+		t.Fatal(err)
+	}
+	if denied, err := d.Denied(ctx, sid); err != nil || !denied {
+		t.Fatalf("after deny = %v, %v", denied, err)
+	}
+	if denied, _ := d.Denied(ctx, "cs_other"); denied {
+		t.Fatal("another session is denied")
+	}
+	ttl, err := c.TTL(ctx, "dt:courier:revoked:"+sid).Result()
+	if err != nil || ttl <= courierjwt.TTL || ttl > courierjwt.TTL+courierjwt.Leeway {
+		t.Fatalf("deny-list ttl = %v, %v (want the token lifetime plus leeway)", ttl, err)
+	}
+	// A viewer revocation of the same id is a different key.
+	if n := c.Exists(ctx, "dt:viewer:revoked:"+sid).Val(); n != 0 {
+		t.Fatal("courier deny-list wrote a viewer key")
 	}
 }

@@ -143,6 +143,11 @@ func validateNewDelivery(in NewDeliveryInput) error {
 	return checkDistance(in.Pickup, in.Dropoff)
 }
 
+// AssignedTo reports whether the delivery is assigned to the courier id.
+func (d *Delivery) AssignedTo(courierID string) bool {
+	return d.Courier != nil && d.Courier.ID == courierID
+}
+
 // Assign attaches courier c. In end_to_end the first assignment moves
 // confirmed → courier_assigned; otherwise the state is unchanged and a
 // reassignment replaces the courier. From picked_up on it is

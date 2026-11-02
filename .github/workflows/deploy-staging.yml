@@ -23,7 +23,7 @@ env:
   SERVICES: gateway deliveries tracking webhooks accounts
   API_URL: https://api.staging.deliveryontrack.io
   CDN_URL: https://cdn.staging.deliveryontrack.io
-  # Immutable: a deploy writes page/<sha>/ and sdk/tracking/<sha>/ once and never deletes an older prefix, so a page
+  # Immutable: a deploy writes page/<sha>/, sdk/tracking/<sha>/ and courier/<sha>/ once and never deletes an older prefix, so a page
   # opened before this deploy keeps loading its chunks.
   CDN_CACHE_CONTROL: public, max-age=31536000, immutable
 
@@ -65,7 +65,7 @@ jobs:
       # Never the dist of make web-assets (local-stack defaults, test hooks):
       # the script deletes both dist folders, builds with the staging API and
       # tiles, and refuses output that names localhost or the test hook.
-      - name: Build the hosted page and the SDK for staging
+      - name: Build the hosted page, the SDK and the courier page for staging
         run: scripts/web-staging-build.sh "$SHA" build/cdn-staging
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
@@ -124,14 +124,14 @@ jobs:
           fi
 
       # Before any task definition points at them. The deploy role may only
-      # s3:PutObject under page/* and sdk/* (cp, never sync: no list or delete).
-      - name: Upload the page and the SDK to the CDN
+      # s3:PutObject under page/*, sdk/* and courier/* (cp, never sync: no list or delete).
+      - name: Upload the page, the SDK and the courier archive to the CDN
         run: |
           set -euo pipefail
           account="$(aws sts get-caller-identity --query Account --output text)"
           aws s3 cp build/cdn-staging/ "s3://dt-staging-cdn-${account}/" --recursive \
             --cache-control "$CDN_CACHE_CONTROL" --only-show-errors
-          echo "uploaded page/${SHA}/ and sdk/tracking/${SHA}/"
+          echo "uploaded page/${SHA}/, sdk/tracking/${SHA}/ and courier/${SHA}/"
 
       # New revisions of the task definitions: the latest revision of each
       # family (so environment changes made by tofu carry over) with only
@@ -236,6 +236,21 @@ jobs:
             fi
           done
           curl -fsS --max-time 10 "${API_URL}/livez" >/dev/null
+
+      # courier.<zone> serves courier/current/ (the distribution's origin path). It moves only once the gateway runs
+      # this deploy's revision, so the new page never meets an old gateway. Hashed assets first, then index.html.
+      # Rollback is manual: the owner copies courier/<old sha>/ over courier/current/ (docs/m5-followups.md).
+      - name: Publish the courier page (courier/current/)
+        if: steps.host.outputs.awake == 'true'
+        run: |
+          set -euo pipefail
+          account="$(aws sts get-caller-identity --query Account --output text)"
+          cur="s3://dt-staging-cdn-${account}/courier/current/"
+          aws s3 cp "build/cdn-staging/courier/${SHA}/" "$cur" --recursive --exclude index.html \
+            --cache-control "$CDN_CACHE_CONTROL" --only-show-errors
+          aws s3 cp "build/cdn-staging/courier/${SHA}/index.html" "${cur}index.html" \
+            --cache-control "no-cache" --only-show-errors
+          echo "courier/current/ now serves ${SHA}"
 
       # Step 5. Public API only: the test key's tenant was set up by the
       # owner with dtctl over SSM (runbook).

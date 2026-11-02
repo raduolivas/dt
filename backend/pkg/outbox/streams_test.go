@@ -42,6 +42,20 @@ func TestStreamTracking(t *testing.T) {
 	}
 }
 
+func TestStreamGateway(t *testing.T) {
+	s := outbox.StreamGateway
+	if got := outbox.SubjectFor(s, "courier.session_started"); got != "gateway.courier.session_started" {
+		t.Fatalf("subject = %q", got)
+	}
+	if s.Name != "GATEWAY" || len(s.Subjects) != 1 || s.Subjects[0] != "gateway.>" ||
+		s.Storage != jetstream.FileStorage || s.Duplicates != outbox.DuplicateWindow {
+		t.Fatalf("stream = %+v", s)
+	}
+	if s.MaxAge != 168*time.Hour {
+		t.Fatalf("MaxAge = %v, want 168h", s.MaxAge)
+	}
+}
+
 func TestWaitForStreamReturnsWhenCreated(t *testing.T) {
 	nc, err := nats.Connect(testkit.StartNATS(t))
 	if err != nil {

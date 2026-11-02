@@ -1,7 +1,7 @@
 # Offline guard (mock providers, plan only) for the web CDN (cdn.tf): the
 # bucket is private and reachable only through CloudFront's origin access
 # control, the distribution answers on cdn.staging, the deploy role can only
-# write page/* and sdk/*, track.staging reaches the gateway, and the gateway
+# write page/*, sdk/* and courier/*, track.staging reaches the gateway, and the gateway
 # task carries the hosted page's settings.
 
 mock_provider "aws" {
@@ -198,7 +198,7 @@ run "distribution_uses_oac_and_the_cdn_alias" {
   }
 }
 
-run "deploy_role_writes_only_page_and_sdk" {
+run "deploy_role_writes_only_page_sdk_and_courier" {
   command = plan
 
   assert {
@@ -218,8 +218,9 @@ run "deploy_role_writes_only_page_and_sdk" {
     condition = toset(flatten([for s in jsondecode(aws_iam_role_policy.deploy_cdn.policy).Statement : s.Resource])) == toset([
       "arn:aws:s3:::dt-staging-cdn-123456789012/page/*",
       "arn:aws:s3:::dt-staging-cdn-123456789012/sdk/*",
+      "arn:aws:s3:::dt-staging-cdn-123456789012/courier/*",
     ])
-    error_message = "the deploy role may only write under page/* and sdk/* (tiles are the owner's)"
+    error_message = "the deploy role may only write under page/*, sdk/* and courier/* (tiles are the owner's)"
   }
 }
 
@@ -264,5 +265,73 @@ run "gateway_has_the_page_settings" {
       }
     )
     error_message = "the gateway task env does not carry the five TRACKING_* values of the hosted page"
+  }
+}
+
+run "courier_page_distribution" {
+  command = plan
+
+  assert {
+    condition     = aws_cloudfront_distribution.courier.aliases == toset(["courier.staging.deliveryontrack.io"])
+    error_message = "the courier distribution does not answer on courier.staging.deliveryontrack.io only"
+  }
+
+  assert {
+    condition = (
+      one(aws_cloudfront_distribution.courier.origin).origin_path == "/courier/current" &&
+      one(aws_cloudfront_distribution.courier.origin).origin_access_control_id == "EMOCKOAC" &&
+      one(aws_cloudfront_distribution.courier.default_cache_behavior).viewer_protocol_policy == "redirect-to-https"
+    )
+    error_message = "the courier origin must be courier/current/ through the origin access control, HTTPS only"
+  }
+
+  assert {
+    condition = alltrue([
+      for e in aws_cloudfront_distribution.courier.custom_error_response :
+      e.response_code == 200 && e.response_page_path == "/index.html"
+    ]) && length(aws_cloudfront_distribution.courier.custom_error_response) == 2
+    error_message = "403 and 404 must fall back to index.html with 200 (SPA)"
+  }
+
+  assert {
+    condition = (
+      one(one(aws_cloudfront_response_headers_policy.courier.security_headers_config).content_security_policy).content_security_policy == "default-src 'self'; connect-src https://api.staging.deliveryontrack.io; frame-ancestors 'none'" &&
+      one(one(aws_cloudfront_response_headers_policy.courier.security_headers_config).referrer_policy).referrer_policy == "no-referrer" &&
+      anytrue([
+        for h in one(aws_cloudfront_response_headers_policy.courier.custom_headers_config).items :
+        h.header == "X-Robots-Tag" && h.value == "noindex"
+      ])
+    )
+    error_message = "the courier headers must be the CSP, Referrer-Policy no-referrer and X-Robots-Tag noindex"
+  }
+
+  assert {
+    condition     = contains(aws_acm_certificate.cdn.subject_alternative_names, "courier.staging.deliveryontrack.io")
+    error_message = "the CloudFront certificate lacks courier.staging.deliveryontrack.io"
+  }
+
+  assert {
+    condition     = aws_route53_record.courier.name == "courier.staging.deliveryontrack.io" && one(aws_route53_record.courier.alias).name == "dmock.cloudfront.net"
+    error_message = "courier.staging must be an alias to the courier distribution"
+  }
+}
+
+run "gateway_has_the_courier_settings" {
+  command = plan
+
+  assert {
+    condition = (
+      {
+        for e in one([for c in jsondecode(aws_ecs_task_definition.app["gateway"].container_definitions) : c if c.name == "gateway"]).environment :
+        e.name => e.value if startswith(e.name, "COURIER_")
+        } == {
+        COURIER_URL_BASE            = "https://courier.staging.deliveryontrack.io"
+        COURIER_SIGNING_KEY_CURRENT = "cr1"
+      }
+      ) && anytrue([
+        for s in one([for c in jsondecode(aws_ecs_task_definition.app["gateway"].container_definitions) : c if c.name == "gateway"]).secrets :
+        s.name == "COURIER_SIGNING_KEYS"
+    ])
+    error_message = "the gateway task lacks COURIER_URL_BASE, COURIER_SIGNING_KEY_CURRENT or the COURIER_SIGNING_KEYS secret"
   }
 }

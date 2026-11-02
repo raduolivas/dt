@@ -26,6 +26,10 @@ resource "random_bytes" "viewer_signing_seed" {
   length = 32 # Ed25519 seed
 }
 
+resource "random_bytes" "courier_signing_seed" {
+  length = 32 # Ed25519 seed; the courier token key set is separate from the viewer one
+}
+
 locals {
   db_roles = flatten([for s in local.services : ["svc_${s}", "mig_${s}"]])
 }
@@ -110,6 +114,7 @@ locals {
     gateway_data_keys    = "gw1:${random_bytes.gateway_data_key.base64}"
     deliveries_data_keys = "dk1:${random_bytes.deliveries_data_key.base64}"
     viewer_signing_keys  = "vw1:${random_bytes.viewer_signing_seed.base64}"
+    courier_signing_keys = "cr1:${random_bytes.courier_signing_seed.base64}"
   }
 
   db_secret = merge(
@@ -126,7 +131,7 @@ locals {
 
 resource "aws_secretsmanager_secret" "app" {
   name                    = "dt-staging/app"
-  description             = "Internal RPC token, API key pepper, data keys, viewer signing keys"
+  description             = "Internal RPC token, API key pepper, data keys, viewer and courier signing keys"
   kms_key_id              = aws_kms_key.data.arn
   recovery_window_in_days = 0 # staging-down then staging-up reuses the name at once
 }

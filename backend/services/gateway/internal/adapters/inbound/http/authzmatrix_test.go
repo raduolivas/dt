@@ -24,6 +24,7 @@ import (
 	eventsv1 "github.com/raduolivas/dt/backend/gen/dt/events/v1"
 	trackingv1 "github.com/raduolivas/dt/backend/gen/dt/tracking/v1"
 	"github.com/raduolivas/dt/backend/pkg/apikey"
+	"github.com/raduolivas/dt/backend/pkg/courierjwt"
 	"github.com/raduolivas/dt/backend/pkg/viewerjwt"
 	"github.com/raduolivas/dt/backend/services/gateway/api"
 	httpapi "github.com/raduolivas/dt/backend/services/gateway/internal/adapters/inbound/http"
@@ -78,6 +79,10 @@ const (
 	couOther    = "cou_01j9z3k8m2q4r6s8t0v2w4x6z5"
 	extMine     = "c-mine"
 	otherTenant = "ten_01j9z3k8m2q4r6s8t0v2w4x6z3"
+	// Courier sessions of the same three owners.
+	sesMine  = "cs_01j9z3k8m2q4r6s8t0v2w4x6z6"
+	sesLive  = "cs_01j9z3k8m2q4r6s8t0v2w4x6z7"
+	sesOther = "cs_01j9z3k8m2q4r6s8t0v2w4x6z8"
 )
 
 // hasResourceID reports whether rt addresses a delivery or courier by {id}.
@@ -86,8 +91,12 @@ const (
 func hasResourceID(rt httpapi.Route) bool { return strings.Contains(rt.Pattern, "{id}") }
 
 // resources are rt's own, live and other-tenant resource ids: couriers for
-// the courier-location relay, deliveries otherwise.
+// the courier-location relay, courier sessions for their routes, deliveries
+// otherwise.
 func resources(rt httpapi.Route) (mine, live, other string) {
+	if strings.HasPrefix(rt.Pattern, "/v1/courier-sessions/{id}") {
+		return sesMine, sesLive, sesOther
+	}
 	if strings.HasPrefix(rt.Pattern, "/v1/couriers/{id}") {
 		return couMine, couLive, couOther
 	}
@@ -259,6 +268,7 @@ var routeBodies = map[string]string{
 	"deliveries.assign":         `{"courier_id":"` + couMine + `"}`,
 	"deliveries.report_event":   `{"event_id":"evt-9001","type":"at_pickup","occurred_at":"2026-10-22T14:10:00Z"}`,
 	"deliveries.cancel":         `{"reason":"Customer cancelled the order"}`,
+	"courier_sessions.create":   `{"courier_id":"` + couMine + `","mode":"sdk"}`,
 	"couriers.upsert":           `{"display_name":"Carlos","vehicle":"e_bike","photo_url":"https://cdn.example.com/c/77.jpg"}`,
 	"couriers.report_locations": relayBody,
 	"deliveries.simulate":       `{"speed_factor":10,"signal_gap":{"after_s":30,"duration_s":90}}`,
@@ -413,6 +423,48 @@ func (s scopedFake) ErasePersonalData(ctx context.Context, r *deliveriesv1.Erase
 	return &deliveriesv1.ErasePersonalDataResponse{Delivery: s.del}, nil
 }
 
+// scopedSessions is the courier-session service of the matrix: like
+// scopedFake, it answers not-found for a session outside the caller's tenant
+// and environment, and starts sdk sessions whose id is sesMine.
+type scopedSessions struct{ calls *atomic.Int64 }
+
+var sessionOwners = map[string]struct {
+	tenant string
+	env    domain.Environment
+}{
+	sesMine:  {tenantID, domain.EnvTest},
+	sesLive:  {tenantID, domain.EnvLive},
+	sesOther: {otherTenant, domain.EnvTest},
+}
+
+func (s scopedSessions) session(id string) domain.CourierSession {
+	now := fixedClock{}.Now()
+	exp := now.Add(time.Hour)
+	return domain.CourierSession{ID: id, CourierID: couMine, Mode: domain.ModeSDK, State: domain.SessionActive,
+		CreatedAt: now, StartedAt: &now, ExpiresAt: &exp}
+}
+
+func (s scopedSessions) visible(p domain.Principal, id string) error {
+	s.calls.Add(1)
+	if o, ok := sessionOwners[id]; !ok || o.tenant != p.TenantID || o.env != p.Env {
+		return app.ErrCourierSessionNotFound
+	}
+	return nil
+}
+
+func (s scopedSessions) Start(context.Context, domain.Principal, string, string, time.Duration) (app.StartResult, error) {
+	s.calls.Add(1)
+	return app.StartResult{Session: s.session(sesMine), Tokens: app.Tokens{AccessToken: "a", AccessExpiresAt: fixedClock{}.Now(), RefreshToken: "r"}}, nil
+}
+
+func (s scopedSessions) Get(_ context.Context, p domain.Principal, id string) (domain.CourierSession, error) {
+	return s.session(id), s.visible(p, id)
+}
+
+func (s scopedSessions) End(_ context.Context, p domain.Principal, id, _ string) (domain.CourierSession, error) {
+	return s.session(id), s.visible(p, id)
+}
+
 // pathTarget is the value of the route's first {wildcard} in req's path, ""
 // when the pattern has none.
 func pathTarget(rt httpapi.Route, req *http.Request) string {
@@ -548,9 +600,11 @@ func TestAuthorizationMatrix(t *testing.T) {
 				// Production routes get a fresh fake per cell; the two
 				// test-only routes carry their own handlers.
 				fake, track := scopedFake{newFake()}, scopedTracking{newFakeTracking()}
+				var sessionCalls atomic.Int64
 				counted := rt
 				links := &app.TrackingLinks{Store: apptest.NewMemLinks(), Hasher: apptest.Hasher{}, Revoker: &apptest.MemRevoker{}, Expiries: &apptest.MemExpiries{}, Clock: fixedClock{}}
-				for _, pr := range httpapi.Routes(httpapi.Deps{Deliveries: fake, Links: links, Tracking: track}) {
+				for _, pr := range httpapi.Routes(httpapi.Deps{Deliveries: fake, Links: links, Tracking: track,
+					CourierSessions: scopedSessions{&sessionCalls}}) {
 					if pr.Name == rt.Name {
 						counted = pr
 					}
@@ -593,6 +647,9 @@ func TestAuthorizationMatrix(t *testing.T) {
 					if rt.Name == "deliveries.create" && code == "" {
 						wantTarget = delID // the id the service just created
 					}
+					if rt.Name == "courier_sessions.create" && code == "" {
+						wantTarget = sesMine // likewise
+					}
 					if got.Action != rt.Name || got.Status != status || got.Target != wantTarget {
 						t.Fatalf("audit row = {action %q status %d target %q}, want {%q %d %q}",
 							got.Action, got.Status, got.Target, rt.Name, status, wantTarget)
@@ -610,7 +667,7 @@ func TestAuthorizationMatrix(t *testing.T) {
 					if n := handled.Load(); n != wantHandled {
 						t.Fatalf("handler ran %d times, want %d", n, wantHandled)
 					}
-					if n := fake.count() + track.count(); n != wantRPC {
+					if n := fake.count() + track.count() + int(sessionCalls.Load()); n != wantRPC {
 						t.Fatalf("deliveries and tracking calls = %d, want %d", n, wantRPC)
 					}
 					return
@@ -793,4 +850,122 @@ func TestViewerAuthorizationMatrix(t *testing.T) {
 			})
 		}
 	}
+}
+
+// TestCourierAuthorizationMatrix runs every courier route against every
+// credential: none, a secret key (test and live), a viewer token, a courier
+// token of another tenant or environment, an expired, a revoked and a
+// replaced one, and the courier's own. Only the courier's own token
+// authenticates; the others' tokens reach only their own data.
+func TestCourierAuthorizationMatrix(t *testing.T) {
+	t.Parallel()
+	type credential struct {
+		name  string
+		token func(t *testing.T, e *courierEdge) string
+	}
+	secret := func(env apikey.Environment) func(*testing.T, *courierEdge) string {
+		return func(t *testing.T, _ *courierEdge) string {
+			return mint(t, env, actor, domain.AllScopes...).raw
+		}
+	}
+	rejected := []credential{
+		{"no credential", func(*testing.T, *courierEdge) string { return "" }},
+		{"garbage", func(*testing.T, *courierEdge) string { return "not.a.jwt" }},
+		{"test secret key", secret(apikey.Test)},
+		{"live secret key", secret(apikey.Live)},
+		{"viewer token", func(t *testing.T, _ *courierEdge) string {
+			jwt, _, err := testSigner(t).Sign(viewerjwt.Claims{DeliveryID: delID, TenantID: tenantID, Env: "test", LinkID: "tl_01j9z3k8m2q4r6s8t0v2w4x6y8"}, viewerNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return jwt
+		}},
+		{"expired", func(t *testing.T, e *courierEdge) string {
+			jwt, _, err := e.signer.Sign(courierjwt.Claims{CourierID: couID, TenantID: tenantID, Env: "test", SessionID: sesMine, Source: "sdk"},
+				viewerNow.Add(-time.Hour))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return jwt
+		}},
+		{"revoked", func(t *testing.T, e *courierEdge) string {
+			res := e.sdk(partnerTest)
+			if _, err := e.svc.End(context.Background(), partnerTest, res.Session.ID, "partner"); err != nil {
+				t.Fatal(err)
+			}
+			return res.Tokens.AccessToken
+		}},
+		{"replaced by a newer session", func(t *testing.T, e *courierEdge) string {
+			old := e.sdk(partnerTest)
+			e.sdk(partnerTest)
+			return old.Tokens.AccessToken
+		}},
+	}
+	for _, rt := range courierRoutes {
+		if !rt.bearer {
+			continue
+		}
+		for _, c := range rejected {
+			t.Run(rt.name+"/"+c.name, func(t *testing.T) {
+				t.Parallel()
+				e := newCourierEdge(t, nil)
+				rec := e.do(cReq(rt.method, rt.path, c.token(t, e), rt.body))
+				wantProblem(t, rec, http.StatusUnauthorized, "unauthenticated")
+				if e.trk.count() != 0 || e.dels.count() != 0 {
+					t.Fatal("a refused credential reached a service")
+				}
+			})
+		}
+		t.Run(rt.name+"/courier", func(t *testing.T) {
+			t.Parallel()
+			e := newCourierEdge(t, nil)
+			if rec := e.do(cReq(rt.method, rt.path, e.sdk(partnerTest).Tokens.AccessToken, rt.body)); rec.Code != rt.success {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, rt.success, rec.Body.String())
+			}
+		})
+	}
+
+	// A valid token of another tenant, or of the same tenant's other
+	// environment, is authenticated but sees nothing of the test
+	// environment's data: its scope is its own.
+	for name, p := range map[string]domain.Principal{"another tenant": partnerOther, "the other environment": partnerLive} {
+		t.Run("foreign/"+name, func(t *testing.T) {
+			t.Parallel()
+			e := newCourierEdge(t, nil)
+			tok := e.sdk(p).Tokens.AccessToken
+			wantProblem(t, e.do(cReq("POST", "/v1/courier/deliveries/"+delID+"/events", tok, evtBody)), http.StatusNotFound, "not_found")
+			// deliveries decides ownership under its row lock (M5-R16): the
+			// report runs in the token's own scope, with its courier as guard.
+			rep := e.dels.last().(*deliveriesv1.ReportEventRequest)
+			if rep.GetScope().GetTenantId() != p.TenantID || rep.GetCourierId() != couID {
+				t.Fatalf("ReportEvent = %v", rep)
+			}
+			rec := e.do(cReq("GET", "/v1/courier/deliveries", tok, ""))
+			if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"deliveries":[]}` {
+				t.Fatalf("list = %d: %s", rec.Code, rec.Body.String())
+			}
+			if e.do(cReq("POST", "/v1/courier/locations", tok, fixBody)).Code != http.StatusOK {
+				t.Fatal("locations refused")
+			}
+			ing := e.trk.last().(*trackingv1.IngestRequest)
+			wantEnv := eventsv1.Environment_ENVIRONMENT_TEST
+			if p.Env == domain.EnvLive {
+				wantEnv = eventsv1.Environment_ENVIRONMENT_LIVE
+			}
+			if ing.GetScope().GetTenantId() != p.TenantID || ing.GetScope().GetEnvironment() != wantEnv {
+				t.Fatalf("ingest scope = %v", ing.GetScope())
+			}
+		})
+	}
+
+	// The token route takes no bearer: whatever Authorization says is ignored.
+	t.Run("courier.token/ignores Authorization", func(t *testing.T) {
+		t.Parallel()
+		e := newCourierEdge(t, nil)
+		res := e.sdk(partnerTest)
+		body := `{"grant_type":"refresh_token","refresh_token":"` + res.Tokens.RefreshToken + `"}`
+		if rec := e.do(cReq("POST", "/v1/courier/token", mint(t, apikey.Live, actor, domain.AllScopes...).raw, body)); rec.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+	})
 }

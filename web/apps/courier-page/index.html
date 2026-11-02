@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- The courier link page: courier.<domain>/s/<code> (a new shift) and courier.<domain>/ (resume). A static shell; the
+     API base is baked in at build time (VITE_DT_API). The build puts a Content-Security-Policy meta at the csp marker below; the
+     edge also sends the header form with frame-ancestors 'none'. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex" />
+    <meta name="color-scheme" content="light dark" />
+    <!--csp-->
+    <title>Courier</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

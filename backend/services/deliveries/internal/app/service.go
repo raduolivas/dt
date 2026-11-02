@@ -62,6 +62,21 @@ func (s *Service) List(ctx context.Context, sc Scope, f ListFilter) ([]*domain.D
 	return s.Repo.List(ctx, sc, f)
 }
 
+// ListCourierDeliveries returns the courier's assigned deliveries that are
+// not final, oldest first.
+func (s *Service) ListCourierDeliveries(ctx context.Context, sc Scope, courierID string) ([]*domain.Delivery, error) {
+	return s.Repo.ListByCourier(ctx, sc, courierID)
+}
+
+// Courier returns the courier, or ErrCourierNotFound.
+func (s *Service) Courier(ctx context.Context, sc Scope, id string) (domain.Courier, error) {
+	c, err := s.Repo.Courier(ctx, sc, id)
+	if errors.Is(err, ErrNotFound) {
+		return domain.Courier{}, ErrCourierNotFound
+	}
+	return c, err
+}
+
 // Update applies a partial update.
 func (s *Service) Update(ctx context.Context, sc Scope, id string, p domain.Patch) (*domain.Delivery, error) {
 	return s.Repo.Mutate(ctx, sc, id, func(d *domain.Delivery) ([]domain.Event, error) {
@@ -88,8 +103,20 @@ func (s *Service) Assign(ctx context.Context, sc Scope, deliveryID, courierID st
 // Report applies a status report, stamping ReceivedAt from the clock, and
 // returns what the domain did with it.
 func (s *Service) Report(ctx context.Context, sc Scope, id string, r domain.Report) (*domain.Delivery, domain.Outcome, error) {
+	return s.ReportFor(ctx, sc, id, "", r)
+}
+
+// ReportFor is Report with an ownership guard: when courierID is set, a
+// delivery that is not assigned to that courier, whatever its status, is
+// ErrNotFound. The guard runs under the row lock, so a reassignment cannot
+// slip between the check and the report, and a final delivery's own
+// repeated event still answers duplicate.
+func (s *Service) ReportFor(ctx context.Context, sc Scope, id, courierID string, r domain.Report) (*domain.Delivery, domain.Outcome, error) {
 	var out domain.Outcome
 	d, err := s.Repo.Mutate(ctx, sc, id, func(d *domain.Delivery) ([]domain.Event, error) {
+		if courierID != "" && !d.AssignedTo(courierID) {
+			return nil, ErrNotFound
+		}
 		r.ReceivedAt = s.Clock.Now()
 		o, evts, err := d.Report(r)
 		out = o

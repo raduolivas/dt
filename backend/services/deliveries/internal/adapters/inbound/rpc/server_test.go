@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -165,6 +166,9 @@ func (r *stubRepo) List(context.Context, app.Scope, app.ListFilter) ([]*domain.D
 	return nil, false, r.err
 }
 func (r *stubRepo) Mutate(context.Context, app.Scope, string, func(*domain.Delivery) ([]domain.Event, error)) (*domain.Delivery, error) {
+	return nil, r.err
+}
+func (r *stubRepo) ListByCourier(context.Context, app.Scope, string) ([]*domain.Delivery, error) {
 	return nil, r.err
 }
 func (r *stubRepo) Courier(context.Context, app.Scope, string) (domain.Courier, error) {
@@ -436,5 +440,173 @@ func TestReportEventCourierActor(t *testing.T) {
 		Scope: testScope, Id: id, EventId: "c-3", Type: "delivered", Actor: "robot"})
 	if connect.CodeOf(err) != connect.CodeInvalidArgument || dtCode(info) != "validation_failed" {
 		t.Fatalf("robot actor: %v / %q", err, dtCode(info))
+	}
+}
+
+func TestReportEventCourierPickupConfirmedBy(t *testing.T) {
+	t.Parallel()
+	srv, _ := realServer(t)
+	c := authed(srv)
+	ctx := context.Background()
+	cr, err := c.CreateDelivery(ctx, createReq("ext-pickup-by"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := cr.GetDelivery().GetId()
+
+	// Before the report the courier may confirm; the response says what is next.
+	res, err := c.ReportEvent(ctx, &deliveriesv1.ReportEventRequest{
+		Scope: testScope, Id: id, EventId: "pb-1", Type: "at_pickup", Actor: "courier"})
+	if err != nil || !reflect.DeepEqual(res.GetNextActions(), []string{"pickup_confirmed"}) {
+		t.Fatalf("at_pickup: %v %v", res, err)
+	}
+	res, err = c.ReportEvent(ctx, &deliveriesv1.ReportEventRequest{
+		Scope: testScope, Id: id, EventId: "pb-2", Type: "pickup_confirmed", By: "partner", Actor: "courier"})
+	if err != nil || res.GetDelivery().GetStatus() != "picked_up" {
+		t.Fatalf("pickup_confirmed: %v %v", res, err)
+	}
+	if pcs := res.GetDelivery().GetPickupConfirmations(); len(pcs) != 1 || pcs[0].GetBy() != "courier" {
+		t.Fatalf("pickup confirmations = %v", pcs)
+	}
+	if !reflect.DeepEqual(res.GetNextActions(), []string{"delivered", "failed"}) {
+		t.Fatalf("next actions = %v", res.GetNextActions())
+	}
+}
+
+// TestReportEventCourierGuard pins the ownership guard (M5-R16): with
+// courier_id set, the delivery must be assigned to that courier, whatever
+// its status, or the answer is NotFound. A final delivery's own repeated
+// event is still duplicate; without the guard (a partner) nothing changes.
+func TestReportEventCourierGuard(t *testing.T) {
+	t.Parallel()
+	srv, _ := realServer(t)
+	c := authed(srv)
+	ctx := context.Background()
+	courier := func(ext string) string {
+		t.Helper()
+		uc, err := c.UpsertCourier(ctx, &deliveriesv1.UpsertCourierRequest{
+			Scope: testScope, ExternalId: ext, DisplayName: ext, Vehicle: "bicycle"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return uc.GetCourier().GetId()
+	}
+	owner, other := courier("guard-owner"), courier("guard-other")
+	cr, err := c.CreateDelivery(ctx, createReq("ext-guard"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := cr.GetDelivery().GetId()
+	if _, err := c.AssignCourier(ctx, &deliveriesv1.AssignCourierRequest{Scope: testScope, Id: id, CourierId: owner}); err != nil {
+		t.Fatal(err)
+	}
+	report := func(eventID, typ, courierID string) (*deliveriesv1.ReportEventResponse, string, error) {
+		ctx2, info := connect.NewClientContext(ctx)
+		res, err := c.ReportEvent(ctx2, &deliveriesv1.ReportEventRequest{
+			Scope: testScope, Id: id, EventId: eventID, Type: typ, Actor: "courier", CourierId: courierID})
+		return res, dtCode(info), err
+	}
+
+	if _, code, err := report("g-0", "pickup_confirmed", other); connect.CodeOf(err) != connect.CodeNotFound || code != "not_found" {
+		t.Fatalf("other courier: %v / %q", err, code)
+	}
+	if res, _, err := report("g-1", "pickup_confirmed", owner); err != nil || res.GetDelivery().GetStatus() != "picked_up" {
+		t.Fatalf("owner pickup: %v %v", res, err)
+	}
+	if res, _, err := report("g-2", "delivered", owner); err != nil || res.GetOutcome() != "applied" {
+		t.Fatalf("owner delivered: %v %v", res, err)
+	}
+	// The delivery is final: the owner's retry of the same event is duplicate.
+	if res, _, err := report("g-2", "delivered", owner); err != nil || res.GetOutcome() != "duplicate" ||
+		res.GetDelivery().GetStatus() != "delivered" {
+		t.Fatalf("owner retry: %v %v", res, err)
+	}
+	// A new event on the final delivery follows the existing rules (refused).
+	if _, code, err := report("g-3", "failed", owner); connect.CodeOf(err) != connect.CodeFailedPrecondition || code != "invalid_transition" {
+		t.Fatalf("owner new event on final: %v / %q", err, code)
+	}
+	// The other courier is refused even for the known event id.
+	if _, code, err := report("g-2", "delivered", other); connect.CodeOf(err) != connect.CodeNotFound || code != "not_found" {
+		t.Fatalf("other courier retry: %v / %q", err, code)
+	}
+
+	// An unassigned delivery is not any courier's.
+	un, err := c.CreateDelivery(ctx, createReq("ext-guard-unassigned"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx2, info := connect.NewClientContext(ctx)
+	_, err = c.ReportEvent(ctx2, &deliveriesv1.ReportEventRequest{Scope: testScope, Id: un.GetDelivery().GetId(),
+		EventId: "g-4", Type: "at_pickup", Actor: "courier", CourierId: owner})
+	if connect.CodeOf(err) != connect.CodeNotFound || dtCode(info) != "not_found" {
+		t.Fatalf("unassigned: %v / %q", err, dtCode(info))
+	}
+	// Without the guard (a partner report) the duplicate answer is unchanged.
+	res, err := c.ReportEvent(ctx, &deliveriesv1.ReportEventRequest{Scope: testScope, Id: id, EventId: "g-2", Type: "delivered"})
+	if err != nil || res.GetOutcome() != "duplicate" {
+		t.Fatalf("partner retry: %v %v", res, err)
+	}
+}
+
+func TestGetCourierAndListCourierDeliveries(t *testing.T) {
+	t.Parallel()
+	srv, _ := realServer(t)
+	c := authed(srv)
+	ctx := context.Background()
+	other := &deliveriesv1.Scope{TenantId: "ten_other", Environment: eventsv1.Environment_ENVIRONMENT_TEST}
+	live := &deliveriesv1.Scope{TenantId: testScope.TenantId, Environment: eventsv1.Environment_ENVIRONMENT_LIVE}
+
+	uc, err := c.UpsertCourier(ctx, &deliveriesv1.UpsertCourierRequest{
+		Scope: testScope, ExternalId: "drv-1", DisplayName: "Ana", Vehicle: "car"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cid := uc.GetCourier().GetId()
+	got, err := c.GetCourier(ctx, &deliveriesv1.GetCourierRequest{Scope: testScope, Id: cid})
+	if err != nil || got.GetCourier().GetId() != cid || got.GetCourier().GetDisplayName() != "Ana" {
+		t.Fatalf("get: %v %v", got, err)
+	}
+	for name, req := range map[string]*deliveriesv1.GetCourierRequest{
+		"missing": {Scope: testScope, Id: "cou_missing"}, "other tenant": {Scope: other, Id: cid}, "other env": {Scope: live, Id: cid},
+	} {
+		ctx2, info := connect.NewClientContext(ctx)
+		if _, err := c.GetCourier(ctx2, req); connect.CodeOf(err) != connect.CodeNotFound || dtCode(info) != "courier_not_found" {
+			t.Fatalf("%s: %v / %q", name, err, dtCode(info))
+		}
+	}
+
+	mk := func(ext string) string {
+		t.Helper()
+		cr, err := c.CreateDelivery(ctx, createReq(ext))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cr.GetDelivery().GetId()
+	}
+	active, finished := mk("lc-active"), mk("lc-final")
+	mk("lc-none") // never assigned
+	for _, id := range []string{active, finished} {
+		if _, err := c.AssignCourier(ctx, &deliveriesv1.AssignCourierRequest{Scope: testScope, Id: id, CourierId: cid}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := c.CancelDelivery(ctx, &deliveriesv1.CancelDeliveryRequest{Scope: testScope, Id: finished}); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := c.ListCourierDeliveries(ctx, &deliveriesv1.ListCourierDeliveriesRequest{Scope: testScope, CourierId: cid})
+	if err != nil || len(list.GetDeliveries()) != 1 {
+		t.Fatalf("list: %v %v", list, err)
+	}
+	d := list.GetDeliveries()[0]
+	if d.GetId() != active || d.GetReference() != "lc-active" || d.GetPickup().GetLabel() != "Pizzeria Uno" ||
+		d.GetDropoff().GetNotes() != "ring twice" || !reflect.DeepEqual(d.GetNextActions(), []string{"at_pickup", "pickup_confirmed"}) {
+		t.Fatalf("delivery = %v", d)
+	}
+	for _, sc := range []*deliveriesv1.Scope{other, live} {
+		list, err = c.ListCourierDeliveries(ctx, &deliveriesv1.ListCourierDeliveriesRequest{Scope: sc, CourierId: cid})
+		if err != nil || len(list.GetDeliveries()) != 0 {
+			t.Fatalf("foreign scope list: %v %v", list, err)
+		}
 	}
 }

@@ -34,8 +34,14 @@ var testDataKeys = "t1:" + base64.StdEncoding.EncodeToString([]byte("test-only-g
 // testViewerKeys is a test-only VIEWER_SIGNING_KEYS value (id "v1").
 var testViewerKeys = "v1:" + base64.StdEncoding.EncodeToString([]byte("test-only-viewer-signing-seed-01"))
 
+// testCourierKeys is a test-only COURIER_SIGNING_KEYS value (id "c1").
+var testCourierKeys = "c1:" + base64.StdEncoding.EncodeToString([]byte("test-only-courier-signing-seed-1"))
+
 func setViewerEnv(t *testing.T) {
 	t.Helper()
+	t.Setenv("COURIER_SIGNING_KEYS", testCourierKeys)
+	t.Setenv("COURIER_SIGNING_KEY_CURRENT", "c1")
+	t.Setenv("COURIER_URL_BASE", "http://courier.localhost:8092")
 	t.Setenv("VIEWER_SIGNING_KEYS", testViewerKeys)
 	t.Setenv("VIEWER_SIGNING_KEY_CURRENT", "v1")
 	t.Setenv("TRACKING_URL_BASE", "http://localhost:8080")
@@ -56,6 +62,9 @@ func TestRunRefusesBadConfigBeforeIO(t *testing.T) {
 		{"missing viewer keys", base64.StdEncoding.EncodeToString(testPepper), "", "VIEWER_SIGNING_KEYS"},
 		{"unknown current viewer key", base64.StdEncoding.EncodeToString(testPepper), "", "VIEWER_SIGNING_KEY_CURRENT"},
 		{"bad tracking url base", base64.StdEncoding.EncodeToString(testPepper), "", "TRACKING_URL_BASE"},
+		{"missing courier keys", base64.StdEncoding.EncodeToString(testPepper), "", "COURIER_SIGNING_KEYS"},
+		{"unknown current courier key", base64.StdEncoding.EncodeToString(testPepper), "", "COURIER_SIGNING_KEY_CURRENT"},
+		{"bad courier url base", base64.StdEncoding.EncodeToString(testPepper), "", "COURIER_URL_BASE"},
 		{"missing tracking rpc url", base64.StdEncoding.EncodeToString(testPepper), "", "TRACKING_RPC_URL"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -69,6 +78,12 @@ func TestRunRefusesBadConfigBeforeIO(t *testing.T) {
 				t.Setenv("VIEWER_SIGNING_KEYS", "")
 			case "unknown current viewer key":
 				t.Setenv("VIEWER_SIGNING_KEY_CURRENT", "v9")
+			case "missing courier keys":
+				t.Setenv("COURIER_SIGNING_KEYS", "")
+			case "unknown current courier key":
+				t.Setenv("COURIER_SIGNING_KEY_CURRENT", "c9")
+			case "bad courier url base":
+				t.Setenv("COURIER_URL_BASE", "ftp://courier")
 			case "bad tracking url base":
 				t.Setenv("TRACKING_URL_BASE", "ftp://track")
 			case "missing tracking rpc url":
@@ -92,7 +107,8 @@ func TestRunRefusesBadConfigBeforeIO(t *testing.T) {
 			if tc.pepper != "" && strings.Contains(err.Error(), tc.pepper) {
 				t.Fatalf("error echoes the pepper: %v", err)
 			}
-			if strings.Contains(err.Error(), testDataKeys[3:]) || strings.Contains(err.Error(), testViewerKeys[3:]) {
+			if strings.Contains(err.Error(), testDataKeys[3:]) || strings.Contains(err.Error(), testViewerKeys[3:]) ||
+				strings.Contains(err.Error(), testCourierKeys[3:]) {
 				t.Fatalf("error echoes a data key: %v", err)
 			}
 		})
@@ -268,6 +284,34 @@ func TestGatewayStartsAndServesMe(t *testing.T) {
 
 	if status, body, _ := getTimed(t, ctx, base+"/readyz", ""); status != http.StatusOK {
 		t.Fatalf("readyz = %d %s, want 200 with db, redis and nats", status, body)
+	}
+
+	// The courier routes are mounted: no token is a 401 a browser can read,
+	// and the preflight is answered. The token endpoint refuses a bad code.
+	status, body, _ := getTimed(t, ctx, base+"/v1/courier/deliveries", "")
+	if status != http.StatusUnauthorized || !strings.Contains(string(body), `"unauthenticated"`) {
+		t.Fatalf("courier deliveries without a token = %d %s, want 401 unauthenticated", status, body)
+	}
+	pre, err := http.NewRequestWithContext(ctx, http.MethodOptions, base+"/v1/courier/locations", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pre.Header.Set("Origin", "https://partner-app.example")
+	resp, err := http.DefaultClient.Do(pre)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent || resp.Header.Get("Access-Control-Allow-Origin") != "*" {
+		t.Fatalf("courier preflight = %d %v", resp.StatusCode, resp.Header)
+	}
+	resp, err = http.Post(base+"/v1/courier/token", "application/json", strings.NewReader(`{"grant_type":"link_code","code":"nope"}`)) //nolint:noctx // test
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("courier token with a bad code = %d, want 401 link_code_invalid", resp.StatusCode)
 	}
 }
 

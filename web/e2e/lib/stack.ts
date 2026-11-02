@@ -25,8 +25,8 @@ export interface Delivery {
   url: string;
 }
 
-const STORE = { location: { lat: 52.3731, lng: 4.8922 }, name: 'E2E Kitchen' };
-const DOOR = { location: { lat: 52.36, lng: 4.8852 }, label: 'E2E Door' };
+export const STORE = { location: { lat: 52.3731, lng: 4.8922 }, name: 'E2E Kitchen' };
+export const DOOR = { location: { lat: 52.36, lng: 4.8852 }, label: 'E2E Door' };
 
 function key(): string {
   const k = process.env.DT_E2E_KEY;
@@ -34,7 +34,7 @@ function key(): string {
   return k;
 }
 
-async function call(
+export async function call(
   method: string,
   path: string,
   body?: unknown,

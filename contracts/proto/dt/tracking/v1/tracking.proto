@@ -45,14 +45,14 @@ message Fix {
   double accuracy_m = 4;
   optional double speed_mps = 5;
   optional double heading_deg = 6;
-  string source = 7; // "relay" | "simulator" (later "sdk" | "link"); set by the server
+  string source = 7; // "relay" | "simulator" | "sdk" | "link"; set by the server
 }
 
 message IngestRequest {
   Scope scope = 1;
   string courier_id = 2; // a cou_ id
   repeated Fix fixes = 3; // at most 50
-  string source = 4; // "relay" | "simulator"
+  string source = 4; // "relay" | "simulator" | "sdk" | "link"
 }
 
 message IngestResponse {

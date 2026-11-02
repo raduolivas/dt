@@ -1,11 +1,13 @@
 package keyhash_test
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/raduolivas/dt/backend/pkg/apikey"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/adapters/outbound/keyhash"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
+	"github.com/raduolivas/dt/backend/services/gateway/internal/app/apptest"
 )
 
 func TestHasherVerifiesWithPepper(t *testing.T) {
@@ -30,5 +32,25 @@ func TestHasherVerifiesWithPepper(t *testing.T) {
 	pepper[0] ^= 0xff
 	if !h.Verify(k.Plaintext, hash) {
 		t.Error("mutating the caller's pepper changed the hasher")
+	}
+}
+
+func TestHashDomainSeparation(t *testing.T) {
+	t.Parallel()
+	pepper := []byte("test-only-pepper-0123456789abcdef")
+	var h app.CourierTokenHasher = keyhash.New(pepper)
+	const s = "sXwq3oQ0tB6e1yM9cJ2uYQ"
+	refresh, link := h.HashCourierRefresh(s), h.HashCourierLink(s)
+	if bytes.Equal(refresh, apikey.Hash(pepper, s)) || bytes.Equal(link, apikey.Hash(pepper, s)) ||
+		bytes.Equal(refresh, link) {
+		t.Fatal("courier hashes collide with each other or with an API key / tracking link hash")
+	}
+	if !bytes.Equal(refresh, apikey.Hash(pepper, "courier-refresh:"+s)) ||
+		!bytes.Equal(link, apikey.Hash(pepper, "courier-link:"+s)) {
+		t.Fatal("courier hashes are not HMAC-SHA256 of the domain-prefixed value")
+	}
+	if !bytes.Equal(refresh, apptest.Hasher{Pepper: pepper}.HashCourierRefresh(s)) ||
+		!bytes.Equal(link, apptest.Hasher{Pepper: pepper}.HashCourierLink(s)) {
+		t.Fatal("apptest.Hasher differs from keyhash")
 	}
 }

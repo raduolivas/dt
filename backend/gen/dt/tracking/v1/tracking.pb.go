@@ -93,7 +93,7 @@ type Fix struct {
 	AccuracyM     float64                `protobuf:"fixed64,4,opt,name=accuracy_m,json=accuracyM,proto3" json:"accuracy_m,omitempty"`
 	SpeedMps      *float64               `protobuf:"fixed64,5,opt,name=speed_mps,json=speedMps,proto3,oneof" json:"speed_mps,omitempty"`
 	HeadingDeg    *float64               `protobuf:"fixed64,6,opt,name=heading_deg,json=headingDeg,proto3,oneof" json:"heading_deg,omitempty"`
-	Source        string                 `protobuf:"bytes,7,opt,name=source,proto3" json:"source,omitempty"` // "relay" | "simulator" (later "sdk" | "link"); set by the server
+	Source        string                 `protobuf:"bytes,7,opt,name=source,proto3" json:"source,omitempty"` // "relay" | "simulator" | "sdk" | "link"; set by the server
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -182,7 +182,7 @@ type IngestRequest struct {
 	Scope         *Scope                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
 	CourierId     string                 `protobuf:"bytes,2,opt,name=courier_id,json=courierId,proto3" json:"courier_id,omitempty"` // a cou_ id
 	Fixes         []*Fix                 `protobuf:"bytes,3,rep,name=fixes,proto3" json:"fixes,omitempty"`                          // at most 50
-	Source        string                 `protobuf:"bytes,4,opt,name=source,proto3" json:"source,omitempty"`                        // "relay" | "simulator"
+	Source        string                 `protobuf:"bytes,4,opt,name=source,proto3" json:"source,omitempty"`                        // "relay" | "simulator" | "sdk" | "link"
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

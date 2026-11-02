@@ -81,8 +81,13 @@ func serve(t *testing.T) (trackingv1connect.TrackingServiceClient, *pgxpool.Pool
 	}
 	states := redis.NewStates(rdb, repo.CourierActiveDeliveries)
 	log := slog.New(slog.DiscardHandler)
-	svc := &app.Service{States: states, Reads: repo, Trail: postgres.NewTrailWriter(pool, log),
+	trail := postgres.NewTrailWriter(pool, log)
+	svc := &app.Service{States: states, Reads: repo, Trail: trail,
 		Partner: repo, Pub: redis.NewPublisher(rdb), Events: repo, Sampler: states, Clock: clock{}, Log: log}
+	wctx, stopTrail := context.WithCancel(ctx)
+	trailDone := make(chan struct{})
+	go func() { defer close(trailDone); _ = trail.Run(wctx) }()
+	t.Cleanup(func() { stopTrail(); <-trailDone })
 	mux := http.NewServeMux()
 	if err := rpc.Mount(mux, svc, nil, testToken, log); err != nil {
 		t.Fatal(err)
@@ -180,7 +185,7 @@ func TestIngestRPCValidates(t *testing.T) {
 		"too many fixes": req("ten_a", courierA, rpc.MaxFixes+1),
 		"no fixes":       req("ten_a", courierA, 0),
 		"bad courier id": req("ten_a", "courier-1", 1),
-		"bad source":     func() *trackingv1.IngestRequest { r := req("ten_a", courierA, 1); r.Source = "sdk"; return r }(),
+		"bad source":     func() *trackingv1.IngestRequest { r := req("ten_a", courierA, 1); r.Source = "bogus"; return r }(),
 		"no scope":       func() *trackingv1.IngestRequest { r := req("ten_a", courierA, 1); r.Scope = nil; return r }(),
 		"no time":        func() *trackingv1.IngestRequest { r := req("ten_a", courierA, 1); r.Fixes[0].T = nil; return r }(),
 	} {
@@ -192,6 +197,38 @@ func TestIngestRPCValidates(t *testing.T) {
 	// Simulate is not implemented yet.
 	if _, err := c.Simulate(ctx, &trackingv1.SimulateRequest{}); connect.CodeOf(err) != connect.CodeUnimplemented {
 		t.Fatalf("Simulate: %v", err)
+	}
+}
+
+func TestIngestAcceptsCourierSources(t *testing.T) {
+	c, _ := serve(t)
+	ctx := context.Background()
+	for _, tc := range []struct{ source, courier, delivery string }{
+		{"sdk", courierA, delA},
+		{"link", courierB, delB},
+	} {
+		r := req("ten_a", tc.courier, 2)
+		r.Source = tc.source
+		if res, err := c.IngestLocations(ctx, r); err != nil || res.GetAccepted() != 2 {
+			t.Fatalf("source %s: %+v %v", tc.source, res, err)
+		}
+		// The trail is written asynchronously, so poll until both rows land.
+		var fixes []*trackingv1.Fix
+		for deadline := time.Now().Add(5 * time.Second); len(fixes) < 2 && time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+			pg, err := c.ListTrail(ctx, &trackingv1.ListTrailRequest{Scope: scopeOf("ten_a"), DeliveryId: tc.delivery, Limit: 10})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixes = pg.GetFixes()
+		}
+		if len(fixes) != 2 {
+			t.Fatalf("source %s: trail fixes = %d, want 2", tc.source, len(fixes))
+		}
+		for _, f := range fixes {
+			if f.GetSource() != tc.source {
+				t.Fatalf("source %s: trail row source = %q", tc.source, f.GetSource())
+			}
+		}
 	}
 }
 

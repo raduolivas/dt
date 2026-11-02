@@ -1,0 +1,26 @@
+{
+  "name": "@dt/courier-page",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build && node scripts/size.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src scripts vite.config.ts"
+  },
+  "dependencies": {
+    "@dt/courier": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "happy-dom": "21.0.4",
+    "vite": "^8.3.4",
+    "vitest": "5.0.5"
+  },
+  "sizeLimit": {
+    "assets/courier-*.js": 11919,
+    "assets/courier-*.css": 1541
+  }
+}

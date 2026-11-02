@@ -42,7 +42,11 @@ web-dev: ## Run the renderer prototype dev server
 CDN_DIR := build/cdn
 LOCAL_SDK_ENV := VITE_DT_API=http://localhost:8080/v1 VITE_DT_TILES=http://localhost:8090/tiles/amsterdam-z14.pmtiles
 
-web-assets: ## Build the hosted page and the SDK for the local CDN into build/cdn (served by the cdn service)
+# The courier page (the courier service serves build/courier on :8092), built for the local API.
+COURIER_DIR := build/courier
+LOCAL_COURIER_ENV := VITE_DT_API=http://localhost:8080/v1
+
+web-assets: ## Build the hosted page, the SDK and the courier page into build/ (served by the cdn and courier services)
 	VITE_DT_TEST_HOOKS=1 pnpm -C web --filter @dt/tracking-page build
 	$(LOCAL_SDK_ENV) pnpm -C web --filter @dt/tracking build
 	rm -rf $(CDN_DIR)/page/dev $(CDN_DIR)/sdk/tracking/dev
@@ -50,6 +54,10 @@ web-assets: ## Build the hosted page and the SDK for the local CDN into build/cd
 	cp -R web/apps/tracking-page/dist $(CDN_DIR)/page/dev
 	cp -R web/packages/tracking/dist $(CDN_DIR)/sdk/tracking/dev
 	cp web/packages/renderer/fixtures/amsterdam-z14.pmtiles $(CDN_DIR)/tiles/
+	$(LOCAL_COURIER_ENV) pnpm -C web --filter @dt/courier-page build
+	mkdir -p $(COURIER_DIR)
+	rm -rf $(COURIER_DIR)/*
+	cp -R web/apps/courier-page/dist/. $(COURIER_DIR)/
 
 e2e: dtctl ## Run the Playwright end-to-end tests against the running stack (after make dev and make web-assets)
 	DTCTL=$(CURDIR)/$(DTCTL) pnpm -C web --filter @dt/e2e e2e $(E2E_ARGS)
@@ -110,11 +118,13 @@ test: test-go test-web ## Run every test
 lint: lint-go lint-web lint-contracts ## Run every linter
 
 # ---- local stack ------------------------------------------------------------
-.PHONY: dev down logs dtctl seed smoke latency osrm-data
+.PHONY: dev down logs dtctl seed smoke latency osrm-data lan-https courier-link
 
 # COMPOSE_OVERRIDE optionally names an extra Compose file (for example one that sets
 # build.network: host on machines whose Docker build containers have no network). Empty by default.
-COMPOSE := docker compose -f infra/compose/compose.yaml $(if $(COMPOSE_OVERRIDE),-f $(COMPOSE_OVERRIDE))
+# After make lan-https, build/lan/lan.env (the LAN address, COURIER_URL_BASE and the lan profile) applies to every run.
+LAN_ENV := $(CURDIR)/build/lan/lan.env
+COMPOSE := docker compose $$([ -f $(LAN_ENV) ] && echo --env-file $(LAN_ENV)) -f infra/compose/compose.yaml $(if $(COMPOSE_OVERRIDE),-f $(COMPOSE_OVERRIDE))
 
 # dtctl talks to the local accounts service with the dev-only token from
 # infra/compose/compose.yaml.
@@ -134,7 +144,7 @@ osrm-data: ## Download and preprocess the Amsterdam OSRM routing data (idempoten
 dev: osrm-data ## Build and start the local stack, then wait until every service is ready
 	scripts/dev-certs.sh
 	@# the cdn service mounts build/cdn (make web-assets fills it); made here so Docker does not create it as root
-	mkdir -p build/cdn
+	mkdir -p build/cdn build/courier
 	$(COMPOSE) up --build -d
 	scripts/wait-ready.sh
 
@@ -154,10 +164,17 @@ seed: dtctl ## Create the tenant "Dev Tenant" and a test key in the running stac
 	echo "Call the API with:" >&2; \
 	echo "curl -sS -H 'Authorization: Bearer $$secret' http://127.0.0.1:8080/v1/me"
 
-smoke: dtctl ## Run the M1, M2 and M3 end-to-end smoke tests against the running stack (after make dev)
+smoke: dtctl ## Run the M1, M2, M3 and M5 end-to-end smoke tests against the running stack (after make dev)
 	DTCTL=$(DTCTL) scripts/smoke-m1.sh
 	DTCTL=$(DTCTL) scripts/smoke-m2.sh
 	DTCTL=$(DTCTL) scripts/smoke-m3.sh
+	DTCTL=$(DTCTL) scripts/smoke-m5.sh
+
+lan-https: ## Serve the courier page and courier API over HTTPS on the LAN for a phone (after make dev); see docs/runbooks/courier-phone-test.md
+	COMPOSE_OVERRIDE=$(COMPOSE_OVERRIDE) scripts/lan-https.sh
+
+courier-link: dtctl ## Create a test courier and delivery and print the courier link (phone) and the tracking link (laptop)
+	DTCTL=$(DTCTL) scripts/courier-link.sh
 
 latency: dtctl ## Measure fix-to-viewer latency against the running stack (after make dev); fails when p95 >= 1000 ms
 	@set -eu; tenant=$$($(DTCTL) tenant create --name "Latency"); \

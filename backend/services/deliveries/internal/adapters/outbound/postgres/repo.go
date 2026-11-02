@@ -203,6 +203,43 @@ func (r *Repo) List(ctx context.Context, s app.Scope, f app.ListFilter) ([]*doma
 	return out, more, nil
 }
 
+// ListByCourier returns the courier's non-final deliveries, oldest first,
+// each with its full history.
+func (r *Repo) ListByCourier(ctx context.Context, s app.Scope, courierID string) ([]*domain.Delivery, error) {
+	var out []*domain.Delivery
+	err := r.inTenant(ctx, s, func(_ pgx.Tx, q *db.Queries) error {
+		rows, err := q.ListCourierDeliveries(ctx, courierID)
+		if err != nil {
+			return fmt.Errorf("list courier deliveries: %w", err)
+		}
+		ids := make([]string, len(rows))
+		for i, row := range rows {
+			ids[i] = row.ID
+		}
+		hist, err := q.ListHistory(ctx, ids)
+		if err != nil {
+			return fmt.Errorf("list history: %w", err)
+		}
+		byDelivery := map[string][]db.ListHistoryRow{}
+		for _, h := range hist {
+			byDelivery[h.DeliveryID] = append(byDelivery[h.DeliveryID], h)
+		}
+		out = make([]*domain.Delivery, 0, len(rows))
+		for _, row := range rows {
+			d, err := r.toDelivery(db.GetDeliveryRow(row), byDelivery[row.ID])
+			if err != nil {
+				return err
+			}
+			out = append(out, d)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Mutate locks the delivery, runs fn on it and stores the result, its new
 // history entries and fn's events, keeping the pickup watch in step. A
 // change with events increments the delivery's version, which all its

@@ -206,6 +206,95 @@ func (q *Queries) ExpireUnrevokedLinks(ctx context.Context, arg ExpireUnrevokedL
 	return items, nil
 }
 
+const getCourierSession = `-- name: GetCourierSession :one
+SELECT id, tenant_id, environment, courier_id, mode, status, created_at, started_at, expires_at, ended_at, end_reason, expires_in_seconds, link_code_hash, link_expires_at, refresh_hash, refresh_generation, last_seen_at FROM courier_sessions WHERE id = $1
+`
+
+func (q *Queries) GetCourierSession(ctx context.Context, id string) (CourierSession, error) {
+	row := q.db.QueryRow(ctx, getCourierSession, id)
+	var i CourierSession
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Environment,
+		&i.CourierID,
+		&i.Mode,
+		&i.Status,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.ExpiresAt,
+		&i.EndedAt,
+		&i.EndReason,
+		&i.ExpiresInSeconds,
+		&i.LinkCodeHash,
+		&i.LinkExpiresAt,
+		&i.RefreshHash,
+		&i.RefreshGeneration,
+		&i.LastSeenAt,
+	)
+	return i, err
+}
+
+const getCourierSessionByLinkHash = `-- name: GetCourierSessionByLinkHash :one
+SELECT id, tenant_id, environment, courier_id, mode, status, created_at, started_at, expires_at, ended_at, end_reason, expires_in_seconds, link_code_hash, link_expires_at, refresh_hash, refresh_generation, last_seen_at FROM courier_sessions WHERE link_code_hash = $1
+`
+
+func (q *Queries) GetCourierSessionByLinkHash(ctx context.Context, linkCodeHash []byte) (CourierSession, error) {
+	row := q.db.QueryRow(ctx, getCourierSessionByLinkHash, linkCodeHash)
+	var i CourierSession
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Environment,
+		&i.CourierID,
+		&i.Mode,
+		&i.Status,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.ExpiresAt,
+		&i.EndedAt,
+		&i.EndReason,
+		&i.ExpiresInSeconds,
+		&i.LinkCodeHash,
+		&i.LinkExpiresAt,
+		&i.RefreshHash,
+		&i.RefreshGeneration,
+		&i.LastSeenAt,
+	)
+	return i, err
+}
+
+const getCourierSessionByRefreshHash = `-- name: GetCourierSessionByRefreshHash :one
+SELECT id, tenant_id, environment, courier_id, mode, status, created_at, started_at, expires_at, ended_at, end_reason, expires_in_seconds, link_code_hash, link_expires_at, refresh_hash, refresh_generation, last_seen_at FROM courier_sessions
+WHERE refresh_hash = $1 OR id = (SELECT session_id FROM courier_refresh_used WHERE courier_refresh_used.hash = $1)
+`
+
+// The current refresh token, or any superseded one.
+func (q *Queries) GetCourierSessionByRefreshHash(ctx context.Context, hash []byte) (CourierSession, error) {
+	row := q.db.QueryRow(ctx, getCourierSessionByRefreshHash, hash)
+	var i CourierSession
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Environment,
+		&i.CourierID,
+		&i.Mode,
+		&i.Status,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.ExpiresAt,
+		&i.EndedAt,
+		&i.EndReason,
+		&i.ExpiresInSeconds,
+		&i.LinkCodeHash,
+		&i.LinkExpiresAt,
+		&i.RefreshHash,
+		&i.RefreshGeneration,
+		&i.LastSeenAt,
+	)
+	return i, err
+}
+
 const getKeyByLookup = `-- name: GetKeyByLookup :one
 SELECT id, tenant_id, environment, lookup, hash, scopes, allowed_ips, expires_at, revoked_at
 FROM api_keys WHERE lookup = $1
@@ -399,6 +488,56 @@ func (q *Queries) InsertAuditEntry(ctx context.Context, arg InsertAuditEntryPara
 	return err
 }
 
+const insertCourierSession = `-- name: InsertCourierSession :exec
+INSERT INTO courier_sessions (id, tenant_id, environment, courier_id, mode, status, created_at, started_at, expires_at,
+  ended_at, end_reason, expires_in_seconds, link_code_hash, link_expires_at, refresh_hash, refresh_generation, last_seen_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+  $10, $11, $12, $13, $14, $15, $16, $17)
+`
+
+type InsertCourierSessionParams struct {
+	ID                string
+	TenantID          string
+	Environment       string
+	CourierID         string
+	Mode              string
+	Status            string
+	CreatedAt         time.Time
+	StartedAt         *time.Time
+	ExpiresAt         *time.Time
+	EndedAt           *time.Time
+	EndReason         pgtype.Text
+	ExpiresInSeconds  int32
+	LinkCodeHash      []byte
+	LinkExpiresAt     *time.Time
+	RefreshHash       []byte
+	RefreshGeneration int32
+	LastSeenAt        *time.Time
+}
+
+func (q *Queries) InsertCourierSession(ctx context.Context, arg InsertCourierSessionParams) error {
+	_, err := q.db.Exec(ctx, insertCourierSession,
+		arg.ID,
+		arg.TenantID,
+		arg.Environment,
+		arg.CourierID,
+		arg.Mode,
+		arg.Status,
+		arg.CreatedAt,
+		arg.StartedAt,
+		arg.ExpiresAt,
+		arg.EndedAt,
+		arg.EndReason,
+		arg.ExpiresInSeconds,
+		arg.LinkCodeHash,
+		arg.LinkExpiresAt,
+		arg.RefreshHash,
+		arg.RefreshGeneration,
+		arg.LastSeenAt,
+	)
+	return err
+}
+
 const insertIdempotencyRecord = `-- name: InsertIdempotencyRecord :one
 INSERT INTO idempotency_records (tenant_id, environment, idem_key, request_hash, state, locked_until, resource_id, created_at, expires_at)
 VALUES ($1, $2, $3, $4, 'in_progress', $5, $6, $7, $8)
@@ -541,6 +680,94 @@ func (q *Queries) LinksRevokedSince(ctx context.Context, arg LinksRevokedSincePa
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockCourierSession = `-- name: LockCourierSession :one
+SELECT id, tenant_id, environment, courier_id, mode, status, created_at, started_at, expires_at, ended_at, end_reason, expires_in_seconds, link_code_hash, link_expires_at, refresh_hash, refresh_generation, last_seen_at FROM courier_sessions WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockCourierSession(ctx context.Context, id string) (CourierSession, error) {
+	row := q.db.QueryRow(ctx, lockCourierSession, id)
+	var i CourierSession
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Environment,
+		&i.CourierID,
+		&i.Mode,
+		&i.Status,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.ExpiresAt,
+		&i.EndedAt,
+		&i.EndReason,
+		&i.ExpiresInSeconds,
+		&i.LinkCodeHash,
+		&i.LinkExpiresAt,
+		&i.RefreshHash,
+		&i.RefreshGeneration,
+		&i.LastSeenAt,
+	)
+	return i, err
+}
+
+const lockCourierSessions = `-- name: LockCourierSessions :exec
+SELECT pg_advisory_xact_lock(hashtextextended('courier_sessions:' || $1::text || ':' || $2::text || ':' || $3::text, 0))
+`
+
+type LockCourierSessionsParams struct {
+	TenantID    string
+	Environment string
+	CourierID   string
+}
+
+// Serializes every change to one courier's sessions for the transaction.
+func (q *Queries) LockCourierSessions(ctx context.Context, arg LockCourierSessionsParams) error {
+	_, err := q.db.Exec(ctx, lockCourierSessions, arg.TenantID, arg.Environment, arg.CourierID)
+	return err
+}
+
+const lockCurrentCourierSession = `-- name: LockCurrentCourierSession :one
+SELECT id, tenant_id, environment, courier_id, mode, status, created_at, started_at, expires_at, ended_at, end_reason, expires_in_seconds, link_code_hash, link_expires_at, refresh_hash, refresh_generation, last_seen_at FROM courier_sessions
+WHERE tenant_id = $1 AND environment = $2 AND courier_id = $3 AND status = $4
+FOR UPDATE
+`
+
+type LockCurrentCourierSessionParams struct {
+	TenantID    string
+	Environment string
+	CourierID   string
+	Status      string
+}
+
+func (q *Queries) LockCurrentCourierSession(ctx context.Context, arg LockCurrentCourierSessionParams) (CourierSession, error) {
+	row := q.db.QueryRow(ctx, lockCurrentCourierSession,
+		arg.TenantID,
+		arg.Environment,
+		arg.CourierID,
+		arg.Status,
+	)
+	var i CourierSession
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Environment,
+		&i.CourierID,
+		&i.Mode,
+		&i.Status,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.ExpiresAt,
+		&i.EndedAt,
+		&i.EndReason,
+		&i.ExpiresInSeconds,
+		&i.LinkCodeHash,
+		&i.LinkExpiresAt,
+		&i.RefreshHash,
+		&i.RefreshGeneration,
+		&i.LastSeenAt,
+	)
+	return i, err
 }
 
 const lockDeliveryLinks = `-- name: LockDeliveryLinks :exec
@@ -713,4 +940,70 @@ func (q *Queries) SetKeyExpiry(ctx context.Context, arg SetKeyExpiryParams) (int
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const supersedeRefreshHash = `-- name: SupersedeRefreshHash :exec
+INSERT INTO courier_refresh_used (hash, session_id)
+SELECT refresh_hash, id FROM courier_sessions
+WHERE id = $1 AND refresh_hash IS NOT NULL AND refresh_hash IS DISTINCT FROM $2::bytea
+ON CONFLICT (hash) DO NOTHING
+`
+
+type SupersedeRefreshHashParams struct {
+	ID      string
+	NewHash []byte
+}
+
+// Keeps the session's current refresh hash as superseded when it is about to
+// be replaced by new_hash.
+func (q *Queries) SupersedeRefreshHash(ctx context.Context, arg SupersedeRefreshHashParams) error {
+	_, err := q.db.Exec(ctx, supersedeRefreshHash, arg.ID, arg.NewHash)
+	return err
+}
+
+const touchCourierSession = `-- name: TouchCourierSession :exec
+UPDATE courier_sessions SET last_seen_at = $1
+WHERE id = $2 AND (last_seen_at IS NULL OR last_seen_at < $3::timestamptz)
+`
+
+type TouchCourierSessionParams struct {
+	Now         *time.Time
+	ID          string
+	StaleBefore time.Time
+}
+
+func (q *Queries) TouchCourierSession(ctx context.Context, arg TouchCourierSessionParams) error {
+	_, err := q.db.Exec(ctx, touchCourierSession, arg.Now, arg.ID, arg.StaleBefore)
+	return err
+}
+
+const updateCourierSession = `-- name: UpdateCourierSession :exec
+UPDATE courier_sessions SET status = $1, started_at = $2, expires_at = $3, ended_at = $4,
+  end_reason = $5, refresh_hash = $6, refresh_generation = $7
+WHERE id = $8
+`
+
+type UpdateCourierSessionParams struct {
+	Status            string
+	StartedAt         *time.Time
+	ExpiresAt         *time.Time
+	EndedAt           *time.Time
+	EndReason         pgtype.Text
+	RefreshHash       []byte
+	RefreshGeneration int32
+	ID                string
+}
+
+func (q *Queries) UpdateCourierSession(ctx context.Context, arg UpdateCourierSessionParams) error {
+	_, err := q.db.Exec(ctx, updateCourierSession,
+		arg.Status,
+		arg.StartedAt,
+		arg.ExpiresAt,
+		arg.EndedAt,
+		arg.EndReason,
+		arg.RefreshHash,
+		arg.RefreshGeneration,
+		arg.ID,
+	)
+	return err
 }

@@ -1363,15 +1363,20 @@ func (x *AssignCourierResponse) GetDelivery() *Delivery {
 }
 
 type ReportEventRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Scope         *Scope                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
-	Id            string                 `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"` // delivery id
-	EventId       string                 `protobuf:"bytes,3,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
-	Type          string                 `protobuf:"bytes,4,opt,name=type,proto3" json:"type,omitempty"`                               // at_pickup | pickup_confirmed | arriving | delivered | failed
-	OccurredAt    *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=occurred_at,json=occurredAt,proto3" json:"occurred_at,omitempty"` // unset = receipt time
-	By            string                 `protobuf:"bytes,6,opt,name=by,proto3" json:"by,omitempty"`                                   // "partner" | "store"; only for pickup_confirmed
-	Reason        string                 `protobuf:"bytes,7,opt,name=reason,proto3" json:"reason,omitempty"`
-	Actor         string                 `protobuf:"bytes,8,opt,name=actor,proto3" json:"actor,omitempty"` // "" or "partner" | "courier"; the gateway never sets it
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Scope      *Scope                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	Id         string                 `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"` // delivery id
+	EventId    string                 `protobuf:"bytes,3,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	Type       string                 `protobuf:"bytes,4,opt,name=type,proto3" json:"type,omitempty"`                               // at_pickup | pickup_confirmed | arriving | delivered | failed
+	OccurredAt *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=occurred_at,json=occurredAt,proto3" json:"occurred_at,omitempty"` // unset = receipt time
+	By         string                 `protobuf:"bytes,6,opt,name=by,proto3" json:"by,omitempty"`                                   // "partner" | "store" | "courier"; only for pickup_confirmed
+	Reason     string                 `protobuf:"bytes,7,opt,name=reason,proto3" json:"reason,omitempty"`
+	Actor      string                 `protobuf:"bytes,8,opt,name=actor,proto3" json:"actor,omitempty"` // "" or "partner" | "courier"
+	// courier_id, when set (the gateway, for a courier session), is an
+	// ownership guard checked under the delivery's row lock: a delivery not
+	// assigned to this courier answers NotFound, whatever its status. Unset
+	// (a partner report) means no guard.
+	CourierId     string `protobuf:"bytes,9,opt,name=courier_id,json=courierId,proto3" json:"courier_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1462,10 +1467,20 @@ func (x *ReportEventRequest) GetActor() string {
 	return ""
 }
 
+func (x *ReportEventRequest) GetCourierId() string {
+	if x != nil {
+		return x.CourierId
+	}
+	return ""
+}
+
 type ReportEventResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Delivery      *Delivery              `protobuf:"bytes,1,opt,name=delivery,proto3" json:"delivery,omitempty"`
-	Outcome       string                 `protobuf:"bytes,2,opt,name=outcome,proto3" json:"outcome,omitempty"` // applied | duplicate | stale | conflict | recorded
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Delivery *Delivery              `protobuf:"bytes,1,opt,name=delivery,proto3" json:"delivery,omitempty"`
+	Outcome  string                 `protobuf:"bytes,2,opt,name=outcome,proto3" json:"outcome,omitempty"` // applied | duplicate | stale | conflict | recorded
+	// Event types the courier may report next in the delivery's current state
+	// (never "arriving"). Empty when the delivery is final.
+	NextActions   []string `protobuf:"bytes,3,rep,name=next_actions,json=nextActions,proto3" json:"next_actions,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1512,6 +1527,13 @@ func (x *ReportEventResponse) GetOutcome() string {
 		return x.Outcome
 	}
 	return ""
+}
+
+func (x *ReportEventResponse) GetNextActions() []string {
+	if x != nil {
+		return x.NextActions
+	}
+	return nil
 }
 
 type CancelDeliveryRequest struct {
@@ -1842,6 +1864,436 @@ func (x *UpsertCourierResponse) GetCreated() bool {
 	return false
 }
 
+type GetCourierRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Scope         *Scope                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	Id            string                 `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"` // a cou_ id
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetCourierRequest) Reset() {
+	*x = GetCourierRequest{}
+	mi := &file_dt_deliveries_v1_deliveries_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetCourierRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetCourierRequest) ProtoMessage() {}
+
+func (x *GetCourierRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_dt_deliveries_v1_deliveries_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetCourierRequest.ProtoReflect.Descriptor instead.
+func (*GetCourierRequest) Descriptor() ([]byte, []int) {
+	return file_dt_deliveries_v1_deliveries_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *GetCourierRequest) GetScope() *Scope {
+	if x != nil {
+		return x.Scope
+	}
+	return nil
+}
+
+func (x *GetCourierRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+type GetCourierResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Courier       *Courier               `protobuf:"bytes,1,opt,name=courier,proto3" json:"courier,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetCourierResponse) Reset() {
+	*x = GetCourierResponse{}
+	mi := &file_dt_deliveries_v1_deliveries_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetCourierResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetCourierResponse) ProtoMessage() {}
+
+func (x *GetCourierResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_dt_deliveries_v1_deliveries_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetCourierResponse.ProtoReflect.Descriptor instead.
+func (*GetCourierResponse) Descriptor() ([]byte, []int) {
+	return file_dt_deliveries_v1_deliveries_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *GetCourierResponse) GetCourier() *Courier {
+	if x != nil {
+		return x.Courier
+	}
+	return nil
+}
+
+type ListCourierDeliveriesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Scope         *Scope                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	CourierId     string                 `protobuf:"bytes,2,opt,name=courier_id,json=courierId,proto3" json:"courier_id,omitempty"` // a cou_ id
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListCourierDeliveriesRequest) Reset() {
+	*x = ListCourierDeliveriesRequest{}
+	mi := &file_dt_deliveries_v1_deliveries_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListCourierDeliveriesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListCourierDeliveriesRequest) ProtoMessage() {}
+
+func (x *ListCourierDeliveriesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_dt_deliveries_v1_deliveries_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListCourierDeliveriesRequest.ProtoReflect.Descriptor instead.
+func (*ListCourierDeliveriesRequest) Descriptor() ([]byte, []int) {
+	return file_dt_deliveries_v1_deliveries_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *ListCourierDeliveriesRequest) GetScope() *Scope {
+	if x != nil {
+		return x.Scope
+	}
+	return nil
+}
+
+func (x *ListCourierDeliveriesRequest) GetCourierId() string {
+	if x != nil {
+		return x.CourierId
+	}
+	return ""
+}
+
+type ListCourierDeliveriesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Deliveries    []*CourierDelivery     `protobuf:"bytes,1,rep,name=deliveries,proto3" json:"deliveries,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListCourierDeliveriesResponse) Reset() {
+	*x = ListCourierDeliveriesResponse{}
+	mi := &file_dt_deliveries_v1_deliveries_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListCourierDeliveriesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListCourierDeliveriesResponse) ProtoMessage() {}
+
+func (x *ListCourierDeliveriesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_dt_deliveries_v1_deliveries_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListCourierDeliveriesResponse.ProtoReflect.Descriptor instead.
+func (*ListCourierDeliveriesResponse) Descriptor() ([]byte, []int) {
+	return file_dt_deliveries_v1_deliveries_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *ListCourierDeliveriesResponse) GetDeliveries() []*CourierDelivery {
+	if x != nil {
+		return x.Deliveries
+	}
+	return nil
+}
+
+type CourierPickup struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Location      *v1.LatLng             `protobuf:"bytes,1,opt,name=location,proto3" json:"location,omitempty"`
+	Label         string                 `protobuf:"bytes,2,opt,name=label,proto3" json:"label,omitempty"` // the pickup name
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CourierPickup) Reset() {
+	*x = CourierPickup{}
+	mi := &file_dt_deliveries_v1_deliveries_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CourierPickup) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CourierPickup) ProtoMessage() {}
+
+func (x *CourierPickup) ProtoReflect() protoreflect.Message {
+	mi := &file_dt_deliveries_v1_deliveries_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CourierPickup.ProtoReflect.Descriptor instead.
+func (*CourierPickup) Descriptor() ([]byte, []int) {
+	return file_dt_deliveries_v1_deliveries_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *CourierPickup) GetLocation() *v1.LatLng {
+	if x != nil {
+		return x.Location
+	}
+	return nil
+}
+
+func (x *CourierPickup) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+type CourierDropoff struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Location      *v1.LatLng             `protobuf:"bytes,1,opt,name=location,proto3" json:"location,omitempty"`
+	Label         *string                `protobuf:"bytes,2,opt,name=label,proto3,oneof" json:"label,omitempty"`
+	Notes         *string                `protobuf:"bytes,3,opt,name=notes,proto3,oneof" json:"notes,omitempty"` // the delivery notes
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CourierDropoff) Reset() {
+	*x = CourierDropoff{}
+	mi := &file_dt_deliveries_v1_deliveries_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CourierDropoff) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CourierDropoff) ProtoMessage() {}
+
+func (x *CourierDropoff) ProtoReflect() protoreflect.Message {
+	mi := &file_dt_deliveries_v1_deliveries_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CourierDropoff.ProtoReflect.Descriptor instead.
+func (*CourierDropoff) Descriptor() ([]byte, []int) {
+	return file_dt_deliveries_v1_deliveries_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *CourierDropoff) GetLocation() *v1.LatLng {
+	if x != nil {
+		return x.Location
+	}
+	return nil
+}
+
+func (x *CourierDropoff) GetLabel() string {
+	if x != nil && x.Label != nil {
+		return *x.Label
+	}
+	return ""
+}
+
+func (x *CourierDropoff) GetNotes() string {
+	if x != nil && x.Notes != nil {
+		return *x.Notes
+	}
+	return ""
+}
+
+// CourierDelivery is the courier-safe view of a delivery. It mirrors the
+// public CourierDelivery object.
+type CourierDelivery struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Id                  string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Reference           string                 `protobuf:"bytes,2,opt,name=reference,proto3" json:"reference,omitempty"` // the partner's external_id
+	Model               string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`         // "direct" | "end_to_end"
+	Status              string                 `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"`
+	ReadyAt             *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=ready_at,json=readyAt,proto3" json:"ready_at,omitempty"` // unset = none
+	Pickup              *CourierPickup         `protobuf:"bytes,6,opt,name=pickup,proto3" json:"pickup,omitempty"`
+	Dropoff             *CourierDropoff        `protobuf:"bytes,7,opt,name=dropoff,proto3" json:"dropoff,omitempty"`
+	ItemsSummary        *string                `protobuf:"bytes,8,opt,name=items_summary,json=itemsSummary,proto3,oneof" json:"items_summary,omitempty"`
+	ItemCount           *int32                 `protobuf:"varint,9,opt,name=item_count,json=itemCount,proto3,oneof" json:"item_count,omitempty"`
+	PickupConfirmations []*PickupConfirmation  `protobuf:"bytes,10,rep,name=pickup_confirmations,json=pickupConfirmations,proto3" json:"pickup_confirmations,omitempty"`
+	NextActions         []string               `protobuf:"bytes,11,rep,name=next_actions,json=nextActions,proto3" json:"next_actions,omitempty"` // event types the courier may report now
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *CourierDelivery) Reset() {
+	*x = CourierDelivery{}
+	mi := &file_dt_deliveries_v1_deliveries_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CourierDelivery) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CourierDelivery) ProtoMessage() {}
+
+func (x *CourierDelivery) ProtoReflect() protoreflect.Message {
+	mi := &file_dt_deliveries_v1_deliveries_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CourierDelivery.ProtoReflect.Descriptor instead.
+func (*CourierDelivery) Descriptor() ([]byte, []int) {
+	return file_dt_deliveries_v1_deliveries_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *CourierDelivery) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *CourierDelivery) GetReference() string {
+	if x != nil {
+		return x.Reference
+	}
+	return ""
+}
+
+func (x *CourierDelivery) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *CourierDelivery) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *CourierDelivery) GetReadyAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ReadyAt
+	}
+	return nil
+}
+
+func (x *CourierDelivery) GetPickup() *CourierPickup {
+	if x != nil {
+		return x.Pickup
+	}
+	return nil
+}
+
+func (x *CourierDelivery) GetDropoff() *CourierDropoff {
+	if x != nil {
+		return x.Dropoff
+	}
+	return nil
+}
+
+func (x *CourierDelivery) GetItemsSummary() string {
+	if x != nil && x.ItemsSummary != nil {
+		return *x.ItemsSummary
+	}
+	return ""
+}
+
+func (x *CourierDelivery) GetItemCount() int32 {
+	if x != nil && x.ItemCount != nil {
+		return *x.ItemCount
+	}
+	return 0
+}
+
+func (x *CourierDelivery) GetPickupConfirmations() []*PickupConfirmation {
+	if x != nil {
+		return x.PickupConfirmations
+	}
+	return nil
+}
+
+func (x *CourierDelivery) GetNextActions() []string {
+	if x != nil {
+		return x.NextActions
+	}
+	return nil
+}
+
 var File_dt_deliveries_v1_deliveries_proto protoreflect.FileDescriptor
 
 const file_dt_deliveries_v1_deliveries_proto_rawDesc = "" +
@@ -1986,7 +2438,7 @@ const file_dt_deliveries_v1_deliveries_proto_rawDesc = "" +
 	"\n" +
 	"courier_id\x18\x03 \x01(\tR\tcourierId\"O\n" +
 	"\x15AssignCourierResponse\x126\n" +
-	"\bdelivery\x18\x01 \x01(\v2\x1a.dt.deliveries.v1.DeliveryR\bdelivery\"\xfd\x01\n" +
+	"\bdelivery\x18\x01 \x01(\v2\x1a.dt.deliveries.v1.DeliveryR\bdelivery\"\x9c\x02\n" +
 	"\x12ReportEventRequest\x12-\n" +
 	"\x05scope\x18\x01 \x01(\v2\x17.dt.deliveries.v1.ScopeR\x05scope\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x19\n" +
@@ -1996,10 +2448,13 @@ const file_dt_deliveries_v1_deliveries_proto_rawDesc = "" +
 	"occurredAt\x12\x0e\n" +
 	"\x02by\x18\x06 \x01(\tR\x02by\x12\x16\n" +
 	"\x06reason\x18\a \x01(\tR\x06reason\x12\x14\n" +
-	"\x05actor\x18\b \x01(\tR\x05actor\"g\n" +
+	"\x05actor\x18\b \x01(\tR\x05actor\x12\x1d\n" +
+	"\n" +
+	"courier_id\x18\t \x01(\tR\tcourierId\"\x8a\x01\n" +
 	"\x13ReportEventResponse\x126\n" +
 	"\bdelivery\x18\x01 \x01(\v2\x1a.dt.deliveries.v1.DeliveryR\bdelivery\x12\x18\n" +
-	"\aoutcome\x18\x02 \x01(\tR\aoutcome\"n\n" +
+	"\aoutcome\x18\x02 \x01(\tR\aoutcome\x12!\n" +
+	"\fnext_actions\x18\x03 \x03(\tR\vnextActions\"n\n" +
 	"\x15CancelDeliveryRequest\x12-\n" +
 	"\x05scope\x18\x01 \x01(\v2\x17.dt.deliveries.v1.ScopeR\x05scope\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x16\n" +
@@ -2022,7 +2477,45 @@ const file_dt_deliveries_v1_deliveries_proto_rawDesc = "" +
 	"_photo_url\"f\n" +
 	"\x15UpsertCourierResponse\x123\n" +
 	"\acourier\x18\x01 \x01(\v2\x19.dt.deliveries.v1.CourierR\acourier\x12\x18\n" +
-	"\acreated\x18\x02 \x01(\bR\acreated2\x91\a\n" +
+	"\acreated\x18\x02 \x01(\bR\acreated\"R\n" +
+	"\x11GetCourierRequest\x12-\n" +
+	"\x05scope\x18\x01 \x01(\v2\x17.dt.deliveries.v1.ScopeR\x05scope\x12\x0e\n" +
+	"\x02id\x18\x02 \x01(\tR\x02id\"I\n" +
+	"\x12GetCourierResponse\x123\n" +
+	"\acourier\x18\x01 \x01(\v2\x19.dt.deliveries.v1.CourierR\acourier\"l\n" +
+	"\x1cListCourierDeliveriesRequest\x12-\n" +
+	"\x05scope\x18\x01 \x01(\v2\x17.dt.deliveries.v1.ScopeR\x05scope\x12\x1d\n" +
+	"\n" +
+	"courier_id\x18\x02 \x01(\tR\tcourierId\"b\n" +
+	"\x1dListCourierDeliveriesResponse\x12A\n" +
+	"\n" +
+	"deliveries\x18\x01 \x03(\v2!.dt.deliveries.v1.CourierDeliveryR\n" +
+	"deliveries\"W\n" +
+	"\rCourierPickup\x120\n" +
+	"\blocation\x18\x01 \x01(\v2\x14.dt.events.v1.LatLngR\blocation\x12\x14\n" +
+	"\x05label\x18\x02 \x01(\tR\x05label\"\x8c\x01\n" +
+	"\x0eCourierDropoff\x120\n" +
+	"\blocation\x18\x01 \x01(\v2\x14.dt.events.v1.LatLngR\blocation\x12\x19\n" +
+	"\x05label\x18\x02 \x01(\tH\x00R\x05label\x88\x01\x01\x12\x19\n" +
+	"\x05notes\x18\x03 \x01(\tH\x01R\x05notes\x88\x01\x01B\b\n" +
+	"\x06_labelB\b\n" +
+	"\x06_notes\"\x84\x04\n" +
+	"\x0fCourierDelivery\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1c\n" +
+	"\treference\x18\x02 \x01(\tR\treference\x12\x14\n" +
+	"\x05model\x18\x03 \x01(\tR\x05model\x12\x16\n" +
+	"\x06status\x18\x04 \x01(\tR\x06status\x125\n" +
+	"\bready_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\areadyAt\x127\n" +
+	"\x06pickup\x18\x06 \x01(\v2\x1f.dt.deliveries.v1.CourierPickupR\x06pickup\x12:\n" +
+	"\adropoff\x18\a \x01(\v2 .dt.deliveries.v1.CourierDropoffR\adropoff\x12(\n" +
+	"\ritems_summary\x18\b \x01(\tH\x00R\fitemsSummary\x88\x01\x01\x12\"\n" +
+	"\n" +
+	"item_count\x18\t \x01(\x05H\x01R\titemCount\x88\x01\x01\x12W\n" +
+	"\x14pickup_confirmations\x18\n" +
+	" \x03(\v2$.dt.deliveries.v1.PickupConfirmationR\x13pickupConfirmations\x12!\n" +
+	"\fnext_actions\x18\v \x03(\tR\vnextActionsB\x10\n" +
+	"\x0e_items_summaryB\r\n" +
+	"\v_item_count2\xe4\b\n" +
 	"\x11DeliveriesService\x12c\n" +
 	"\x0eCreateDelivery\x12'.dt.deliveries.v1.CreateDeliveryRequest\x1a(.dt.deliveries.v1.CreateDeliveryResponse\x12Z\n" +
 	"\vGetDelivery\x12$.dt.deliveries.v1.GetDeliveryRequest\x1a%.dt.deliveries.v1.GetDeliveryResponse\x12c\n" +
@@ -2032,7 +2525,10 @@ const file_dt_deliveries_v1_deliveries_proto_rawDesc = "" +
 	"\vReportEvent\x12$.dt.deliveries.v1.ReportEventRequest\x1a%.dt.deliveries.v1.ReportEventResponse\x12c\n" +
 	"\x0eCancelDelivery\x12'.dt.deliveries.v1.CancelDeliveryRequest\x1a(.dt.deliveries.v1.CancelDeliveryResponse\x12l\n" +
 	"\x11ErasePersonalData\x12*.dt.deliveries.v1.ErasePersonalDataRequest\x1a+.dt.deliveries.v1.ErasePersonalDataResponse\x12`\n" +
-	"\rUpsertCourier\x12&.dt.deliveries.v1.UpsertCourierRequest\x1a'.dt.deliveries.v1.UpsertCourierResponseB\xcd\x01\n" +
+	"\rUpsertCourier\x12&.dt.deliveries.v1.UpsertCourierRequest\x1a'.dt.deliveries.v1.UpsertCourierResponse\x12W\n" +
+	"\n" +
+	"GetCourier\x12#.dt.deliveries.v1.GetCourierRequest\x1a$.dt.deliveries.v1.GetCourierResponse\x12x\n" +
+	"\x15ListCourierDeliveries\x12..dt.deliveries.v1.ListCourierDeliveriesRequest\x1a/.dt.deliveries.v1.ListCourierDeliveriesResponseB\xcd\x01\n" +
 	"\x14com.dt.deliveries.v1B\x0fDeliveriesProtoP\x01ZBgithub.com/raduolivas/dt/backend/gen/dt/deliveries/v1;deliveriesv1\xa2\x02\x03DDX\xaa\x02\x10Dt.Deliveries.V1\xca\x02\x10Dt\\Deliveries\\V1\xe2\x02\x1cDt\\Deliveries\\V1\\GPBMetadata\xea\x02\x12Dt::Deliveries::V1b\x06proto3"
 
 var (
@@ -2047,83 +2543,90 @@ func file_dt_deliveries_v1_deliveries_proto_rawDescGZIP() []byte {
 	return file_dt_deliveries_v1_deliveries_proto_rawDescData
 }
 
-var file_dt_deliveries_v1_deliveries_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
+var file_dt_deliveries_v1_deliveries_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_dt_deliveries_v1_deliveries_proto_goTypes = []any{
-	(*Scope)(nil),                     // 0: dt.deliveries.v1.Scope
-	(*FieldViolation)(nil),            // 1: dt.deliveries.v1.FieldViolation
-	(*Pickup)(nil),                    // 2: dt.deliveries.v1.Pickup
-	(*Dropoff)(nil),                   // 3: dt.deliveries.v1.Dropoff
-	(*Customer)(nil),                  // 4: dt.deliveries.v1.Customer
-	(*PickupConfirmation)(nil),        // 5: dt.deliveries.v1.PickupConfirmation
-	(*CourierRef)(nil),                // 6: dt.deliveries.v1.CourierRef
-	(*Courier)(nil),                   // 7: dt.deliveries.v1.Courier
-	(*Delivery)(nil),                  // 8: dt.deliveries.v1.Delivery
-	(*CreateDeliveryRequest)(nil),     // 9: dt.deliveries.v1.CreateDeliveryRequest
-	(*CreateDeliveryResponse)(nil),    // 10: dt.deliveries.v1.CreateDeliveryResponse
-	(*GetDeliveryRequest)(nil),        // 11: dt.deliveries.v1.GetDeliveryRequest
-	(*GetDeliveryResponse)(nil),       // 12: dt.deliveries.v1.GetDeliveryResponse
-	(*ListDeliveriesRequest)(nil),     // 13: dt.deliveries.v1.ListDeliveriesRequest
-	(*ListDeliveriesResponse)(nil),    // 14: dt.deliveries.v1.ListDeliveriesResponse
-	(*UpdateDeliveryRequest)(nil),     // 15: dt.deliveries.v1.UpdateDeliveryRequest
-	(*UpdateDeliveryResponse)(nil),    // 16: dt.deliveries.v1.UpdateDeliveryResponse
-	(*AssignCourierRequest)(nil),      // 17: dt.deliveries.v1.AssignCourierRequest
-	(*AssignCourierResponse)(nil),     // 18: dt.deliveries.v1.AssignCourierResponse
-	(*ReportEventRequest)(nil),        // 19: dt.deliveries.v1.ReportEventRequest
-	(*ReportEventResponse)(nil),       // 20: dt.deliveries.v1.ReportEventResponse
-	(*CancelDeliveryRequest)(nil),     // 21: dt.deliveries.v1.CancelDeliveryRequest
-	(*CancelDeliveryResponse)(nil),    // 22: dt.deliveries.v1.CancelDeliveryResponse
-	(*ErasePersonalDataRequest)(nil),  // 23: dt.deliveries.v1.ErasePersonalDataRequest
-	(*ErasePersonalDataResponse)(nil), // 24: dt.deliveries.v1.ErasePersonalDataResponse
-	(*UpsertCourierRequest)(nil),      // 25: dt.deliveries.v1.UpsertCourierRequest
-	(*UpsertCourierResponse)(nil),     // 26: dt.deliveries.v1.UpsertCourierResponse
-	nil,                               // 27: dt.deliveries.v1.Delivery.MetadataEntry
-	nil,                               // 28: dt.deliveries.v1.CreateDeliveryRequest.MetadataEntry
-	nil,                               // 29: dt.deliveries.v1.UpdateDeliveryRequest.MetadataEntry
-	(v1.Environment)(0),               // 30: dt.events.v1.Environment
-	(*v1.LatLng)(nil),                 // 31: dt.events.v1.LatLng
-	(*timestamppb.Timestamp)(nil),     // 32: google.protobuf.Timestamp
-	(*fieldmaskpb.FieldMask)(nil),     // 33: google.protobuf.FieldMask
+	(*Scope)(nil),                         // 0: dt.deliveries.v1.Scope
+	(*FieldViolation)(nil),                // 1: dt.deliveries.v1.FieldViolation
+	(*Pickup)(nil),                        // 2: dt.deliveries.v1.Pickup
+	(*Dropoff)(nil),                       // 3: dt.deliveries.v1.Dropoff
+	(*Customer)(nil),                      // 4: dt.deliveries.v1.Customer
+	(*PickupConfirmation)(nil),            // 5: dt.deliveries.v1.PickupConfirmation
+	(*CourierRef)(nil),                    // 6: dt.deliveries.v1.CourierRef
+	(*Courier)(nil),                       // 7: dt.deliveries.v1.Courier
+	(*Delivery)(nil),                      // 8: dt.deliveries.v1.Delivery
+	(*CreateDeliveryRequest)(nil),         // 9: dt.deliveries.v1.CreateDeliveryRequest
+	(*CreateDeliveryResponse)(nil),        // 10: dt.deliveries.v1.CreateDeliveryResponse
+	(*GetDeliveryRequest)(nil),            // 11: dt.deliveries.v1.GetDeliveryRequest
+	(*GetDeliveryResponse)(nil),           // 12: dt.deliveries.v1.GetDeliveryResponse
+	(*ListDeliveriesRequest)(nil),         // 13: dt.deliveries.v1.ListDeliveriesRequest
+	(*ListDeliveriesResponse)(nil),        // 14: dt.deliveries.v1.ListDeliveriesResponse
+	(*UpdateDeliveryRequest)(nil),         // 15: dt.deliveries.v1.UpdateDeliveryRequest
+	(*UpdateDeliveryResponse)(nil),        // 16: dt.deliveries.v1.UpdateDeliveryResponse
+	(*AssignCourierRequest)(nil),          // 17: dt.deliveries.v1.AssignCourierRequest
+	(*AssignCourierResponse)(nil),         // 18: dt.deliveries.v1.AssignCourierResponse
+	(*ReportEventRequest)(nil),            // 19: dt.deliveries.v1.ReportEventRequest
+	(*ReportEventResponse)(nil),           // 20: dt.deliveries.v1.ReportEventResponse
+	(*CancelDeliveryRequest)(nil),         // 21: dt.deliveries.v1.CancelDeliveryRequest
+	(*CancelDeliveryResponse)(nil),        // 22: dt.deliveries.v1.CancelDeliveryResponse
+	(*ErasePersonalDataRequest)(nil),      // 23: dt.deliveries.v1.ErasePersonalDataRequest
+	(*ErasePersonalDataResponse)(nil),     // 24: dt.deliveries.v1.ErasePersonalDataResponse
+	(*UpsertCourierRequest)(nil),          // 25: dt.deliveries.v1.UpsertCourierRequest
+	(*UpsertCourierResponse)(nil),         // 26: dt.deliveries.v1.UpsertCourierResponse
+	(*GetCourierRequest)(nil),             // 27: dt.deliveries.v1.GetCourierRequest
+	(*GetCourierResponse)(nil),            // 28: dt.deliveries.v1.GetCourierResponse
+	(*ListCourierDeliveriesRequest)(nil),  // 29: dt.deliveries.v1.ListCourierDeliveriesRequest
+	(*ListCourierDeliveriesResponse)(nil), // 30: dt.deliveries.v1.ListCourierDeliveriesResponse
+	(*CourierPickup)(nil),                 // 31: dt.deliveries.v1.CourierPickup
+	(*CourierDropoff)(nil),                // 32: dt.deliveries.v1.CourierDropoff
+	(*CourierDelivery)(nil),               // 33: dt.deliveries.v1.CourierDelivery
+	nil,                                   // 34: dt.deliveries.v1.Delivery.MetadataEntry
+	nil,                                   // 35: dt.deliveries.v1.CreateDeliveryRequest.MetadataEntry
+	nil,                                   // 36: dt.deliveries.v1.UpdateDeliveryRequest.MetadataEntry
+	(v1.Environment)(0),                   // 37: dt.events.v1.Environment
+	(*v1.LatLng)(nil),                     // 38: dt.events.v1.LatLng
+	(*timestamppb.Timestamp)(nil),         // 39: google.protobuf.Timestamp
+	(*fieldmaskpb.FieldMask)(nil),         // 40: google.protobuf.FieldMask
 }
 var file_dt_deliveries_v1_deliveries_proto_depIdxs = []int32{
-	30, // 0: dt.deliveries.v1.Scope.environment:type_name -> dt.events.v1.Environment
-	31, // 1: dt.deliveries.v1.Pickup.location:type_name -> dt.events.v1.LatLng
-	31, // 2: dt.deliveries.v1.Dropoff.location:type_name -> dt.events.v1.LatLng
-	32, // 3: dt.deliveries.v1.PickupConfirmation.at:type_name -> google.protobuf.Timestamp
-	32, // 4: dt.deliveries.v1.Courier.created_at:type_name -> google.protobuf.Timestamp
-	32, // 5: dt.deliveries.v1.Courier.updated_at:type_name -> google.protobuf.Timestamp
-	30, // 6: dt.deliveries.v1.Delivery.environment:type_name -> dt.events.v1.Environment
+	37, // 0: dt.deliveries.v1.Scope.environment:type_name -> dt.events.v1.Environment
+	38, // 1: dt.deliveries.v1.Pickup.location:type_name -> dt.events.v1.LatLng
+	38, // 2: dt.deliveries.v1.Dropoff.location:type_name -> dt.events.v1.LatLng
+	39, // 3: dt.deliveries.v1.PickupConfirmation.at:type_name -> google.protobuf.Timestamp
+	39, // 4: dt.deliveries.v1.Courier.created_at:type_name -> google.protobuf.Timestamp
+	39, // 5: dt.deliveries.v1.Courier.updated_at:type_name -> google.protobuf.Timestamp
+	37, // 6: dt.deliveries.v1.Delivery.environment:type_name -> dt.events.v1.Environment
 	2,  // 7: dt.deliveries.v1.Delivery.pickup:type_name -> dt.deliveries.v1.Pickup
 	3,  // 8: dt.deliveries.v1.Delivery.dropoff:type_name -> dt.deliveries.v1.Dropoff
 	4,  // 9: dt.deliveries.v1.Delivery.customer:type_name -> dt.deliveries.v1.Customer
-	27, // 10: dt.deliveries.v1.Delivery.metadata:type_name -> dt.deliveries.v1.Delivery.MetadataEntry
+	34, // 10: dt.deliveries.v1.Delivery.metadata:type_name -> dt.deliveries.v1.Delivery.MetadataEntry
 	6,  // 11: dt.deliveries.v1.Delivery.courier:type_name -> dt.deliveries.v1.CourierRef
 	5,  // 12: dt.deliveries.v1.Delivery.pickup_confirmations:type_name -> dt.deliveries.v1.PickupConfirmation
-	32, // 13: dt.deliveries.v1.Delivery.created_at:type_name -> google.protobuf.Timestamp
-	32, // 14: dt.deliveries.v1.Delivery.updated_at:type_name -> google.protobuf.Timestamp
-	32, // 15: dt.deliveries.v1.Delivery.ready_at:type_name -> google.protobuf.Timestamp
+	39, // 13: dt.deliveries.v1.Delivery.created_at:type_name -> google.protobuf.Timestamp
+	39, // 14: dt.deliveries.v1.Delivery.updated_at:type_name -> google.protobuf.Timestamp
+	39, // 15: dt.deliveries.v1.Delivery.ready_at:type_name -> google.protobuf.Timestamp
 	0,  // 16: dt.deliveries.v1.CreateDeliveryRequest.scope:type_name -> dt.deliveries.v1.Scope
 	2,  // 17: dt.deliveries.v1.CreateDeliveryRequest.pickup:type_name -> dt.deliveries.v1.Pickup
 	3,  // 18: dt.deliveries.v1.CreateDeliveryRequest.dropoff:type_name -> dt.deliveries.v1.Dropoff
 	4,  // 19: dt.deliveries.v1.CreateDeliveryRequest.customer:type_name -> dt.deliveries.v1.Customer
-	28, // 20: dt.deliveries.v1.CreateDeliveryRequest.metadata:type_name -> dt.deliveries.v1.CreateDeliveryRequest.MetadataEntry
-	32, // 21: dt.deliveries.v1.CreateDeliveryRequest.ready_at:type_name -> google.protobuf.Timestamp
+	35, // 20: dt.deliveries.v1.CreateDeliveryRequest.metadata:type_name -> dt.deliveries.v1.CreateDeliveryRequest.MetadataEntry
+	39, // 21: dt.deliveries.v1.CreateDeliveryRequest.ready_at:type_name -> google.protobuf.Timestamp
 	8,  // 22: dt.deliveries.v1.CreateDeliveryResponse.delivery:type_name -> dt.deliveries.v1.Delivery
 	0,  // 23: dt.deliveries.v1.GetDeliveryRequest.scope:type_name -> dt.deliveries.v1.Scope
 	8,  // 24: dt.deliveries.v1.GetDeliveryResponse.delivery:type_name -> dt.deliveries.v1.Delivery
 	0,  // 25: dt.deliveries.v1.ListDeliveriesRequest.scope:type_name -> dt.deliveries.v1.Scope
-	32, // 26: dt.deliveries.v1.ListDeliveriesRequest.created_gte:type_name -> google.protobuf.Timestamp
-	32, // 27: dt.deliveries.v1.ListDeliveriesRequest.created_lt:type_name -> google.protobuf.Timestamp
+	39, // 26: dt.deliveries.v1.ListDeliveriesRequest.created_gte:type_name -> google.protobuf.Timestamp
+	39, // 27: dt.deliveries.v1.ListDeliveriesRequest.created_lt:type_name -> google.protobuf.Timestamp
 	8,  // 28: dt.deliveries.v1.ListDeliveriesResponse.data:type_name -> dt.deliveries.v1.Delivery
 	0,  // 29: dt.deliveries.v1.UpdateDeliveryRequest.scope:type_name -> dt.deliveries.v1.Scope
-	33, // 30: dt.deliveries.v1.UpdateDeliveryRequest.update_mask:type_name -> google.protobuf.FieldMask
-	31, // 31: dt.deliveries.v1.UpdateDeliveryRequest.dropoff:type_name -> dt.events.v1.LatLng
-	29, // 32: dt.deliveries.v1.UpdateDeliveryRequest.metadata:type_name -> dt.deliveries.v1.UpdateDeliveryRequest.MetadataEntry
-	32, // 33: dt.deliveries.v1.UpdateDeliveryRequest.ready_at:type_name -> google.protobuf.Timestamp
+	40, // 30: dt.deliveries.v1.UpdateDeliveryRequest.update_mask:type_name -> google.protobuf.FieldMask
+	38, // 31: dt.deliveries.v1.UpdateDeliveryRequest.dropoff:type_name -> dt.events.v1.LatLng
+	36, // 32: dt.deliveries.v1.UpdateDeliveryRequest.metadata:type_name -> dt.deliveries.v1.UpdateDeliveryRequest.MetadataEntry
+	39, // 33: dt.deliveries.v1.UpdateDeliveryRequest.ready_at:type_name -> google.protobuf.Timestamp
 	8,  // 34: dt.deliveries.v1.UpdateDeliveryResponse.delivery:type_name -> dt.deliveries.v1.Delivery
 	0,  // 35: dt.deliveries.v1.AssignCourierRequest.scope:type_name -> dt.deliveries.v1.Scope
 	8,  // 36: dt.deliveries.v1.AssignCourierResponse.delivery:type_name -> dt.deliveries.v1.Delivery
 	0,  // 37: dt.deliveries.v1.ReportEventRequest.scope:type_name -> dt.deliveries.v1.Scope
-	32, // 38: dt.deliveries.v1.ReportEventRequest.occurred_at:type_name -> google.protobuf.Timestamp
+	39, // 38: dt.deliveries.v1.ReportEventRequest.occurred_at:type_name -> google.protobuf.Timestamp
 	8,  // 39: dt.deliveries.v1.ReportEventResponse.delivery:type_name -> dt.deliveries.v1.Delivery
 	0,  // 40: dt.deliveries.v1.CancelDeliveryRequest.scope:type_name -> dt.deliveries.v1.Scope
 	8,  // 41: dt.deliveries.v1.CancelDeliveryResponse.delivery:type_name -> dt.deliveries.v1.Delivery
@@ -2131,29 +2634,43 @@ var file_dt_deliveries_v1_deliveries_proto_depIdxs = []int32{
 	8,  // 43: dt.deliveries.v1.ErasePersonalDataResponse.delivery:type_name -> dt.deliveries.v1.Delivery
 	0,  // 44: dt.deliveries.v1.UpsertCourierRequest.scope:type_name -> dt.deliveries.v1.Scope
 	7,  // 45: dt.deliveries.v1.UpsertCourierResponse.courier:type_name -> dt.deliveries.v1.Courier
-	9,  // 46: dt.deliveries.v1.DeliveriesService.CreateDelivery:input_type -> dt.deliveries.v1.CreateDeliveryRequest
-	11, // 47: dt.deliveries.v1.DeliveriesService.GetDelivery:input_type -> dt.deliveries.v1.GetDeliveryRequest
-	13, // 48: dt.deliveries.v1.DeliveriesService.ListDeliveries:input_type -> dt.deliveries.v1.ListDeliveriesRequest
-	15, // 49: dt.deliveries.v1.DeliveriesService.UpdateDelivery:input_type -> dt.deliveries.v1.UpdateDeliveryRequest
-	17, // 50: dt.deliveries.v1.DeliveriesService.AssignCourier:input_type -> dt.deliveries.v1.AssignCourierRequest
-	19, // 51: dt.deliveries.v1.DeliveriesService.ReportEvent:input_type -> dt.deliveries.v1.ReportEventRequest
-	21, // 52: dt.deliveries.v1.DeliveriesService.CancelDelivery:input_type -> dt.deliveries.v1.CancelDeliveryRequest
-	23, // 53: dt.deliveries.v1.DeliveriesService.ErasePersonalData:input_type -> dt.deliveries.v1.ErasePersonalDataRequest
-	25, // 54: dt.deliveries.v1.DeliveriesService.UpsertCourier:input_type -> dt.deliveries.v1.UpsertCourierRequest
-	10, // 55: dt.deliveries.v1.DeliveriesService.CreateDelivery:output_type -> dt.deliveries.v1.CreateDeliveryResponse
-	12, // 56: dt.deliveries.v1.DeliveriesService.GetDelivery:output_type -> dt.deliveries.v1.GetDeliveryResponse
-	14, // 57: dt.deliveries.v1.DeliveriesService.ListDeliveries:output_type -> dt.deliveries.v1.ListDeliveriesResponse
-	16, // 58: dt.deliveries.v1.DeliveriesService.UpdateDelivery:output_type -> dt.deliveries.v1.UpdateDeliveryResponse
-	18, // 59: dt.deliveries.v1.DeliveriesService.AssignCourier:output_type -> dt.deliveries.v1.AssignCourierResponse
-	20, // 60: dt.deliveries.v1.DeliveriesService.ReportEvent:output_type -> dt.deliveries.v1.ReportEventResponse
-	22, // 61: dt.deliveries.v1.DeliveriesService.CancelDelivery:output_type -> dt.deliveries.v1.CancelDeliveryResponse
-	24, // 62: dt.deliveries.v1.DeliveriesService.ErasePersonalData:output_type -> dt.deliveries.v1.ErasePersonalDataResponse
-	26, // 63: dt.deliveries.v1.DeliveriesService.UpsertCourier:output_type -> dt.deliveries.v1.UpsertCourierResponse
-	55, // [55:64] is the sub-list for method output_type
-	46, // [46:55] is the sub-list for method input_type
-	46, // [46:46] is the sub-list for extension type_name
-	46, // [46:46] is the sub-list for extension extendee
-	0,  // [0:46] is the sub-list for field type_name
+	0,  // 46: dt.deliveries.v1.GetCourierRequest.scope:type_name -> dt.deliveries.v1.Scope
+	7,  // 47: dt.deliveries.v1.GetCourierResponse.courier:type_name -> dt.deliveries.v1.Courier
+	0,  // 48: dt.deliveries.v1.ListCourierDeliveriesRequest.scope:type_name -> dt.deliveries.v1.Scope
+	33, // 49: dt.deliveries.v1.ListCourierDeliveriesResponse.deliveries:type_name -> dt.deliveries.v1.CourierDelivery
+	38, // 50: dt.deliveries.v1.CourierPickup.location:type_name -> dt.events.v1.LatLng
+	38, // 51: dt.deliveries.v1.CourierDropoff.location:type_name -> dt.events.v1.LatLng
+	39, // 52: dt.deliveries.v1.CourierDelivery.ready_at:type_name -> google.protobuf.Timestamp
+	31, // 53: dt.deliveries.v1.CourierDelivery.pickup:type_name -> dt.deliveries.v1.CourierPickup
+	32, // 54: dt.deliveries.v1.CourierDelivery.dropoff:type_name -> dt.deliveries.v1.CourierDropoff
+	5,  // 55: dt.deliveries.v1.CourierDelivery.pickup_confirmations:type_name -> dt.deliveries.v1.PickupConfirmation
+	9,  // 56: dt.deliveries.v1.DeliveriesService.CreateDelivery:input_type -> dt.deliveries.v1.CreateDeliveryRequest
+	11, // 57: dt.deliveries.v1.DeliveriesService.GetDelivery:input_type -> dt.deliveries.v1.GetDeliveryRequest
+	13, // 58: dt.deliveries.v1.DeliveriesService.ListDeliveries:input_type -> dt.deliveries.v1.ListDeliveriesRequest
+	15, // 59: dt.deliveries.v1.DeliveriesService.UpdateDelivery:input_type -> dt.deliveries.v1.UpdateDeliveryRequest
+	17, // 60: dt.deliveries.v1.DeliveriesService.AssignCourier:input_type -> dt.deliveries.v1.AssignCourierRequest
+	19, // 61: dt.deliveries.v1.DeliveriesService.ReportEvent:input_type -> dt.deliveries.v1.ReportEventRequest
+	21, // 62: dt.deliveries.v1.DeliveriesService.CancelDelivery:input_type -> dt.deliveries.v1.CancelDeliveryRequest
+	23, // 63: dt.deliveries.v1.DeliveriesService.ErasePersonalData:input_type -> dt.deliveries.v1.ErasePersonalDataRequest
+	25, // 64: dt.deliveries.v1.DeliveriesService.UpsertCourier:input_type -> dt.deliveries.v1.UpsertCourierRequest
+	27, // 65: dt.deliveries.v1.DeliveriesService.GetCourier:input_type -> dt.deliveries.v1.GetCourierRequest
+	29, // 66: dt.deliveries.v1.DeliveriesService.ListCourierDeliveries:input_type -> dt.deliveries.v1.ListCourierDeliveriesRequest
+	10, // 67: dt.deliveries.v1.DeliveriesService.CreateDelivery:output_type -> dt.deliveries.v1.CreateDeliveryResponse
+	12, // 68: dt.deliveries.v1.DeliveriesService.GetDelivery:output_type -> dt.deliveries.v1.GetDeliveryResponse
+	14, // 69: dt.deliveries.v1.DeliveriesService.ListDeliveries:output_type -> dt.deliveries.v1.ListDeliveriesResponse
+	16, // 70: dt.deliveries.v1.DeliveriesService.UpdateDelivery:output_type -> dt.deliveries.v1.UpdateDeliveryResponse
+	18, // 71: dt.deliveries.v1.DeliveriesService.AssignCourier:output_type -> dt.deliveries.v1.AssignCourierResponse
+	20, // 72: dt.deliveries.v1.DeliveriesService.ReportEvent:output_type -> dt.deliveries.v1.ReportEventResponse
+	22, // 73: dt.deliveries.v1.DeliveriesService.CancelDelivery:output_type -> dt.deliveries.v1.CancelDeliveryResponse
+	24, // 74: dt.deliveries.v1.DeliveriesService.ErasePersonalData:output_type -> dt.deliveries.v1.ErasePersonalDataResponse
+	26, // 75: dt.deliveries.v1.DeliveriesService.UpsertCourier:output_type -> dt.deliveries.v1.UpsertCourierResponse
+	28, // 76: dt.deliveries.v1.DeliveriesService.GetCourier:output_type -> dt.deliveries.v1.GetCourierResponse
+	30, // 77: dt.deliveries.v1.DeliveriesService.ListCourierDeliveries:output_type -> dt.deliveries.v1.ListCourierDeliveriesResponse
+	67, // [67:78] is the sub-list for method output_type
+	56, // [56:67] is the sub-list for method input_type
+	56, // [56:56] is the sub-list for extension type_name
+	56, // [56:56] is the sub-list for extension extendee
+	0,  // [0:56] is the sub-list for field type_name
 }
 
 func init() { file_dt_deliveries_v1_deliveries_proto_init() }
@@ -2168,13 +2685,15 @@ func file_dt_deliveries_v1_deliveries_proto_init() {
 	file_dt_deliveries_v1_deliveries_proto_msgTypes[9].OneofWrappers = []any{}
 	file_dt_deliveries_v1_deliveries_proto_msgTypes[15].OneofWrappers = []any{}
 	file_dt_deliveries_v1_deliveries_proto_msgTypes[25].OneofWrappers = []any{}
+	file_dt_deliveries_v1_deliveries_proto_msgTypes[32].OneofWrappers = []any{}
+	file_dt_deliveries_v1_deliveries_proto_msgTypes[33].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_dt_deliveries_v1_deliveries_proto_rawDesc), len(file_dt_deliveries_v1_deliveries_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   30,
+			NumMessages:   37,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
