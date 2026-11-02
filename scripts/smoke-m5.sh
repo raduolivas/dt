@@ -141,16 +141,20 @@ cexpect 200 GET /deliveries
 field ".deliveries | map(select(.id == \"${delivery}\")) | length" 1
 
 step "5. three fixes are accepted"
-# The assignment reaches the tracking service through NATS a moment after it is made; until then the fixes are
-# dropped (no assigned delivery yet), so post again with fresh timestamps for up to ~22 s.
+# The courier and the assignment reach the tracking service through NATS a moment after they are made. Until the
+# courier arrives the answer is 404 not_found; until the assignment arrives the fixes are dropped. So post again
+# with fresh timestamps for up to ~22 s.
+code=""
 for _ in $(seq 1 20); do
   now="$(date +%s)"
   fixes="$(jq -nc --argjson n "$now" '{fixes: [range(0; 3) | {
     t: (($n - 3 + .) | todate), lat: (52.3731 + . * 0.0001), lng: 4.8922, accuracy_m: 6.5, speed_mps: 4.8, heading_deg: 84}]}')"
-  cexpect 200 POST /locations "$fixes"
-  [[ "$(jq -r .accepted <"$body")" == 3 ]] && break
+  code="$(ccall POST /locations "$fixes")"
+  [[ "$code" == 200 || "$code" == 404 ]] || fail "courier POST /locations: want 200 (or an early 404), got ${code}: $(cat "$body")"
+  [[ "$code" == 200 && "$(jq -r .accepted <"$body")" == 3 ]] && break
   sleep 1.1 # the location limit is 1 batch/s
 done
+[[ "$code" == 200 ]] || fail "courier POST /locations: still 404 after ~22 s: $(cat "$body")"
 field .accepted 3
 field .dropped 0
 
