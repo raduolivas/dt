@@ -1,0 +1,55 @@
+# Minimal collector for Mission Control (spec §4.1, §4.6, §8): OTLP in, redact,
+# then out to the exporters named in exporters.local.yaml. Traces and logs only.
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 200
+  # Deletes attributes by exact key; the list is logx.SensitiveKeys()
+  # (a test pins the two together).
+  attributes/redact:
+    actions: ${file:/etc/otelcol/redact-keys.yaml}
+  # logx matches keys by segment ("dropoff_lat", "x-api-key"); the exact-key
+  # list above cannot. These statements delete any key with a sensitive
+  # segment and mask any value that looks like a DT API key.
+  transform/redact:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements: &redact_statements
+          - delete_matching_keys(attributes, "(?i)(^|[_.-])(lat|lng|lon|latitude|longitude|location|position|coordinates|name|notes|email|phone|address|token|authorization|apikey|key|password|secret|cookie|jwt|bearer|dsn)([_.-]|$)")
+          - replace_all_patterns(attributes, "value", "^(dt_sk_|dt_pk_).*", "[REDACTED]")
+      - context: spanevent
+        statements: *redact_statements
+    log_statements:
+      - context: log
+        statements: *redact_statements
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: local
+        action: upsert
+  batch: {}
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/redact, transform/redact, resource, batch]
+      exporters: [otlphttp/mission-control]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/redact, transform/redact, resource, batch]
+      exporters: [otlphttp/mission-control]

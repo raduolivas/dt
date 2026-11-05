@@ -1,0 +1,10 @@
+# Merged on top only when OTELCOL_DEBUG=1 (the Makefile sets OTELCOL_EXTRA_CONFIG).
+exporters:
+  debug:
+    verbosity: basic
+service:
+  pipelines:
+    traces:
+      exporters: [otlphttp/mission-control, debug]
+    logs:
+      exporters: [otlphttp/mission-control, debug]

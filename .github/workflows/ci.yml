@@ -35,6 +35,8 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
       - name: Lint, test (with integration tests) and scan
         run: make lint-go test-go vuln
+      - name: Check the OTel collector config and redaction
+        run: make obs-check
 
   web:
     runs-on: ubuntu-24.04
