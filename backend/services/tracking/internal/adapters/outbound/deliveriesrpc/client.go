@@ -18,6 +18,7 @@ import (
 	deliveriesv1 "github.com/raduolivas/dt/backend/gen/dt/deliveries/v1"
 	"github.com/raduolivas/dt/backend/gen/dt/deliveries/v1/deliveriesv1connect"
 	eventsv1 "github.com/raduolivas/dt/backend/gen/dt/events/v1"
+	"github.com/raduolivas/dt/backend/pkg/otelx"
 	"github.com/raduolivas/dt/backend/pkg/rpcauth"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/app"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/domain"
@@ -53,7 +54,7 @@ func New(baseURL, token string, tlsCfg *tls.Config) (*Client, error) {
 		hc.Transport = &http.Transport{TLSClientConfig: tlsCfg, ForceAttemptHTTP2: true,
 			MaxIdleConnsPerHost: 4, IdleConnTimeout: 90 * time.Second}
 	}
-	return Wrap(deliveriesv1connect.NewDeliveriesServiceClient(connect.NewClient(connecthttp.NewTransport(hc, baseURL), auth))), nil
+	return Wrap(deliveriesv1connect.NewDeliveriesServiceClient(connect.NewClient(connecthttp.NewTransport(hc, baseURL), otelx.ConnectClientInterceptor(), auth))), nil
 }
 
 // Wrap adapts a generated client.
