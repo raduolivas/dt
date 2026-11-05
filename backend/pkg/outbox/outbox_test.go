@@ -12,6 +12,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	eventsv1 "github.com/raduolivas/dt/backend/gen/dt/events/v1"
 	"github.com/raduolivas/dt/backend/pkg/outbox"
@@ -300,5 +306,114 @@ func TestRelayDeletesOldPublishedRows(t *testing.T) {
 	}
 	if len(got) != 2 || got[0] != fresh.GetEventId() || got[1] != pending.GetEventId() {
 		t.Fatalf("rows = %v, want [%s %s]", got, fresh.GetEventId(), pending.GetEventId())
+	}
+}
+
+// useSpanRecorder installs a global tracer provider with a span recorder and
+// the W3C propagator. Tests using it are not parallel: they swap globals.
+func useSpanRecorder(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+	prevProp, prevTP := otel.GetTextMapPropagator(), otel.GetTracerProvider()
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{}, propagation.Baggage{}))
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+		otel.SetTracerProvider(prevTP)
+		otel.SetTextMapPropagator(prevProp)
+	})
+	return rec
+}
+
+func endedSpan(rec *tracetest.SpanRecorder, name string) sdktrace.ReadOnlySpan {
+	for _, s := range rec.Ended() {
+		if s.Name() == name {
+			return s
+		}
+	}
+	return nil
+}
+
+func TestRelayPublishSpanParentsConsumer(t *testing.T) {
+	rec := useSpanRecorder(t)
+	e := setup(t)
+	ctx, root := otel.Tracer("test").Start(context.Background(), "create key")
+	ev := newEnvelope(t)
+	e.enqueue(t, ctx, ev, true)
+	root.End()
+
+	rctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- e.relay(e.js).Run(rctx) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("relay returned %v", err)
+		}
+	})
+	r := &recorder{}
+	e.consume(t, r.handle)
+	waitFor(t, 5*time.Second, "the event", func() bool { return r.count() == 1 })
+
+	subject := revokedSubject
+	var pub, con sdktrace.ReadOnlySpan
+	waitFor(t, 5*time.Second, "publish and consume spans", func() bool {
+		pub, con = endedSpan(rec, "publish "+subject), endedSpan(rec, "consume "+subject)
+		return pub != nil && con != nil
+	})
+	if pub.SpanKind() != trace.SpanKindProducer {
+		t.Errorf("publish kind = %v, want producer", pub.SpanKind())
+	}
+	if pub.Parent().SpanID() != root.SpanContext().SpanID() {
+		t.Errorf("publish parent = %s, want %s", pub.Parent().SpanID(), root.SpanContext().SpanID())
+	}
+	if con.Parent().SpanID() != pub.SpanContext().SpanID() {
+		t.Errorf("consume parent = %s, want publish span %s", con.Parent().SpanID(), pub.SpanContext().SpanID())
+	}
+	tid := root.SpanContext().TraceID()
+	if pub.SpanContext().TraceID() != tid || con.SpanContext().TraceID() != tid {
+		t.Errorf("trace ids differ: root %s publish %s consume %s", tid, pub.SpanContext().TraceID(), con.SpanContext().TraceID())
+	}
+	want := map[string]string{
+		"messaging.system":           "nats",
+		"messaging.destination.name": subject,
+		"messaging.message.id":       ev.GetEventId(),
+		"dt.event_id":                ev.GetEventId(),
+	}
+	got := map[string]string{}
+	for _, a := range pub.Attributes() {
+		got[string(a.Key)] = a.Value.AsString()
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("attribute %s = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+func TestRelayPublishSpanErrorOnFailure(t *testing.T) {
+	rec := useSpanRecorder(t)
+	e := setup(t)
+	js := &flakyJS{JetStream: e.js}
+	js.failing.Store(true)
+	e.enqueue(t, context.Background(), newEnvelope(t), true)
+
+	runFor(t, 400*time.Millisecond, e.relay(js).Run)
+
+	pub := endedSpan(rec, "publish "+revokedSubject)
+	if pub == nil {
+		t.Fatal("no publish span recorded")
+	}
+	if pub.Status().Code != codes.Error {
+		t.Errorf("status = %v, want Error", pub.Status().Code)
+	}
+	var recorded bool
+	for _, ev := range pub.Events() {
+		recorded = recorded || ev.Name == "exception"
+	}
+	if !recorded {
+		t.Error("publish span did not record the error")
 	}
 }
