@@ -124,7 +124,7 @@ services:
       # for local use.
       TRACKING_PAGE_BASE: "http://localhost:8090/page/dev/"
       TRACKING_PAGE_CDN: "http://localhost:8090"
-      TRACKING_PAGE_TILES: "http://localhost:8090/tiles/amsterdam-z14.pmtiles"
+      TRACKING_PAGE_TILES: "http://localhost:8090/tiles/${DT_LOCAL_TILES:-amsterdam-z14}.pmtiles" # make region: nl
       TRACKING_PAGE_API: "http://localhost:8080/v1"
       TRACKING_PAGE_CONNECT_EXTRA: "https://tiles.openfreemap.org"
       # Tracking's internal RPC (mTLS port); the gateway reads viewer

@@ -118,13 +118,15 @@ test: test-go test-web ## Run every test
 lint: lint-go lint-web lint-contracts ## Run every linter
 
 # ---- local stack ------------------------------------------------------------
-.PHONY: dev down logs dtctl seed smoke latency osrm-data lan-https courier-link
+.PHONY: dev down logs dtctl seed smoke latency osrm-data region lan-https courier-link
 
 # COMPOSE_OVERRIDE optionally names an extra Compose file (for example one that sets
 # build.network: host on machines whose Docker build containers have no network). Empty by default.
 # After make lan-https, build/lan/lan.env (the LAN address, COURIER_URL_BASE and the lan profile) applies to every run.
 LAN_ENV := $(CURDIR)/build/lan/lan.env
-COMPOSE := docker compose $$([ -f $(LAN_ENV) ] && echo --env-file $(LAN_ENV)) -f infra/compose/compose.yaml $(if $(COMPOSE_OVERRIDE),-f $(COMPOSE_OVERRIDE))
+# After make region, build/region.env (the routing region, the map tiles, the default pickup) applies to every run too.
+REGION_ENV := $(CURDIR)/build/region.env
+COMPOSE := docker compose $$([ -f $(LAN_ENV) ] && echo --env-file $(LAN_ENV)) $$([ -f $(REGION_ENV) ] && echo --env-file $(REGION_ENV)) -f infra/compose/compose.yaml $(if $(COMPOSE_OVERRIDE),-f $(COMPOSE_OVERRIDE))
 
 # dtctl talks to the local accounts service with the dev-only token from
 # infra/compose/compose.yaml.
@@ -138,8 +140,14 @@ export DT_INTERNAL_RPC_TLS_CERT ?= $(CERTS)/dtctl.pem
 export DT_INTERNAL_RPC_TLS_KEY ?= $(CERTS)/dtctl.key
 export DT_INTERNAL_RPC_TLS_CA ?= $(CERTS)/ca.pem
 
-osrm-data: ## Download and preprocess the Amsterdam OSRM routing data (idempotent; needs Docker and curl)
+osrm-data: ## Download and preprocess the OSRM routing data (Amsterdam, or the region from make region; idempotent)
 	scripts/osrm-prepare.sh
+
+region: ## Test outside Amsterdam: make region REGION=overijssel [PICKUP=lat,lng]; REGION=amsterdam goes back
+	@[ -n "$(REGION)" ] || { echo "usage: make region REGION=<amsterdam|province> [PICKUP=lat,lng]" >&2; exit 2; }
+	scripts/local-region.sh "$(REGION)" "$(PICKUP)"
+	$(COMPOSE) up -d --force-recreate osrm-car osrm-bike tracking gateway
+	scripts/wait-ready.sh
 
 dev: osrm-data ## Build and start the local stack, then wait until every service is ready
 	scripts/dev-certs.sh
@@ -174,7 +182,7 @@ lan-https: ## Serve the courier page and courier API over HTTPS on the LAN for a
 	COMPOSE_OVERRIDE=$(COMPOSE_OVERRIDE) scripts/lan-https.sh
 
 courier-link: dtctl ## Create a test courier and delivery and print the courier link (phone) and the tracking link (laptop)
-	DTCTL=$(DTCTL) scripts/courier-link.sh
+	DTCTL=$(DTCTL) DT_PICKUP="$${DT_PICKUP:-$$(sed -n 's/^DT_PICKUP=//p' $(REGION_ENV) 2>/dev/null)}" scripts/courier-link.sh
 
 latency: dtctl ## Measure fix-to-viewer latency against the running stack (after make dev); fails when p95 >= 1000 ms
 	@set -eu; tenant=$$($(DTCTL) tenant create --name "Latency"); \
