@@ -9,6 +9,10 @@ import (
 	"math"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -24,6 +28,8 @@ const (
 	EventSignalLost       = "tracking.courier_signal_lost"
 	EventSignalRestored   = "tracking.courier_signal_restored"
 )
+
+const tracerName = "github.com/raduolivas/dt/backend/services/tracking/internal/app"
 
 // casAttempts is the first try plus three retries on a version conflict.
 const casAttempts = 4
@@ -79,14 +85,25 @@ func (s *Service) Apply(ctx context.Context, sc Scope, deliveryID string, mutate
 func (s *Service) ApplyWith(ctx context.Context, reads ReadModel, sc Scope, deliveryID string, mutate func(*domain.State) error) error {
 	// The router is asked outside the compare-and-set: its answers are kept
 	// for the retries.
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "tracking.apply", trace.WithAttributes(
+		attribute.String("dt.delivery_id", deliveryID),
+		attribute.String("dt.tenant_id", sc.TenantID), attribute.String("dt.environment", sc.Env)))
+	defer span.End()
 	memo := &routeMemo{}
 	for range casAttempts {
 		done, err := s.applyOnce(ctx, reads, memo, sc, deliveryID, mutate)
 		if err != nil || done {
+			if err != nil && !errors.Is(err, ErrNoChange) {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, "apply failed")
+			}
 			return err
 		}
 	}
-	return fmt.Errorf("apply %s: %w", deliveryID, ErrConflict)
+	err := fmt.Errorf("apply %s: %w", deliveryID, ErrConflict)
+	span.RecordError(err)
+	span.SetStatus(codes.Error, "apply failed")
+	return err
 }
 
 type pendingEvent struct {
@@ -160,9 +177,12 @@ func (s *Service) applyOnce(ctx context.Context, reads ReadModel, memo *routeMem
 	if err != nil {
 		return false, fmt.Errorf("put state %s: %w", id, err)
 	}
+	span := trace.SpanFromContext(ctx)
 	if !stored {
+		span.AddEvent("state_conflict")
 		return false, nil
 	}
+	span.AddEvent("state_stored")
 	// From here on Apply never fails: the state advanced, and an error would
 	// make Ingest drop the trail rows of fixes that were accepted.
 	s.trackActive(ctx, sc, st)
@@ -170,7 +190,10 @@ func (s *Service) applyOnce(ctx context.Context, reads ReadModel, memo *routeMem
 		// Best effort: a missed publish is repaired by the next change and
 		// by viewers reading the snapshot on (re)connect.
 		if err := s.Pub.Snapshot(ctx, id, domain.Snapshot(st, now)); err != nil {
+			span.AddEvent("snapshot_publish_failed")
 			s.log().WarnContext(ctx, "snapshot_publish_failed", "delivery_id", id, "error", err)
+		} else {
+			span.AddEvent("snapshot_published")
 		}
 	}
 	return true, nil

@@ -280,13 +280,14 @@ type published struct {
 type fakePub struct {
 	mu  sync.Mutex
 	got []published
+	err error // returned by Snapshot when set
 }
 
 func (f *fakePub) Snapshot(_ context.Context, id string, s domain.TrackingSnapshot) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.got = append(f.got, published{id, s})
-	return nil
+	return f.err
 }
 
 func (f *fakePub) forDelivery(id string) []domain.TrackingSnapshot {
