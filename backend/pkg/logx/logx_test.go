@@ -7,10 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/raduolivas/dt/backend/pkg/logx"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
@@ -157,5 +163,98 @@ func TestLogIncludesTraceID(t *testing.T) {
 	logTo(&buf).InfoContext(context.Background(), "x")
 	if strings.Contains(buf.String(), "trace_id") || strings.Contains(buf.String(), "span_id") {
 		t.Fatalf("unexpected trace keys without span: %s", buf.String())
+	}
+}
+
+// memExporter keeps exported log records in memory.
+type memExporter struct {
+	mu   sync.Mutex
+	recs []sdklog.Record
+}
+
+func (m *memExporter) Export(_ context.Context, rs []sdklog.Record) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range rs {
+		m.recs = append(m.recs, r.Clone())
+	}
+	return nil
+}
+func (m *memExporter) Shutdown(context.Context) error   { return nil }
+func (m *memExporter) ForceFlush(context.Context) error { return nil }
+
+func installMemLogProvider(t *testing.T) *memExporter {
+	t.Helper()
+	exp := &memExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(exp)))
+	prev := otel.GetLoggerProvider()
+	otel.SetLoggerProvider(lp)
+	t.Cleanup(func() { otel.SetLoggerProvider(prev); _ = lp.Shutdown(context.Background()) })
+	return exp
+}
+
+func TestOTLPRecordIsRedacted(t *testing.T) {
+	exp := installMemLogProvider(t)
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://unused.invalid:4318")
+
+	tp := sdktrace.NewTracerProvider()
+	ctx, span := tp.Tracer("t").Start(context.Background(), "op")
+	defer span.End()
+
+	var buf bytes.Buffer
+	logx.New(&buf, slog.LevelDebug, "test").InfoContext(ctx, "x", "lat", 52.1, "api_key", "dt_sk_test_x", "status", "ok")
+
+	if len(exp.recs) != 1 {
+		t.Fatalf("exported %d records, want 1", len(exp.recs))
+	}
+	got := map[string]string{}
+	exp.recs[0].WalkAttributes(func(kv attribute.KeyValue) bool {
+		got[string(kv.Key)] = kv.Value.String()
+		return true
+	})
+	for _, k := range []string{"lat", "api_key"} {
+		if got[k] != logx.Redacted {
+			t.Fatalf("%s = %q, want %q (attrs %v)", k, got[k], logx.Redacted, got)
+		}
+	}
+	if got["status"] != "ok" {
+		t.Fatalf("status = %q", got["status"])
+	}
+	if want := span.SpanContext().TraceID().String(); got["trace_id"] != want {
+		t.Fatalf("trace_id = %q, want %q", got["trace_id"], want)
+	}
+	if strings.Contains(buf.String(), "dt_sk_test_x") || !strings.Contains(buf.String(), `"api_key":"[REDACTED]"`) {
+		t.Fatalf("stdout not redacted: %s", buf.String())
+	}
+}
+
+func TestNoEndpointNoTee(t *testing.T) {
+	exp := installMemLogProvider(t)
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+
+	var buf bytes.Buffer
+	logx.New(&buf, slog.LevelDebug, "test").Info("x", "status", "ok")
+
+	if len(exp.recs) != 0 {
+		t.Fatalf("exported %d records without an endpoint", len(exp.recs))
+	}
+	var m map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &m); err != nil {
+		t.Fatalf("stdout not JSON: %v: %s", err, buf.String())
+	}
+	if m["msg"] != "x" || m["status"] != "ok" || m["service"] != "test" {
+		t.Fatalf("unexpected stdout: %s", buf.String())
+	}
+}
+
+func TestSensitiveKeysSortedAndComplete(t *testing.T) {
+	keys := logx.SensitiveKeys()
+	if !sort.StringsAreSorted(keys) {
+		t.Fatalf("not sorted: %v", keys)
+	}
+	for _, want := range []string{"lat", "lng", "phone", "token", "api_key"} {
+		if !slices.Contains(keys, want) {
+			t.Fatalf("missing %q in %v", want, keys)
+		}
 	}
 }
