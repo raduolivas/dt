@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strconv"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/raduolivas/dt/backend/pkg/viewerjwt"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/app"
@@ -258,8 +261,23 @@ func (f *Feed) dispatch(ctx context.Context, m *goredis.Message, h app.FeedHandl
 		}
 		h.Expiry(id, at)
 	case strings.HasPrefix(m.Channel, snapPrefix):
-		h.Snapshot(strings.TrimPrefix(m.Channel, snapPrefix), []byte(m.Payload))
+		sctx, snap := unwrapSnapshot(ctx, m.Payload)
+		h.Snapshot(sctx, strings.TrimPrefix(m.Channel, snapPrefix), snap)
 	}
+}
+
+// unwrapSnapshot splits a snapshot payload into the snapshot and a context
+// carrying the publisher's remote span context. A JSON object without an "s"
+// key is the legacy bare snapshot: it is returned unchanged, with ctx as is.
+func unwrapSnapshot(ctx context.Context, payload string) (context.Context, []byte) {
+	var env snapEnvelope
+	if err := json.Unmarshal([]byte(payload), &env); err != nil || env.S == nil {
+		return ctx, []byte(payload)
+	}
+	if env.TP != "" {
+		ctx = otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier{"traceparent": env.TP})
+	}
+	return ctx, env.S
 }
 
 func (f *Feed) heartbeat(ctx context.Context) {
