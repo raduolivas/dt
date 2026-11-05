@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -35,4 +36,18 @@ func TestCollectorRedactKeysMatchLogx(t *testing.T) {
 	}
 	sort.Strings(got)
 	require.Equal(t, logx.SensitiveKeys(), got)
+}
+
+// The collector's transform/redact stage deletes keys by segment with one
+// regex; its alternation must list exactly logx's sensitive segments.
+func TestCollectorSegmentRegexMatchesLogx(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(testkit.RepoRoot(t), "observability/collector/base.yaml"))
+	require.NoError(t, err)
+
+	re := regexp.MustCompile(`delete_matching_keys\(attributes, "\(\?i\)\(\^\|\[_\.-\]\)\(([a-z|]+)\)\(\[_\.-\]\|\$\)"\)`)
+	m := re.FindStringSubmatch(string(raw))
+	require.NotNil(t, m, "segment regex not found in base.yaml")
+	got := strings.Split(m[1], "|")
+	sort.Strings(got)
+	require.Equal(t, logx.SensitiveSegments(), got)
 }

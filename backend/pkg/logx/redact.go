@@ -45,6 +45,17 @@ func SensitiveKeys() []string {
 	return out
 }
 
+// SensitiveSegments returns the sorted key segments logx matches anywhere in a
+// key, so the collector's segment regex can be checked against it.
+func SensitiveSegments() []string {
+	out := make([]string, 0, len(sensitiveSegments))
+	for k := range sensitiveSegments {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func isSensitive(key string) bool {
 	k := strings.ToLower(key)
 	if _, ok := sensitiveKeys[k]; ok {
