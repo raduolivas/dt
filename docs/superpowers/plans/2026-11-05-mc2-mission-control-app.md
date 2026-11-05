@@ -69,6 +69,7 @@ Branch: `mission-control` from `main` after PR 1 merges.
   - `mc-backend`, `mc-postgres` (the same image family as DT's Postgres, own volume `mc-pg`), `mc-web` (static build served by `mc-backend` under `/`; a Vite dev server only for `make mc-web-dev`)
   - networks: `default` plus `dt_default` as `external: true`, aliased `mc-backend` on it so the collector's exporter resolves it
   - ports: `127.0.0.1:8095:8095` only
+  - `mc-backend` builds with the **repo root** as its context, because it imports `backend/gen` and `backend/pkg/logx` through the workspace (a multi-stage Dockerfile in `observability/mission-control/backend/`)
 
 - [ ] **Step 1: Write failing tests:** `TestLoadRefusesSimulationOutsideLocal`, `TestLoadRefusesNonSandboxKey`, `TestDefaultsBindLoopback` (asserts `HTTPAddr` starts with `127.0.0.1:`), `TestInsertAndDeleteOlderThan` (testcontainers Postgres via `backend/pkg/testkit.StartPostgres` or a plain container).
 - [ ] **Step 2:** `cd observability/mission-control/backend && go test ./internal/... -v`. Expected: FAIL.
