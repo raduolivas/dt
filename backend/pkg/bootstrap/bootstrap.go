@@ -7,6 +7,7 @@ package bootstrap
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -151,12 +152,19 @@ func Run(ctx context.Context, opts Options) (err error) {
 	if err != nil {
 		return fmt.Errorf("%s: config: %w", opts.Name, err)
 	}
-	log := logx.New(os.Stdout, level, opts.Name)
-
+	// otelx.Init runs first so logx.New can tee into the global LoggerProvider
+	// it installs. The logger does not exist yet if Init fails, so that error
+	// goes to stderr as one JSON line before it is returned.
 	shutdownTracing, err := otelx.Init(ctx, opts.Name)
 	if err != nil {
+		line, _ := json.Marshal(map[string]string{
+			"time": time.Now().UTC().Format(time.RFC3339Nano), "level": "ERROR",
+			"service": opts.Name, "msg": "telemetry init failed", "error": err.Error(),
+		})
+		fmt.Fprintln(os.Stderr, string(line))
 		return fmt.Errorf("%s: tracing: %w", opts.Name, err)
 	}
+	log := logx.New(os.Stdout, level, opts.Name)
 	defer func() {
 		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()

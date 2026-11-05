@@ -1,18 +1,22 @@
-// Package otelx sets up OpenTelemetry tracing for every service: the global
-// tracer provider, W3C propagation and an HTTP server wrapper.
+// Package otelx sets up OpenTelemetry for every service: the global tracer and
+// log providers, W3C propagation and an HTTP server wrapper.
 package otelx
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
+	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
@@ -20,13 +24,29 @@ import (
 	"github.com/raduolivas/dt/backend/pkg/httpx"
 )
 
-// Init installs the global tracer provider and a W3C traceparent + baggage
-// propagator. With OTEL_EXPORTER_OTLP_ENDPOINT set, spans are exported over
-// OTLP/HTTP in batches; unset, nothing is exported but spans are still
-// created so trace ids propagate and show up in logs. Sampling is parent-based
-// with the ratio from OTEL_TRACES_SAMPLER_ARG (default 1.0).
+const shutdownTimeout = 5 * time.Second
+
+// Enabled reports whether an OTLP endpoint is configured, i.e. whether spans
+// and logs are exported at all.
+func Enabled() bool { return os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" }
+
+// Init installs the global tracer and logger providers and a W3C traceparent
+// + baggage propagator. With OTEL_EXPORTER_OTLP_ENDPOINT set, spans and log
+// records are exported over OTLP/HTTP in batches (bounded queues, dropping
+// when full); unset, nothing is exported but spans are still created so trace
+// ids propagate and show up in logs. Sampling is parent-based with the ratio
+// from OTEL_TRACES_SAMPLER_ARG (default 1.0). The resource carries
+// service.name and deployment.environment (DT_ENVIRONMENT, default "local").
+// The returned shutdown flushes both providers, bounded to 5 s.
 func Init(ctx context.Context, service string) (func(context.Context) error, error) {
-	res, err := resource.New(ctx, resource.WithAttributes(semconv.ServiceName(service)))
+	env := os.Getenv("DT_ENVIRONMENT")
+	if env == "" {
+		env = "local"
+	}
+	res, err := resource.New(ctx, resource.WithAttributes(
+		semconv.ServiceName(service),
+		semconv.DeploymentEnvironment(env),
+	))
 	if err != nil {
 		return nil, err
 	}
@@ -40,17 +60,29 @@ func Init(ctx context.Context, service string) (func(context.Context) error, err
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(ratio))),
 	}
-	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
+	lopts := []sdklog.LoggerProviderOption{sdklog.WithResource(res)}
+	if Enabled() {
 		exp, err := otlptracehttp.New(ctx)
 		if err != nil {
 			return nil, err
 		}
 		opts = append(opts, sdktrace.WithBatcher(exp))
+		lexp, err := otlploghttp.New(ctx)
+		if err != nil {
+			return nil, err
+		}
+		lopts = append(lopts, sdklog.WithProcessor(sdklog.NewBatchProcessor(lexp)))
 	}
 	tp := sdktrace.NewTracerProvider(opts...)
+	lp := sdklog.NewLoggerProvider(lopts...)
 	otel.SetTracerProvider(tp)
+	otel.SetLoggerProvider(lp)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
-	return tp.Shutdown, nil
+	return func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, shutdownTimeout)
+		defer cancel()
+		return errors.Join(tp.Shutdown(ctx), lp.Shutdown(ctx))
+	}, nil
 }
 
 // HTTP wraps h (normally the service mux) in a server span per request. The
