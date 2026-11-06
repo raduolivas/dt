@@ -91,8 +91,9 @@ func (w *Writer) Run(ctx context.Context) {
 		fc, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
 		err := w.st.InsertEvents(fc, evs)
 		if err == nil && w.OnInserted != nil {
-			for _, it := range batch {
-				if ierr := w.OnInserted(fc, it.ev); ierr != nil {
+			for i, it := range batch {
+				// evs carries the stored ids (InsertEvents sets them).
+				if ierr := w.OnInserted(fc, evs[i]); ierr != nil {
 					w.self.StorageError(it.source)
 					w.warn.log(w.self.log, "order index update failed", "source", it.source, "error", ierr.Error())
 				}

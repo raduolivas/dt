@@ -17,6 +17,7 @@ import (
 
 	"github.com/raduolivas/dt/backend/pkg/httpx"
 	"github.com/raduolivas/dt/backend/pkg/logx"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/api"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/config"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/index"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/ingest"
@@ -57,13 +58,22 @@ func run(ctx context.Context, stop context.CancelFunc) error {
 	mux.Handle("GET /livez", httpx.Livez())
 	// Ready means our own Postgres answers; NATS and DT health are reported elsewhere (ruling R5).
 	mux.Handle("GET /readyz", httpx.Readyz(map[string]httpx.Check{"postgres": st.Ping}, readyTimeout))
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	bc := api.NewBroadcaster()
+	mux.Handle("/api/", api.New(api.Options{Store: st, Topology: topology.Default(), Broadcaster: bc, Log: log}))
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: api.CSP(mux), ReadHeaderTimeout: 5 * time.Second}
 
 	self := ingest.NewSelf(st, log)
 	norm := &normalize.Normalizer{Topology: topology.Default(), Thresholds: cfg.Thresholds, OnRedacted: self.Redacted}
 	idx := index.New(st)
+	// After an insert: update the order index, then feed the live stream
+	// (non-blocking; slow clients catch up from the store).
+	onInserted := func(ctx context.Context, e store.Event) error {
+		err := idx.OnEvent(ctx, e)
+		_ = bc.OnEvent(ctx, e)
+		return err
+	}
 	writer := ingest.NewWriter(st, self, ingest.DefaultBuffer)
-	writer.OnInserted = idx.OnEvent
+	writer.OnInserted = onInserted
 	otlpSrv := &http.Server{Addr: cfg.OTLPAddr, Handler: ingest.OTLPHandler(writer, norm, self, log), ReadHeaderTimeout: 5 * time.Second}
 
 	// Shutdown order: stop the servers (no new OTLP), stop pollers and consumers
@@ -96,7 +106,7 @@ func run(ctx context.Context, stop context.CancelFunc) error {
 				Outcome: outcome, Reason: reason, Origin: "live"})
 		}
 		ingest.RunNATSLoop(ctx, cfg.NATSURL, st, norm,
-			ingest.NATSOptions{Self: self, Log: log, Retention: cfg.Retention, OnInserted: idx.OnEvent}, emit)
+			ingest.NATSOptions{Self: self, Log: log, Retention: cfg.Retention, OnInserted: onInserted}, emit)
 	})
 
 	errc := make(chan error, 2)
