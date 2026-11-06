@@ -1,9 +1,39 @@
-# Mission Control thresholds (spec §4.6). Embedded in the binary; MC_THRESHOLDS_FILE overrides it.
-# Later tasks fill the empty sections; keep keys stable.
-courier_stale: 30s # no location update for this long: the courier shows as stale
-courier_lost: 300s # ... and as lost after this long
+# Mission Control thresholds (spec §4.6, §7). Embedded in the binary; MC_THRESHOLDS_FILE overrides it.
+# Keys missing from an override file keep the values below (the detect section is merged key by key).
+courier_stale: 30s # no location update for this long: the courier shows as stale (DT's own value)
+courier_lost: 300s # ... and as lost after this long (DT's own value)
 slow: 1s           # an edge slower than this pulses amber
 # Per-edge overrides of `slow`, keyed "<source>-><target>" (filled by the pulse and edge tasks).
 edges: {}
 # Alert-style rules (filled by the health task).
 rules: {}
+
+# Detectors (spec §7). courier_stale uses courier_stale / courier_lost above.
+detect:
+  window: 5m                  # how far back the event-based rules look (must exceed every window below)
+  status_lookback: 24h        # deliveries whose last status change is older are not examined
+  fixes_dropped: 60s          # a fix_dropped log inside this window is a finding, grouped by reason
+  rejected_at_gateway: 60s    # a 401/403/429/4xx on a gateway courier or partner route inside this window
+  processed_not_published: 30s # a deliveries state change with no publish span in its trace after this long
+  consumer_lagging: 60s       # a consumer's pending > 0 and never shrinking for this long
+  snapshot_not_delivered: 60s # snapshot_publish_failed, or a fan-out to 0 viewers while a viewer is connected
+  storm:                      # MORE than count of the same failure reason on one wire inside window
+    count: 10
+    window: 60s
+  dependency_failing:         # AT LEAST count failed outcomes on a wire into redis / osrm / pg.* (ruling R15)
+    count: 3
+    window: 60s
+  mc_behind:                  # Mission Control's own ingest
+    lag: 10s                  # lag above this
+    drops_hold: 60s           # any dropped event keeps the finding open this long
+  # stuck_status: a delivery whose status has not changed for longer than its limit.
+  # at_pickup 10m: MVP spec §"pickup confirmation" (docs/superpowers/specs/2026-10-18-dt-mvp-design.md line 118):
+  #   "a missing second confirmation after 10 minutes raises a warning event".
+  # The MVP spec gives no other per-status limit; the rest are builder defaults chosen against its
+  # flow (courier shift <= 12 h, arrival detected at <= 200 m / ETA <= 90 s, line 363).
+  stuck_status:
+    confirmed: 30m         # waiting for a courier to be assigned
+    courier_assigned: 30m  # courier assigned, not yet at the pickup
+    at_pickup: 10m         # MVP spec line 118
+    picked_up: 90m         # en route to the dropoff
+    arriving: 10m          # arrival detected, delivered not yet reported
