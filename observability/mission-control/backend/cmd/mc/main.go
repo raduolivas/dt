@@ -21,6 +21,7 @@ import (
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/config"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/index"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/ingest"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/metrics"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/normalize"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/retention"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/store"
@@ -59,10 +60,17 @@ func run(ctx context.Context, stop context.CancelFunc) error {
 	// Ready means our own Postgres answers; NATS and DT health are reported elsewhere (ruling R5).
 	mux.Handle("GET /readyz", httpx.Readyz(map[string]httpx.Check{"postgres": st.Ping}, readyTimeout))
 	bc := api.NewBroadcaster()
-	mux.Handle("/api/", api.New(api.Options{Store: st, Topology: topology.Default(), Broadcaster: bc, Log: log}))
+	self := ingest.NewSelf(st, log)
+	// A failing prometheus/cloudwatch source degrades to builtin and flags self-health.
+	builtinSrc := metrics.New(config.Config{MetricsSource: config.MetricsBuiltin}, st, topology.Default())
+	src := builtinSrc
+	if cfg.MetricsSource != config.MetricsBuiltin {
+		src = metrics.WithFallback(metrics.New(cfg, st, topology.Default()), builtinSrc, self)
+	}
+	mux.Handle("/api/", api.New(api.Options{Store: st, Topology: topology.Default(), Broadcaster: bc, Log: log,
+		Traffic: metrics.Traffic(src), Links: metrics.Links(cfg.Links)}))
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: api.CSP(mux), ReadHeaderTimeout: 5 * time.Second}
 
-	self := ingest.NewSelf(st, log)
 	norm := &normalize.Normalizer{Topology: topology.Default(), Thresholds: cfg.Thresholds, OnRedacted: self.Redacted}
 	idx := index.New(st)
 	// After an insert: update the order index, then feed the live stream

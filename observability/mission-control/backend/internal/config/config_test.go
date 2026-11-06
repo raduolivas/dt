@@ -81,6 +81,18 @@ func TestLoadRejectsBadMetricsSource(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestLoadDropsNonHTTPLinks(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("MC_LINK_GRAFANA_TRACE", "javascript:alert({trace_id})")
+	t.Setenv("MC_LINK_GRAFANA_LOGS", "data:text/html,x")
+	t.Setenv("MC_LINK_XRAY_TRACE", "HTTPS://x.example/{trace_id}")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.NotContains(t, cfg.Links, "grafana_trace")
+	require.NotContains(t, cfg.Links, "grafana_logs")
+	require.Contains(t, cfg.Links, "xray_trace")
+}
+
 func TestLoadLinksAndThresholdsOverride(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("MC_LINK_GRAFANA", "http://localhost:3000/d/{trace_id}")
