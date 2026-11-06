@@ -319,6 +319,43 @@ func TestSSENoHoleWithConcurrentInserters(t *testing.T) {
 	}
 }
 
+// A trace sibling (no delivery id) stored before the delivery row that
+// carries its trace must still reach a delivery stream, live and on resume.
+func TestSSEDeliveryStreamKeepsEarlierTraceSibling(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	bc := api.NewBroadcaster()
+	srv := newServer(t, st, bc, nil)
+	now := time.Now().UTC()
+	base := []store.Event{ev(now, "request", "gateway", "deliveries.rpc", "del_1")}
+	require.NoError(t, st.InsertEvents(ctx, base))
+
+	ch := openSSE(t, srv.URL+"/api/stream?delivery_id=del_1", "")
+	sibling := ev(now, "request", "deliveries.rpc", "deliveries.state_machine", "")
+	sibling.TraceID = "trace-T"
+	own := ev(now, "request", "gateway", "deliveries.rpc", "del_1")
+	own.TraceID = "trace-T"
+	other := ev(now, "request", "gateway", "deliveries.rpc", "del_other")
+	for _, e := range []store.Event{sibling, other} {
+		b := []store.Event{e}
+		require.NoError(t, st.InsertEvents(ctx, b))
+		if e.TraceID != "" {
+			sibling = b[0]
+		}
+	}
+	ownB := []store.Event{own}
+	require.NoError(t, st.InsertEvents(ctx, ownB))
+	own = ownB[0]
+	_ = bc.OnEvent(ctx, own)
+
+	require.Equal(t, idStr(sibling.ID), next(t, ch).ID, "sibling committed first arrives first")
+	require.Equal(t, idStr(own.ID), next(t, ch).ID)
+
+	ch2 := openSSE(t, srv.URL+"/api/stream?delivery_id=del_1", idStr(base[0].ID))
+	require.Equal(t, idStr(sibling.ID), next(t, ch2).ID, "resume shows no hole")
+	require.Equal(t, idStr(own.ID), next(t, ch2).ID)
+}
+
 func TestSSEDisconnectUnsubscribes(t *testing.T) {
 	bc := api.NewBroadcaster()
 	srv := newServer(t, nil, bc, nil)

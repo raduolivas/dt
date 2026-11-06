@@ -85,7 +85,6 @@ type client struct {
 	rc       *http.ResponseController
 	st       *store.Store
 	delivery string
-	traces   map[string]bool // trace ids seen for the delivery (spans carry no delivery id)
 	rate     int
 
 	last    int64 // high-water mark: highest event id handled
@@ -109,19 +108,6 @@ func (c *client) write(id int64, event string, v any) error {
 	return nil
 }
 
-func (c *client) match(e store.Event) bool {
-	if c.delivery == "" {
-		return true
-	}
-	if e.DeliveryID == c.delivery {
-		if e.TraceID != "" {
-			c.traces[e.TraceID] = true
-		}
-		return true
-	}
-	return e.TraceID != "" && c.traces[e.TraceID]
-}
-
 func wireOf(e store.Event) string {
 	if e.Target == "" {
 		return e.Source
@@ -129,7 +115,11 @@ func wireOf(e store.Event) string {
 	return e.Source + ">" + e.Target
 }
 
-// deliver sends e unless it was handled already or is filtered out. Live
+// deliver sends e unless it was handled already. Rows come from the store
+// already filtered (a delivery stream reads Timeline: the delivery's rows plus
+// its trace siblings), so there is no second filter here: one that learned
+// trace ids as it went would drop a sibling stored before the row carrying its
+// trace. Live
 // events past the per-window rate are bundled, except detector findings and
 // health changes, which always go out individually (R25). Replayed history is
 // never bundled.
@@ -138,9 +128,6 @@ func (c *client) deliver(e store.Event, live bool) error {
 		return nil
 	}
 	c.last = e.ID
-	if !c.match(e) {
-		return nil
-	}
 	important := e.Kind == "detector" || e.Kind == "health"
 	if live && !important {
 		if c.count >= c.rate {
@@ -235,7 +222,7 @@ func (a *API) stream(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	c := &client{w: w, fl: fl, rc: http.NewResponseController(w), st: a.st, delivery: r.URL.Query().Get("delivery_id"),
-		traces: map[string]bool{}, rate: a.rate, bundles: map[bundleKey]int{}}
+		rate: a.rate, bundles: map[bundleKey]int{}}
 	sub := a.bc.Subscribe() // before reading the start point, so no wake is missed
 	defer a.bc.Unsubscribe(sub)
 
@@ -247,17 +234,6 @@ func (a *API) stream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if c.st != nil {
-		if c.delivery != "" { // learn the delivery's trace ids before filtering
-			evs, _, err := c.st.Timeline(ctx, c.delivery, 0, replayPage)
-			if err != nil {
-				a.log.Warn("sse: seed traces failed", "error", err.Error())
-			}
-			for _, e := range evs {
-				if e.TraceID != "" {
-					c.traces[e.TraceID] = true
-				}
-			}
-		}
 		if !resumed { // live only: start at the newest stored event
 			max, err := c.st.MaxEventID(ctx)
 			if err != nil {
