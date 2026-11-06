@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"google.golang.org/protobuf/proto"
 
@@ -40,6 +41,8 @@ type NATSOptions struct {
 	Self      *Self
 	Log       *slog.Logger
 	Retention time.Duration // ACCOUNTS start window; default 7 days
+	// RetryEvery is the wait between connection attempts; default 5 s.
+	RetryEvery time.Duration
 }
 
 // RunNATS reads the four DT streams through read-only durable consumers
@@ -121,6 +124,9 @@ func (c *streamConsumer) ensure(ctx context.Context) (jetstream.Consumer, error)
 	return c.js.CreateConsumer(ctx, c.stream, cfg)
 }
 
+// fetchOnce handles one batch. Delivery is at-least-once: messages are acked
+// only after the insert, so an ack lost after a successful insert makes
+// JetStream redeliver and can duplicate a row.
 func (c *streamConsumer) fetchOnce(ctx context.Context, cons jetstream.Consumer) error {
 	mb, err := cons.Fetch(fetchBatch, jetstream.FetchMaxWait(fetchWait))
 	if err != nil {
@@ -155,6 +161,12 @@ func (c *streamConsumer) fetchOnce(ctx context.Context, cons jetstream.Consumer)
 	}
 	if len(evs) > 0 {
 		if err := c.st.InsertEvents(ctx, evs); err != nil {
+			if ctx.Err() != nil { // shutting down, not a storage fault: let JetStream redeliver
+				for _, m := range msgs {
+					_ = m.Nak()
+				}
+				return nil
+			}
 			c.o.Self.StorageError(c.source)
 			c.warn.log(c.o.Log, "insert failed, will retry", "stream", c.stream, "error", err.Error())
 			for _, m := range msgs {
@@ -174,6 +186,54 @@ func (c *streamConsumer) fetchOnce(ctx context.Context, cons jetstream.Consumer)
 		return err
 	}
 	return nil
+}
+
+// newJetStream is a seam for tests.
+var newJetStream = func(nc *nats.Conn) (jetstream.JetStream, error) { return jetstream.New(nc) }
+
+// RunNATSLoop connects to NATS and runs the consumers until ctx ends. It never
+// gives up: when NATS is unreachable, or the JetStream context cannot be
+// created, it closes the connection and tries again every RetryEvery (default
+// 5 s), logging once a minute. emit reports "failed"/"ok" transitions with a
+// reason (ruling R5: startup never fails on NATS).
+func RunNATSLoop(ctx context.Context, url string, st *store.Store, n *normalize.Normalizer, o NATSOptions, emit func(outcome, reason string)) {
+	if o.Log == nil {
+		o.Log = slog.New(slog.DiscardHandler)
+	}
+	if o.RetryEvery <= 0 {
+		o.RetryEvery = 5 * time.Second
+	}
+	var warn rateLog
+	var lastReason string
+	fail := func(reason string, err error) {
+		warn.log(o.Log, "NATS not usable, retrying", "reason", reason, "error", err.Error())
+		if reason != lastReason { // one health event per state change, not per retry
+			lastReason = reason
+			emit("failed", reason)
+		}
+	}
+	for ctx.Err() == nil {
+		nc, err := nats.Connect(url, nats.Name("mission-control"), nats.Timeout(3*time.Second), nats.MaxReconnects(-1),
+			nats.DisconnectErrHandler(func(_ *nats.Conn, _ error) { emit("failed", "nats_disconnected") }),
+			nats.ReconnectHandler(func(_ *nats.Conn) { emit("ok", "") }))
+		if err != nil {
+			fail("nats_unreachable", err)
+			sleep(ctx, o.RetryEvery)
+			continue
+		}
+		js, err := newJetStream(nc)
+		if err != nil {
+			nc.Close()
+			fail("jetstream_unavailable", err)
+			sleep(ctx, o.RetryEvery)
+			continue
+		}
+		o.Log.Info("NATS connected")
+		emit("ok", "")
+		_ = RunNATS(ctx, js, st, n, o)
+		nc.Close()
+		return
+	}
 }
 
 func sleep(ctx context.Context, d time.Duration) {
