@@ -72,6 +72,22 @@ func TestGatewayWires(t *testing.T) {
 	}
 }
 
+func TestSimulator(t *testing.T) {
+	tp := Default()
+	found := false
+	for _, w := range tp.Wires {
+		if w.From == "tracking.simulator" && w.To == "deliveries.rpc" && w.Channel == ChanRPC {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("missing tracking.simulator -> deliveries.rpc")
+	}
+	if got := tp.Resolve("tracking", "/dt.tracking.v1.TrackingService/Simulate", nil); got != "tracking.simulator" {
+		t.Errorf("Simulate resolved to %q", got)
+	}
+}
+
 func TestWebhooksNotBuilt(t *testing.T) {
 	for _, c := range Default().Components {
 		if c.ID == "webhooks" {
