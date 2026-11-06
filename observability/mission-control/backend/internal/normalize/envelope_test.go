@@ -46,6 +46,9 @@ func TestAllowedFieldsExistInProtos(t *testing.T) {
 			require.NotNil(t, md.Fields().ByName(protoreflect.Name(f)), "%s.%s", full, f)
 		}
 	}
+	require.Equal(t, []string{"delivery_id", "external_id", "delivery_model", "status", "pickup_policy"}, Allowed["dt.events.v1.DeliveryCreated"])
+	require.Equal(t, []string{"delivery_id", "from", "to", "actor"}, Allowed["dt.events.v1.DeliveryStatusChanged"])
+	require.Equal(t, []string{"delivery_id", "courier_id"}, Allowed["dt.events.v1.CourierAssigned"])
 	require.Equal(t, []string{"delivery_id", "changed_fields"}, Allowed["dt.events.v1.DeliveryUpdated"])
 	require.Equal(t, []string{"courier_id", "vehicle"}, Allowed["dt.events.v1.CourierUpserted"])
 }
