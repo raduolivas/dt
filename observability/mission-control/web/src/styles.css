@@ -1,0 +1,46 @@
+:root {
+  --mc-bg: #0b0f14;
+  --mc-panel: #111821;
+  --mc-panel-edge: #1f2a37;
+  --mc-text: #d6e2ee;
+  --mc-muted: #7b8a9a;
+  --mc-accent: #22d3ee;
+  --mc-warn: #f59e0b;
+  --mc-sim: #a78bfa;
+  --mc-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--mc-bg); color: var(--mc-text); font-family: var(--mc-mono); font-size: 13px; }
+button, input { font: inherit; color: inherit; background: var(--mc-panel); border: 1px solid var(--mc-panel-edge); border-radius: 4px; padding: 3px 8px; }
+button { cursor: pointer; }
+button:hover, button.is-on, button[aria-pressed='true'] { border-color: var(--mc-accent); color: var(--mc-accent); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--mc-accent); outline-offset: 1px; }
+
+.mc-cockpit {
+  height: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas: 'top top top' 'left center right' 'bottom bottom bottom';
+}
+.mc-topbar { grid-area: top; display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: var(--mc-panel); border-bottom: 1px solid var(--mc-panel-edge); flex-wrap: wrap; }
+.mc-brand { color: var(--mc-accent); letter-spacing: 0.05em; }
+.mc-modes { display: flex; gap: 4px; }
+.mc-search { flex: 1; min-width: 160px; max-width: 360px; }
+.mc-badge { padding: 2px 8px; border: 1px solid var(--mc-panel-edge); border-radius: 10px; color: var(--mc-muted); }
+.mc-badge-warn { color: var(--mc-warn); border-color: var(--mc-warn); }
+.mc-badge-sim { color: var(--mc-sim); border-color: var(--mc-sim); font-weight: bold; }
+.mc-center { grid-area: center; position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+.mc-panel { position: relative; background: var(--mc-panel); border: 0 solid var(--mc-panel-edge); overflow: auto; }
+.mc-left { grid-area: left; width: 280px; border-right-width: 1px; }
+.mc-right { grid-area: right; width: 340px; border-left-width: 1px; }
+.mc-bottom { grid-area: bottom; height: 160px; border-top-width: 1px; }
+.mc-panel.is-collapsed { width: 32px; height: auto; }
+.mc-bottom.is-collapsed { width: auto; height: 32px; }
+.mc-toggle { position: absolute; top: 4px; right: 4px; z-index: 1; width: 24px; padding: 0; }
+.mc-panel-body { padding: 10px 34px 10px 10px; }
+.mc-placeholder { color: var(--mc-muted); padding: 16px; }
+@media (max-width: 820px) {
+  .mc-left, .mc-right { width: 200px; }
+}

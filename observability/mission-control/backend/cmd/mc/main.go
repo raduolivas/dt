@@ -27,9 +27,12 @@ import (
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/retention"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/store"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/topology"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/webui"
 )
 
 const (
+	// defaultWebDir is where the image keeps the built UI; MC_WEB_DIR overrides it.
+	defaultWebDir = "/web"
 	readyTimeout  = 2 * time.Second
 	pruneInterval = time.Hour
 	storeOpenWait = 60 * time.Second
@@ -73,6 +76,16 @@ func run(ctx context.Context, stop context.CancelFunc) error {
 	}
 	mux.Handle("/api/", api.New(api.Options{Store: st, Topology: topology.Default(), Broadcaster: bc, Log: log,
 		Traffic: metrics.Traffic(src), Links: metrics.Links(cfg.Links)}))
+	// The built UI (web/dist) at "/"; /api, /livez and /readyz keep their own routes (ruling R3).
+	webDir := os.Getenv("MC_WEB_DIR")
+	if webDir == "" {
+		webDir = defaultWebDir
+	}
+	if h, ok := webui.Handler(webDir); ok {
+		mux.Handle("/", h)
+	} else {
+		log.Info("no built UI found; serving the API only", "dir", webDir)
+	}
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: api.CSP(mux), ReadHeaderTimeout: 5 * time.Second}
 
 	norm := &normalize.Normalizer{Topology: topology.Default(), Thresholds: cfg.Thresholds, OnRedacted: self.Redacted}
