@@ -72,9 +72,11 @@ func (s *Store) Ping(ctx context.Context) error {
 const insertEvent = `INSERT INTO mc_event
  (observed_at, occurred_at, kind, source, target, outcome, reason, tenant_id, environment,
   delivery_id, order_ref, trace_id, span_id, origin, attrs)
- VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`
+ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+ RETURNING id`
 
-// InsertEvents writes the events in one batch (one transaction).
+// InsertEvents writes the events in one batch (one transaction) and sets the
+// ID of each element of events to its stored id (the live stream needs it).
 func (s *Store) InsertEvents(ctx context.Context, events []Event) error {
 	if len(events) == 0 {
 		return nil
@@ -94,8 +96,9 @@ func (s *Store) InsertEvents(ctx context.Context, events []Event) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	res := tx.SendBatch(ctx, b)
-	for range events {
-		if _, err := res.Exec(); err != nil {
+	ids := make([]int64, len(events))
+	for i := range events {
+		if err := res.QueryRow().Scan(&ids[i]); err != nil {
 			_ = res.Close()
 			return fmt.Errorf("store: insert events: %w", err)
 		}
@@ -105,6 +108,9 @@ func (s *Store) InsertEvents(ctx context.Context, events []Event) error {
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("store: insert events: %w", err)
+	}
+	for i := range events {
+		events[i].ID = ids[i]
 	}
 	return nil
 }
