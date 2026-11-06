@@ -1,0 +1,7 @@
+# Build context is the repository root: send only what the image needs.
+*
+!backend/pkg
+!backend/gen
+!observability/mission-control/backend
+**/node_modules
+**/*_test.go

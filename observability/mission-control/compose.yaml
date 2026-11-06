@@ -1,0 +1,59 @@
+# Mission Control (spec §10). Run with `make mc` from the repository root; it joins the DT stack's
+# network (dt_default, so the DT stack must be up) and publishes only 127.0.0.1:8095.
+# The collector exports OTLP to http://mc-backend:4318 on dt_default; nothing publishes that port.
+name: mc
+
+services:
+  mc-postgres:
+    image: postgis/postgis:18-3.6
+    environment:
+      POSTGRES_DB: mc
+      POSTGRES_USER: mc
+      # Local-only database on a private network, never published.
+      POSTGRES_PASSWORD: mc # gitleaks:allow (dev-only placeholder)
+    volumes:
+      - mc-pg:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U mc -d mc"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  mc-backend:
+    build:
+      # The repository root: the module imports backend/pkg and backend/gen.
+      context: ../..
+      dockerfile: observability/mission-control/backend/Dockerfile
+    depends_on:
+      mc-postgres:
+        condition: service_healthy
+    environment:
+      # Inside the container the server must listen on all interfaces; the port is published on loopback only.
+      MC_HTTP_ADDR: 0.0.0.0:8095
+      MC_OTLP_ADDR: 0.0.0.0:4318
+      MC_DATABASE_URL: postgres://mc:mc@mc-postgres:5432/mc?sslmode=disable # gitleaks:allow (dev-only placeholder)
+      MC_NATS_URL: ${MC_NATS_URL:-nats://nats:4222}
+      MC_NATS_MONITOR_URL: ${MC_NATS_MONITOR_URL:-http://nats:8222}
+      MC_GATEWAY_URL: ${MC_GATEWAY_URL:-http://gateway:8080}
+      MC_ENV: ${MC_ENV:-local}
+      MC_SIMULATION: ${MC_SIMULATION:-0}
+      MC_SANDBOX_KEY: ${MC_SANDBOX_KEY:-}
+      MC_METRICS_SOURCE: ${MC_METRICS_SOURCE:-builtin}
+    ports:
+      - "127.0.0.1:8095:8095"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    networks:
+      default: {}
+      dt_default:
+        aliases: [mc-backend]
+
+volumes:
+  mc-pg:
+
+networks:
+  dt_default:
+    external: true
