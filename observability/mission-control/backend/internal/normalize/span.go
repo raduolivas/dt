@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -61,10 +62,10 @@ func (n *Normalizer) FromSpan(resource map[string]string, span *tracepb.Span) []
 	strs := stringAttrs(raw)
 	resolved := n.Topology.Resolve(service, span.GetName(), strs)
 
-	start := time.Unix(0, int64(span.GetStartTimeUnixNano())).UTC()
+	start := nanoTime(span.GetStartTimeUnixNano())
 	dur := time.Duration(0)
 	if span.GetEndTimeUnixNano() > span.GetStartTimeUnixNano() {
-		dur = time.Duration(span.GetEndTimeUnixNano() - span.GetStartTimeUnixNano())
+		dur = time.Duration(min(span.GetEndTimeUnixNano()-span.GetStartTimeUnixNano(), math.MaxInt64)) //nolint:gosec // G115: clamped to MaxInt64
 	}
 
 	ev := store.Event{
@@ -150,7 +151,7 @@ func (n *Normalizer) spanLog(parent store.Event, se *tracepb.Span_Event) store.E
 	e := parent
 	e.Kind = "log"
 	e.Target = parent.Source
-	e.OccurredAt = time.Unix(0, int64(se.GetTimeUnixNano())).UTC()
+	e.OccurredAt = nanoTime(se.GetTimeUnixNano())
 	if se.GetTimeUnixNano() == 0 {
 		e.OccurredAt = parent.OccurredAt
 	}
@@ -400,4 +401,13 @@ func (n *Normalizer) hasComp(id string) bool {
 		}
 	}
 	return false
+}
+
+// nanoTime converts OTLP unix nanoseconds to a UTC time; values past the int64
+// range (year 2262) clamp instead of wrapping to a negative time.
+func nanoTime(ns uint64) time.Time {
+	if ns > math.MaxInt64 {
+		ns = math.MaxInt64
+	}
+	return time.Unix(0, int64(ns)).UTC() //nolint:gosec // G115: clamped to MaxInt64 above
 }

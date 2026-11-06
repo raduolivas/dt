@@ -1,8 +1,6 @@
 package normalize
 
 import (
-	"time"
-
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/redact"
@@ -26,9 +24,9 @@ func (n *Normalizer) FromLog(resource map[string]string, rec *logspb.LogRecord) 
 	}
 	switch {
 	case rec.GetTimeUnixNano() != 0:
-		ev.OccurredAt = time.Unix(0, int64(rec.GetTimeUnixNano())).UTC()
+		ev.OccurredAt = nanoTime(rec.GetTimeUnixNano())
 	case rec.GetObservedTimeUnixNano() != 0:
-		ev.OccurredAt = time.Unix(0, int64(rec.GetObservedTimeUnixNano())).UTC()
+		ev.OccurredAt = nanoTime(rec.GetObservedTimeUnixNano())
 	}
 	ev.TenantID, ev.Env, ev.DeliveryID = ids(raw)
 	if n.simulated(ev.DeliveryID) {

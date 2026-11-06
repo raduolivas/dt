@@ -33,21 +33,21 @@ export interface OrderHit {
   createdAt: string;
 }
 
-// topology.Component and topology.Wire carry no json tags in Go, so the keys are the Go field names.
+// topology.Component and topology.Wire (lowercase json keys, ruling R29).
 export interface Component {
-  ID: string;
-  Label: string;
-  Zone: 'outside' | 'edge' | 'services' | 'messaging' | 'data';
-  Parent: string;
-  Instrumented: boolean;
-  Status: '' | 'not_built';
+  id: string;
+  label: string;
+  zone: 'outside' | 'edge' | 'services' | 'messaging' | 'data';
+  parent: string;
+  instrumented: boolean;
+  status: '' | 'not_built';
 }
 
 export interface Wire {
-  ID: string;
-  From: string;
-  To: string;
-  Channel: 'rpc' | 'nats' | 'redis' | 'http' | 'ws_sse' | 'sql' | 'osrm';
+  id: string;
+  from: string;
+  to: string;
+  channel: 'rpc' | 'nats' | 'redis' | 'http' | 'ws_sse' | 'sql' | 'osrm';
 }
 
 export type ComponentState =

@@ -9,7 +9,10 @@ export function useLiveStream(): void {
   const live = useStore((s) => s.mode === 'live');
   useEffect(() => {
     if (!live) return;
+    // Resume from the newest id seen, so the server replays what was missed or marks a gap.
+    const lastEventId = store.getState().lastEventId ?? undefined;
     const h = openStream(orderId ?? undefined, (m) => {
+      store.noteStreamId(m.id);
       switch (m.type) {
         case 'event':
           store.addEvents([m.data]);
@@ -24,7 +27,7 @@ export function useLiveStream(): void {
           store.addBundle(m.data);
           break;
       }
-    });
+    }, { lastEventId });
     return () => h.close();
   }, [orderId, live]);
 }

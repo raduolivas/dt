@@ -113,4 +113,81 @@ describe('openStream', () => {
     await new Promise((r) => setTimeout(r, 40));
     expect(n).toBeLessThanOrEqual(at + 1);
   });
+
+  it('resets the backoff when a connection opens, even with no data frame', async () => {
+    const waits: number[] = [];
+    let n = 0;
+    const fetchImpl = (async () => {
+      n++;
+      if (n <= 3) throw new Error('down');
+      if (n === 4) return new Response(body([': connected\n\n'])); // opens, sends only a comment, ends
+      return new Response(body([], true));
+    }) as unknown as typeof fetch;
+    const h = openStream(undefined, () => {}, { fetchImpl, sleep: async (ms) => void waits.push(ms) });
+    await until(() => n >= 5);
+    h.close();
+    expect(waits.slice(0, 4)).toEqual([500, 1000, 2000, 500]);
+  });
+
+  it('reconnects when no bytes arrive within the idle limit, and keep-alives count as bytes', async () => {
+    let n = 0;
+    const lastIds: (string | null)[] = [];
+    const fetchImpl = (async (_u: string, init?: RequestInit) => {
+      n++;
+      lastIds.push(new Headers(init?.headers).get('Last-Event-ID'));
+      const signal = init?.signal as AbortSignal;
+      if (n === 1) {
+        // one data frame, then silence: the connection must be dropped by the watchdog
+        return new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(enc.encode(`id: 4\nevent: event\ndata: ${ev(4)}\n\n`));
+              signal.addEventListener('abort', () => c.error(new Error('aborted')));
+            },
+          }),
+        );
+      }
+      return new Response(body([], true));
+    }) as unknown as typeof fetch;
+    const h = openStream(undefined, () => {}, { fetchImpl, sleep: async () => {}, idleMs: 40 });
+    await until(() => n >= 2);
+    h.close();
+    expect(lastIds[1]).toBe('4');
+  });
+
+  it('keep-alive comments keep a quiet connection open', async () => {
+    let n = 0;
+    const fetchImpl = (async (_u: string, init?: RequestInit) => {
+      n++;
+      const signal = init?.signal as AbortSignal;
+      return new Response(
+        new ReadableStream({
+          start(c) {
+            const t = setInterval(() => c.enqueue(enc.encode(': keep-alive\n\n')), 15);
+            signal.addEventListener('abort', () => {
+              clearInterval(t);
+              c.error(new Error('aborted'));
+            });
+          },
+        }),
+      );
+    }) as unknown as typeof fetch;
+    const h = openStream(undefined, () => {}, { fetchImpl, sleep: async () => {}, idleMs: 60 });
+    await new Promise((r) => setTimeout(r, 250));
+    h.close();
+    expect(n).toBe(1);
+  });
+
+  it('drops the connection when one frame outgrows the buffer cap', async () => {
+    let n = 0;
+    const fetchImpl = (async () => {
+      n++;
+      if (n === 1) return new Response(body(['data: ' + 'x'.repeat(5000)], true)); // never terminated
+      return new Response(body([], true));
+    }) as unknown as typeof fetch;
+    const h = openStream(undefined, () => {}, { fetchImpl, sleep: async () => {}, maxBuffer: 1024 });
+    await until(() => n >= 2);
+    h.close();
+    expect(n).toBeGreaterThanOrEqual(2);
+  });
 });

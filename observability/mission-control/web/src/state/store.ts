@@ -23,6 +23,8 @@ export interface McState {
   findings: McEvent[];
   collapsed: Record<PanelName, boolean>;
   reducedMotion: boolean;
+  /** Newest stream message id seen (events, bundles, gaps); the resume point for the next stream. */
+  lastEventId: number | null;
 }
 
 export interface McStore {
@@ -38,13 +40,14 @@ export interface McStore {
   togglePanel(p: PanelName): void;
   setPanels(collapsed: boolean): void;
   setReducedMotion(v: boolean): void;
+  noteStreamId(id: number): void;
   reset(): void;
 }
 
 function initial(): McState {
   return {
     mode: 'live', orderId: null, selection: null, events: [], gaps: [], bundles: [], findings: [],
-    collapsed: { left: false, right: false, bottom: false },
+    collapsed: { left: false, right: false, bottom: false }, lastEventId: null,
     reducedMotion:
       typeof window !== 'undefined' && typeof window.matchMedia === 'function'
         ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -100,6 +103,9 @@ export function createStore(): McStore {
     togglePanel: (p) => set({ collapsed: { ...state.collapsed, [p]: !state.collapsed[p] } }),
     setPanels: (c) => set({ collapsed: { left: c, right: c, bottom: c } }),
     setReducedMotion: (reducedMotion) => set({ reducedMotion }),
+    noteStreamId(id) {
+      if (Number.isFinite(id) && (state.lastEventId === null || id > state.lastEventId)) set({ lastEventId: id });
+    },
     reset() {
       ids = new Set();
       set(initial());

@@ -27,13 +27,21 @@ const (
 
 // Component is a cube (Parent == "") or a working part of one.
 type Component struct {
-	ID, Label, Zone, Parent string
-	Instrumented            bool
-	Status                  string // "" or "not_built"
+	ID           string `json:"id"`
+	Label        string `json:"label"`
+	Zone         string `json:"zone"`
+	Parent       string `json:"parent"`
+	Instrumented bool   `json:"instrumented"`
+	Status       string `json:"status"` // "" or "not_built"
 }
 
 // Wire joins two components over one channel.
-type Wire struct{ ID, From, To, Channel string }
+type Wire struct {
+	ID      string `json:"id"`
+	From    string `json:"from"`
+	To      string `json:"to"`
+	Channel string `json:"channel"`
+}
 
 // Topology is the whole static map.
 type Topology struct {
