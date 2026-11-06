@@ -34,6 +34,7 @@ type Writer struct {
 	// insert (order index hook). Its errors are counted, never drop events.
 	OnInserted func(ctx context.Context, e store.Event) error
 
+	warn   rateLog
 	mu     sync.RWMutex // guards closed against Add
 	closed bool
 }
@@ -93,6 +94,7 @@ func (w *Writer) Run(ctx context.Context) {
 			for _, it := range batch {
 				if ierr := w.OnInserted(fc, it.ev); ierr != nil {
 					w.self.StorageError(it.source)
+					w.warn.log(w.self.log, "order index update failed", "source", it.source, "error", ierr.Error())
 				}
 			}
 		}

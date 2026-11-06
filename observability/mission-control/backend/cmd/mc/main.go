@@ -84,7 +84,7 @@ func run(ctx context.Context, stop context.CancelFunc) error {
 		}
 	})
 	spawn(&wwg, func() { writer.Run(wctx) })
-	spawn(&wg, func() { retention.Run(ctx, st, pruneInterval, cfg.Retention) })
+	spawn(&wg, func() { retention.Run(ctx, st, pruneInterval, cfg.Retention, log) })
 	spawn(&wg, func() { ingest.PollHealth(ctx, healthTargets(cfg), ingest.PollInterval, writer.Sink("health")) })
 	spawn(&wg, func() {
 		ingest.PollConsumers(ctx, cfg.NATSMonitorURL, ingest.PollInterval, writer.Sink("nats.monitor"))
