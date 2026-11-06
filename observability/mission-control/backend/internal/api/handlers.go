@@ -36,7 +36,6 @@ const (
 	activeWithin   = 30 * time.Second
 	idleWithin     = 5 * time.Minute
 	activityWindow = time.Hour
-	warnWithin     = 15 * time.Minute
 )
 
 // probedServices are the DT services Mission Control probes (/livez, /readyz);
@@ -155,7 +154,7 @@ func (a *API) getTopology(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "topology health", err)
 		return
 	}
-	warns, err := a.st.RecentDetectors(ctx, now.Add(-warnWithin), 200)
+	warns, err := a.st.RecentDetectors(ctx, time.Time{}, 200)
 	if err != nil {
 		a.fail(w, "topology detectors", err)
 		return
@@ -237,8 +236,9 @@ type orderState struct {
 // loadOrderState derives the status steps from the delivery's stored events:
 // DeliveryCreated (attr status) and DeliveryStatusChanged (attr to). A step is
 // done only with such evidence. The newest reached step of the main path turns
-// into a warning when a CourierSignalLost event exists (tracking) or a stored
-// courier_stale finding does (ruling R14), unless the delivery already ended.
+// into a warning while the courier signal is lost (tracking) or an open stored
+// courier_stale finding is newer than the last accepted fix (ruling R14,
+// amended), unless the delivery already ended.
 func (a *API) loadOrderState(r *http.Request, deliveryID string, detectors []store.Event) (orderState, error) {
 	evs, err := a.st.DeliveryEventsByType(r.Context(), deliveryID, []string{typeCreated, typeStatus, typeSignalLost, typeRestored})
 	if err != nil {
@@ -269,11 +269,24 @@ func (a *API) loadOrderState(r *http.Request, deliveryID string, detectors []sto
 			reached[s] = e.OccurredAt
 		}
 	}
-	// Warning only while the newest of lost/restored is a loss, or a stale
-	// finding is newer than the last restore (ruling R14, amended).
+	// Warning only while the newest of lost/restored is a loss, or while the
+	// newest courier_stale finding is still open (not "cleared") and newer than
+	// the delivery's last accepted fix (ruling R14 amended; T6 carry). The
+	// accepted-fix test (store.LastAcceptedFixes) drops the warning the moment a
+	// fix lands, before the detector's next tick stores the clear.
 	warn := !lostAt.IsZero() && lostAt.After(restoredAt)
-	for _, d := range detectors {
-		if (d.Reason == "courier_stale" || attrString(d, "rule") == "courier_stale") && d.OccurredAt.After(restoredAt) {
+	var stale *store.Event
+	for i, d := range detectors { // oldest first: the last match is the newest finding
+		if d.Reason == "courier_stale" || attrString(d, "rule") == "courier_stale" {
+			stale = &detectors[i]
+		}
+	}
+	if stale != nil && stale.Outcome != "cleared" {
+		fix, ok, err := a.st.LastAcceptedFix(r.Context(), deliveryID)
+		if err != nil {
+			return orderState{}, err
+		}
+		if !ok || stale.OccurredAt.After(fix.OccurredAt) {
 			warn = true
 		}
 	}
@@ -452,7 +465,7 @@ func (a *API) getComponent(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "component health", err)
 		return
 	}
-	warns, err := a.st.RecentDetectors(ctx, time.Now().Add(-warnWithin), 200)
+	warns, err := a.st.RecentDetectors(ctx, time.Time{}, 200)
 	if err != nil {
 		a.fail(w, "component detectors", err)
 		return
@@ -584,7 +597,7 @@ func (a *API) getSystem(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "system orders", err)
 		return
 	}
-	warns, err := a.st.RecentDetectors(ctx, time.Now().Add(-warnWithin), 50)
+	warns, err := a.st.RecentDetectors(ctx, time.Time{}, 50)
 	if err != nil {
 		a.fail(w, "system warnings", err)
 		return

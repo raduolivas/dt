@@ -19,6 +19,7 @@ import (
 	"github.com/raduolivas/dt/backend/pkg/logx"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/api"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/config"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/detect"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/index"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/ingest"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/metrics"
@@ -32,6 +33,9 @@ const (
 	readyTimeout  = 2 * time.Second
 	pruneInterval = time.Hour
 	storeOpenWait = 60 * time.Second
+	// detectInterval is how often the detectors run; a scenario shows within
+	// 40 s (plan Task 14), so a few seconds is plenty.
+	detectInterval = 5 * time.Second
 )
 
 func main() {
@@ -106,6 +110,13 @@ func run(ctx context.Context, stop context.CancelFunc) error {
 	spawn(&wg, func() { ingest.PollHealth(ctx, healthTargets(cfg), ingest.PollInterval, writer.Sink("health")) })
 	spawn(&wg, func() {
 		ingest.PollConsumers(ctx, cfg.NATSMonitorURL, ingest.PollInterval, writer.Sink("nats.monitor"))
+	})
+	// Detectors store their findings as kind=detector events and feed the live stream.
+	spawn(&wg, func() {
+		detect.Run(ctx, st, detectInterval, func(f detect.Finding) {
+			log.Info("detector finding", "detector", f.Detector, "hop", f.Hop, "delivery_id", f.DeliveryID,
+				"reason", f.Reason, "severity", f.Severity)
+		}, detect.Options{Thresholds: cfg.Thresholds, OnInserted: onInserted, Log: log})
 	})
 	spawn(&wg, func() {
 		emit := func(outcome, reason string) {

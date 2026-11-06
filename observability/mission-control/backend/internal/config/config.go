@@ -34,6 +34,58 @@ type Thresholds struct {
 	Slow         time.Duration  `yaml:"slow"`
 	Edges        map[string]any `yaml:"edges"`
 	Rules        map[string]any `yaml:"rules"`
+	Detect       Detect         `yaml:"detect"`
+}
+
+// CountWindow is "more than/at least Count events inside Window".
+type CountWindow struct {
+	Count  int           `yaml:"count"`
+	Window time.Duration `yaml:"window"`
+}
+
+// Detect holds the detector thresholds (spec §7); the keys are documented in
+// config/thresholds.yaml.
+type Detect struct {
+	Window                time.Duration            `yaml:"window"`
+	StatusLookback        time.Duration            `yaml:"status_lookback"`
+	FixesDropped          time.Duration            `yaml:"fixes_dropped"`
+	RejectedAtGateway     time.Duration            `yaml:"rejected_at_gateway"`
+	ProcessedNotPublished time.Duration            `yaml:"processed_not_published"`
+	ConsumerLagging       time.Duration            `yaml:"consumer_lagging"`
+	SnapshotNotDelivered  time.Duration            `yaml:"snapshot_not_delivered"`
+	Storm                 CountWindow              `yaml:"storm"`
+	DependencyFailing     CountWindow              `yaml:"dependency_failing"`
+	MCBehind              MCBehind                 `yaml:"mc_behind"`
+	StuckStatus           map[string]time.Duration `yaml:"stuck_status"`
+}
+
+func (d Detect) validate() error {
+	for name, v := range map[string]time.Duration{
+		"window": d.Window, "status_lookback": d.StatusLookback, "fixes_dropped": d.FixesDropped,
+		"rejected_at_gateway": d.RejectedAtGateway, "processed_not_published": d.ProcessedNotPublished,
+		"consumer_lagging": d.ConsumerLagging, "snapshot_not_delivered": d.SnapshotNotDelivered,
+		"storm.window": d.Storm.Window, "dependency_failing.window": d.DependencyFailing.Window,
+		"mc_behind.lag": d.MCBehind.Lag, "mc_behind.drops_hold": d.MCBehind.DropsHold,
+	} {
+		if v <= 0 {
+			return fmt.Errorf("config: thresholds: detect.%s must be > 0", name)
+		}
+	}
+	if d.Storm.Count <= 0 || d.DependencyFailing.Count <= 0 {
+		return errors.New("config: thresholds: detect storm and dependency_failing counts must be > 0")
+	}
+	for s, v := range d.StuckStatus {
+		if v <= 0 {
+			return fmt.Errorf("config: thresholds: detect.stuck_status.%s must be > 0", s)
+		}
+	}
+	return nil
+}
+
+// MCBehind is the "Mission Control itself is behind" rule.
+type MCBehind struct {
+	Lag       time.Duration `yaml:"lag"`        // ingest lag above this
+	DropsHold time.Duration `yaml:"drops_hold"` // a drop keeps the finding open this long
 }
 
 // Config is Mission Control's configuration.
@@ -108,6 +160,22 @@ func Load() (Config, error) {
 	}
 	if err := yaml.Unmarshal(raw, &cfg.Thresholds); err != nil {
 		return Config{}, fmt.Errorf("config: parse thresholds: %w", err)
+	}
+	// The detect section is merged key by key over the embedded defaults, so an
+	// override file may set only the keys it changes.
+	var def Thresholds
+	if err := yaml.Unmarshal(mcconfig.DefaultThresholds, &def); err != nil {
+		return Config{}, fmt.Errorf("config: parse default thresholds: %w", err)
+	}
+	merged := def.Detect
+	if err := yaml.Unmarshal(raw, &struct {
+		Detect *Detect `yaml:"detect"`
+	}{&merged}); err != nil {
+		return Config{}, fmt.Errorf("config: parse thresholds: %w", err)
+	}
+	cfg.Thresholds.Detect = merged
+	if err := merged.validate(); err != nil {
+		return Config{}, err
 	}
 	t := cfg.Thresholds
 	if t.CourierStale <= 0 || t.CourierLost < t.CourierStale || t.Slow <= 0 {

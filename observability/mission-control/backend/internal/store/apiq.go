@@ -183,10 +183,22 @@ func (s *Store) RecentOrders(ctx context.Context, limit int) ([]OrderHit, error)
 	return out, rows.Err()
 }
 
-// RecentDetectors returns detector findings observed since, newest first.
+// RecentDetectors returns the findings that are active (the newest event of
+// their rule, hop, delivery and reason is not a "cleared"), newest first. A
+// finding is stored once and stays active until cleared, however old it is;
+// since only drops findings whose newest event was observed before it (pass
+// the zero time for all).
 func (s *Store) RecentDetectors(ctx context.Context, since time.Time, limit int) ([]Event, error) {
-	return s.events(ctx, "recent detectors", `SELECT `+eventCols+` FROM mc_event
-		WHERE kind = 'detector' AND observed_at >= $1 ORDER BY id DESC LIMIT $2`, since, limit)
+	return s.events(ctx, "recent detectors", `SELECT `+eventCols+` FROM (`+activeFindingsSQL+`) a
+		WHERE observed_at >= $1 ORDER BY id DESC LIMIT $2`, since, limit)
+}
+
+// LastAcceptedFix is the newest accepted fix of one delivery (see
+// LastAcceptedFixes); ok is false when there is none.
+func (s *Store) LastAcceptedFix(ctx context.Context, deliveryID string) (Fix, bool, error) {
+	m, err := s.LastAcceptedFixes(ctx, []string{deliveryID})
+	f, ok := m[deliveryID]
+	return f, ok, err
 }
 
 // LatestHealth returns the newest health event of each listed source.
