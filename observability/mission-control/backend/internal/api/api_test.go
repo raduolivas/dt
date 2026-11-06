@@ -143,9 +143,10 @@ func TestSSEResumesFromLastEventID(t *testing.T) {
 	m = next(t, ch)
 	require.Equal(t, idStr(evs[4].ID), m.ID)
 
-	live := ev(now, "request", "gateway", "deliveries.rpc", "del_1")
-	require.NoError(t, st.InsertEvents(ctx, []store.Event{live}))
-	live.ID = evs[4].ID + 1
+	liveBatch := []store.Event{ev(now, "request", "gateway", "deliveries.rpc", "del_1")}
+	require.NoError(t, st.InsertEvents(ctx, liveBatch))
+	live := liveBatch[0]
+	require.Greater(t, live.ID, evs[4].ID)
 	_ = bc.OnEvent(ctx, live)
 	m = next(t, ch)
 	require.Equal(t, idStr(live.ID), m.ID)
@@ -183,14 +184,19 @@ func TestSSEGapMarkerWhenResumeTooOld(t *testing.T) {
 }
 
 func TestSSEBundlesAboveRate(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
 	bc := api.NewBroadcaster()
-	srv := newServer(t, nil, bc, func(o *api.Options) { o.RatePerSec = 5; o.Window = 500 * time.Millisecond })
+	srv := newServer(t, st, bc, func(o *api.Options) { o.RatePerSec = 5; o.Window = 500 * time.Millisecond })
 	ch := openSSE(t, srv.URL+"/api/stream", "")
 	now := time.Now().UTC()
-	for i := int64(1); i <= 12; i++ {
-		e := ev(now, "request", "gateway", "deliveries.rpc", "")
-		e.ID = i
-		require.NoError(t, bc.OnEvent(context.Background(), e))
+	batch := make([]store.Event, 12)
+	for i := range batch {
+		batch[i] = ev(now, "request", "gateway", "deliveries.rpc", "")
+	}
+	require.NoError(t, st.InsertEvents(ctx, batch))
+	for _, e := range batch {
+		require.NoError(t, bc.OnEvent(ctx, e))
 	}
 	for i := 1; i <= 5; i++ {
 		require.Equal(t, "event", next(t, ch).Event)
@@ -206,7 +212,124 @@ func TestSSEBundlesAboveRate(t *testing.T) {
 	require.Equal(t, "gateway>deliveries.rpc", bundle.Wire)
 	require.Equal(t, 7, bundle.Count)
 	require.Equal(t, "ok", bundle.Outcome)
-	require.Equal(t, "12", b.ID)
+	require.Equal(t, idStr(batch[11].ID), b.ID)
+}
+
+// Detector findings and health changes are never folded into a bundle (R25).
+func TestSSEDetectorNotBundled(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	bc := api.NewBroadcaster()
+	srv := newServer(t, st, bc, func(o *api.Options) { o.RatePerSec = 3; o.Window = 500 * time.Millisecond })
+	ch := openSSE(t, srv.URL+"/api/stream", "")
+	now := time.Now().UTC()
+	var batch []store.Event
+	for i := 0; i < 8; i++ {
+		batch = append(batch, ev(now, "request", "gateway", "deliveries.rpc", ""))
+	}
+	batch = append(batch, ev(now, "detector", "mc", "tracking.state", "del_1"), ev(now, "health", "tracking", "", ""))
+	require.NoError(t, st.InsertEvents(ctx, batch))
+	for _, e := range batch {
+		require.NoError(t, bc.OnEvent(ctx, e))
+	}
+	var kinds []string
+	for i := 0; i < 6; i++ { // 3 events, detector, health, then the bundle
+		m := next(t, ch)
+		kinds = append(kinds, m.Event)
+	}
+	require.Contains(t, kinds, "detector")
+	require.Equal(t, 1, countOf(kinds, "bundle"))
+	require.Equal(t, 4, countOf(kinds, "event"), "3 requests + the health event")
+}
+
+func countOf(ss []string, v string) int {
+	n := 0
+	for _, s := range ss {
+		if s == v {
+			n++
+		}
+	}
+	return n
+}
+
+// Concurrent inserters commit in their own transactions; a connected client
+// must still receive every id exactly once, in order, and a reconnect must see
+// no hole (R24).
+func TestSSENoHoleWithConcurrentInserters(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	bc := api.NewBroadcaster()
+	srv := newServer(t, st, bc, func(o *api.Options) { o.RatePerSec = 100000 })
+	ch := openSSE(t, srv.URL+"/api/stream", "")
+	const workers, batches, per = 2, 25, 3
+	idsCh := make(chan int64, workers*batches*per)
+	done := make(chan struct{})
+	for w := 0; w < workers; w++ {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			for b := 0; b < batches; b++ {
+				batch := make([]store.Event, per)
+				for i := range batch {
+					batch[i] = ev(time.Now().UTC(), "request", "gateway", "deliveries.rpc", "")
+				}
+				if err := st.InsertEvents(ctx, batch); err != nil {
+					t.Error(err)
+					return
+				}
+				for _, e := range batch {
+					idsCh <- e.ID
+					_ = bc.OnEvent(ctx, e)
+				}
+			}
+		}()
+	}
+	for w := 0; w < workers; w++ {
+		<-done
+	}
+	close(idsCh)
+	want := map[int64]bool{}
+	for id := range idsCh {
+		want[id] = true
+	}
+	var prev int64
+	for range want {
+		m := next(t, ch)
+		require.Equal(t, "event", m.Event)
+		var id int64
+		require.NoError(t, json.Unmarshal([]byte(m.ID), &id))
+		require.Greater(t, id, prev, "ids arrive once and in order")
+		require.True(t, want[id])
+		prev = id
+	}
+	// reconnect from the first id: everything after it, no hole
+	var first int64
+	for id := range want {
+		if first == 0 || id < first {
+			first = id
+		}
+	}
+	ch2 := openSSE(t, srv.URL+"/api/stream", idStr(first))
+	prev = first
+	for i := 0; i < len(want)-1; i++ {
+		var id int64
+		require.NoError(t, json.Unmarshal([]byte(next(t, ch2).ID), &id))
+		require.Greater(t, id, prev)
+		require.True(t, want[id])
+		prev = id
+	}
+}
+
+func TestSSEDisconnectUnsubscribes(t *testing.T) {
+	bc := api.NewBroadcaster()
+	srv := newServer(t, nil, bc, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.Equal(t, 1, bc.Len())
+	cancel()
+	_ = resp.Body.Close()
+	require.Eventually(t, func() bool { return bc.Len() == 0 }, 3*time.Second, 20*time.Millisecond)
 }
 
 func TestTimelineMarksPreStartGap(t *testing.T) {
@@ -218,7 +341,8 @@ func TestTimelineMarksPreStartGap(t *testing.T) {
 		ev(now.Add(-10*time.Minute), "message_published", "deliveries", "nats.DELIVERIES", "del_1"),
 		ev(now.Add(-1*time.Minute), "message_published", "deliveries", "nats.DELIVERIES", "del_1"),
 	}))
-	require.NoError(t, st.Heartbeat(ctx, now.Add(-8*time.Minute)))
+	require.NoError(t, st.RecordStartup(ctx, now.Add(-8*time.Minute))) // first ever start
+	require.NoError(t, st.Heartbeat(ctx, now.Add(-7*time.Minute)))
 	require.NoError(t, st.RecordStartup(ctx, now.Add(-5*time.Minute)))
 
 	var tl struct {
@@ -231,17 +355,22 @@ func TestTimelineMarksPreStartGap(t *testing.T) {
 	}
 	getJSON(t, srv.URL+"/api/orders/del_1/timeline", &tl)
 	require.Len(t, tl.Events, 2)
-	var down []string
+	var downs, bands int
 	for _, g := range tl.Gaps {
-		down = append(down, g.Kind)
-	}
-	require.Contains(t, down, "mc_down")
-	for _, g := range tl.Gaps {
-		if g.Kind == "mc_down" {
-			require.WithinDuration(t, now.Add(-8*time.Minute), g.From, time.Second)
+		switch g.Kind {
+		case "mc_down":
+			downs++
+			require.WithinDuration(t, now.Add(-7*time.Minute), g.From, time.Second)
 			require.WithinDuration(t, now.Add(-5*time.Minute), g.To, time.Second)
+		case "no_trace":
+			bands++
+			require.WithinDuration(t, now.Add(-10*time.Minute), g.From, time.Second)
+			require.WithinDuration(t, now.Add(-8*time.Minute), g.To, time.Second)
 		}
 	}
+	require.Equal(t, 1, downs)
+	require.Equal(t, 1, bands, "one band before Mission Control's first start, no per-run bands")
+	require.Len(t, tl.Gaps, 2)
 }
 
 type stepsResp struct {
@@ -300,6 +429,37 @@ func TestStatusStepsFromEvents(t *testing.T) {
 	require.Equal(t, "warning", got["picked_up"])
 	require.Equal(t, "done", got["confirmed"])
 	require.Equal(t, "pending", got["arriving"])
+}
+
+func TestStatusStepWarningClearsAfterRestore(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	srv := newServer(t, st, api.NewBroadcaster(), nil)
+	now := time.Now().UTC()
+	require.NoError(t, st.InsertEvents(ctx, []store.Event{
+		withAttrs(ev(now.Add(-5*time.Minute), "message_published", "deliveries", "nats.DELIVERIES", "del_1"),
+			`{"event_type":"delivery.created","status":"confirmed"}`),
+		withAttrs(ev(now.Add(-4*time.Minute), "message_published", "tracking", "nats.TRACKING", "del_1"),
+			`{"event_type":"tracking.courier_signal_lost"}`),
+	}))
+	var r stepsResp
+	getJSON(t, srv.URL+"/api/orders/del_1", &r)
+	require.Equal(t, "warning", states(r)["confirmed"])
+	require.NoError(t, st.InsertEvents(ctx, []store.Event{
+		withAttrs(ev(now.Add(-3*time.Minute), "message_published", "tracking", "nats.TRACKING", "del_1"),
+			`{"event_type":"tracking.courier_signal_restored"}`),
+	}))
+	r = stepsResp{}
+	getJSON(t, srv.URL+"/api/orders/del_1", &r)
+	require.Equal(t, "done", states(r)["confirmed"], "recovered: no false amber")
+	// lost again after the restore: warning returns
+	require.NoError(t, st.InsertEvents(ctx, []store.Event{
+		withAttrs(ev(now.Add(-2*time.Minute), "message_published", "tracking", "nats.TRACKING", "del_1"),
+			`{"event_type":"tracking.courier_signal_lost"}`),
+	}))
+	r = stepsResp{}
+	getJSON(t, srv.URL+"/api/orders/del_1", &r)
+	require.Equal(t, "warning", states(r)["confirmed"])
 }
 
 func TestCSPHeader(t *testing.T) {
