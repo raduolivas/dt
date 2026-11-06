@@ -113,6 +113,14 @@ func TestIngestDropReasons(t *testing.T) {
 			},
 			func(now time.Time) []domain.Fix { return []domain.Fix{fixAt(now, 52.369, 4.9)} },
 			dropEvent{"del_1", "delivery_reassigned", 1}},
+		{"delivery_not_found",
+			func(t *testing.T, f *fixture) {
+				f.courier(t, "cou_1")
+				// Active set names a delivery whose state does not exist.
+				_ = f.states.SetCourierActive(context.Background(), "cou_1", "del_gone", true)
+			},
+			func(now time.Time) []domain.Fix { return []domain.Fix{fixAt(now, 52.369, 4.9)} },
+			dropEvent{"del_gone", "delivery_not_found", 1}},
 		{"invalid",
 			func(t *testing.T, f *fixture) {
 				f.courier(t, "cou_1")

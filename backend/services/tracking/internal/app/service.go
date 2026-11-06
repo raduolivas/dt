@@ -83,12 +83,12 @@ func (s *Service) Apply(ctx context.Context, sc Scope, deliveryID string, mutate
 // ApplyWith is Apply with the read model used for a rebuild, such as a
 // consumer's transaction-bound projection.
 func (s *Service) ApplyWith(ctx context.Context, reads ReadModel, sc Scope, deliveryID string, mutate func(*domain.State) error) error {
-	// The router is asked outside the compare-and-set: its answers are kept
-	// for the retries.
 	ctx, span := otel.Tracer(tracerName).Start(ctx, "tracking.apply", trace.WithAttributes(
 		attribute.String("dt.delivery_id", deliveryID),
 		attribute.String("dt.tenant_id", sc.TenantID), attribute.String("dt.environment", sc.Env)))
 	defer span.End()
+	// The router is asked outside the compare-and-set: its answers are kept
+	// for the retries.
 	memo := &routeMemo{}
 	for range casAttempts {
 		done, err := s.applyOnce(ctx, reads, memo, sc, deliveryID, mutate)

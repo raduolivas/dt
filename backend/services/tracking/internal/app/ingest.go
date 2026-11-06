@@ -97,6 +97,12 @@ func (s *Service) Ingest(ctx context.Context, sc Scope, courierID string, fixes 
 			return nil
 		})
 		if errors.Is(err, ErrNotFound) {
+			// The delivery is gone: not an outage, but the fixes were not kept.
+			reasons := make([]string, len(sorted))
+			for i := range reasons {
+				reasons[i] = ReasonDeliveryNotFound
+			}
+			dropReasons[id] = reasons
 			continue
 		}
 		attempted++
@@ -153,6 +159,7 @@ const (
 	ReasonDeliveryFinal     = "delivery_final"
 	ReasonDeliveryReassign  = "delivery_reassigned"
 	ReasonStateUpdateFailed = "state_update_failed"
+	ReasonDeliveryNotFound  = "delivery_not_found"
 )
 
 // staleReason is why a delivery in the courier's active set no longer takes
