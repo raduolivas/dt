@@ -30,6 +30,10 @@ type Writer struct {
 	self *Self
 	ch   chan item
 
+	// OnInserted, when set before Run, is called per event after a successful
+	// insert (order index hook). Its errors are counted, never drop events.
+	OnInserted func(ctx context.Context, e store.Event) error
+
 	mu     sync.RWMutex // guards closed against Add
 	closed bool
 }
@@ -85,6 +89,13 @@ func (w *Writer) Run(ctx context.Context) {
 		}
 		fc, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
 		err := w.st.InsertEvents(fc, evs)
+		if err == nil && w.OnInserted != nil {
+			for _, it := range batch {
+				if ierr := w.OnInserted(fc, it.ev); ierr != nil {
+					w.self.StorageError(it.source)
+				}
+			}
+		}
 		cancel()
 		if err != nil {
 			seen := map[string]bool{}

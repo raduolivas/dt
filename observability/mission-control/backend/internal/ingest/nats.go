@@ -41,6 +41,9 @@ type NATSOptions struct {
 	Self      *Self
 	Log       *slog.Logger
 	Retention time.Duration // ACCOUNTS start window; default 7 days
+	// OnInserted is called for every event after it was stored (the order
+	// index hook: index.Index.OnEvent). Its errors never drop the event.
+	OnInserted func(ctx context.Context, e store.Event) error
 	// RetryEvery is the wait between connection attempts; default 5 s.
 	RetryEvery time.Duration
 }
@@ -174,6 +177,16 @@ func (c *streamConsumer) fetchOnce(ctx context.Context, cons jetstream.Consumer)
 			}
 			sleep(ctx, nakDelay)
 			return nil
+		}
+		// The event is already stored: an index failure is counted and logged,
+		// never a reason to nak (that would duplicate the event).
+		if c.o.OnInserted != nil {
+			for _, e := range evs {
+				if err := c.o.OnInserted(ctx, e); err != nil {
+					c.o.Self.StorageError(c.source)
+					c.warn.log(c.o.Log, "order index update failed", "stream", c.stream, "error", err.Error())
+				}
+			}
 		}
 		for _, m := range msgs {
 			_ = m.Ack()
