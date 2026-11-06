@@ -3,7 +3,6 @@ package metrics_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -19,7 +18,6 @@ func TestTrafficAdapter(t *testing.T) {
 	require.EqualValues(t, 300, got[0].Count)
 	require.EqualValues(t, 150, got[0].Failed)
 	require.Equal(t, 12.0, got[0].P95Ms)
-	_ = time.Second
 }
 
 func TestLinkSourceTraceAndComponent(t *testing.T) {

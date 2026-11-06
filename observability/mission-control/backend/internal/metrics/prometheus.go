@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.yaml.in/yaml/v3"
@@ -51,16 +52,23 @@ func (p *prometheus) WireTraffic(ctx context.Context, window time.Duration) ([]W
 		return nil, errors.New("metrics: MC_PROMETHEUS_URL not set")
 	}
 	win := strconv.Itoa(int(clampWindow(window).Seconds())) + "s"
+	// One deadline for the whole call; the three queries run concurrently.
+	ctx, cancel := context.WithTimeout(ctx, promTimeout)
+	defer cancel()
+	var errs, p95 map[string]float64
+	var wg sync.WaitGroup
+	wg.Add(2)
+	// Error rate and p95 are optional per wire: a failed query leaves 0.
+	go func() { defer wg.Done(); errs, _ = p.vector(ctx, p.q.ErrorRate, win) }()
+	go func() { defer wg.Done(); p95, _ = p.vector(ctx, p.q.P95ms, win) }()
 	rate, err := p.vector(ctx, p.q.Rate, win)
+	wg.Wait()
 	if err != nil {
 		return nil, err
 	}
 	if len(rate) == 0 {
 		return nil, ErrNoData
 	}
-	// Error rate and p95 are optional per wire: a failed query leaves 0.
-	errs, _ := p.vector(ctx, p.q.ErrorRate, win)
-	p95, _ := p.vector(ctx, p.q.P95ms, win)
 	out := make([]WireStat, 0, len(rate))
 	for id, r := range rate {
 		out = append(out, WireStat{WireID: id, Rate: r, ErrorRate: errs[id], P95ms: p95[id]})

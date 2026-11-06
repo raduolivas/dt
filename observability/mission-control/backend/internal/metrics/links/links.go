@@ -47,7 +47,8 @@ func Render(templates map[string]string, kind string, vars map[string]string) []
 	missing := false
 	out := placeholder.ReplaceAllStringFunc(tpl, func(m string) string {
 		v, ok := vars[m[1:len(m)-1]]
-		if !ok || v == "" {
+		// "." and ".." are dot segments a browser would resolve away.
+		if !ok || v == "" || v == "." || v == ".." {
 			missing = true
 			return ""
 		}

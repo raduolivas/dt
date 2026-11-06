@@ -24,4 +24,6 @@ It listens on `127.0.0.1:8095` only. `/readyz` means Mission Control's own Postg
 
 ## Configuration
 
-Environment variables (`.env.example`): `MC_HTTP_ADDR`, `MC_OTLP_ADDR`, `MC_DATABASE_URL`, `MC_NATS_URL`, `MC_NATS_MONITOR_URL`, `MC_GATEWAY_URL`, `MC_ENV`, `MC_SIMULATION`, `MC_SANDBOX_KEY`, `MC_METRICS_SOURCE`, `MC_PROMETHEUS_URL`, `MC_LINK_<NAME>`, `MC_THRESHOLDS_FILE`.
+Environment variables (`.env.example`): `MC_HTTP_ADDR`, `MC_OTLP_ADDR`, `MC_DATABASE_URL`, `MC_NATS_URL`, `MC_NATS_MONITOR_URL`, `MC_GATEWAY_URL`, `MC_ENV`, `MC_SIMULATION`, `MC_SANDBOX_KEY`, `MC_METRICS_SOURCE`, `MC_PROMETHEUS_URL`, `MC_LINK_<KIND>`, `MC_THRESHOLDS_FILE`.
+
+"Open in..." links: `<KIND>` is one of `GRAFANA_TRACE`, `GRAFANA_LOGS`, `XRAY_TRACE`, `CLOUDWATCH_LOGS`. The value is a URL template starting with `http://` or `https://` (anything else is dropped) with `{trace_id}`, `{service}` and `{component}` placeholders, which are URL-escaped. A link shows only when its template is set and every placeholder it uses has a value (trace links need a trace id). An unknown `MC_LINK_` name is logged at startup and ignored.
