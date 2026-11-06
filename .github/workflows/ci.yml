@@ -34,7 +34,7 @@ jobs:
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
           go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
       - name: Lint, test (with integration tests) and scan
-        run: make lint-go test-go vuln
+        run: make lint-go test-go mc-lint-go mc-test-go vuln
       - name: Check the OTel collector config and redaction
         run: make obs-check
 

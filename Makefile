@@ -120,6 +120,33 @@ obs-check: ## Validate the OTel collector config and its redaction (needs Docker
 
 lint: lint-go lint-web lint-contracts obs-check ## Run every linter
 
+# ---- Mission Control --------------------------------------------------------
+.PHONY: mc mc-down mc-test mc-test-go mc-lint mc-lint-go
+
+MC_DIR := observability/mission-control
+# MC_COMPOSE_OVERRIDE optionally names an extra Compose file (for example build.network: host on hosts whose build containers have no network).
+MC_COMPOSE := docker compose -p mc -f $(MC_DIR)/compose.yaml $(if $(MC_COMPOSE_OVERRIDE),-f $(MC_COMPOSE_OVERRIDE))
+
+mc: ## Build and start Mission Control (needs the DT stack: make dev), then wait for /readyz
+	$(MC_COMPOSE) up -d --build
+	@for i in $$(seq 1 60); do \
+	  curl -fsS http://127.0.0.1:8095/readyz >/dev/null 2>&1 && { echo "Mission Control: http://127.0.0.1:8095"; exit 0; }; \
+	  sleep 1; \
+	done; echo "Mission Control did not become ready"; $(MC_COMPOSE) logs --tail 50 mc-backend; exit 1
+
+mc-down: ## Stop Mission Control and delete its volume
+	$(MC_COMPOSE) down -v --remove-orphans
+
+mc-test-go: ## Run the Mission Control backend tests with the race detector (Docker needed)
+	cd $(MC_DIR)/backend && go test -race ./...
+
+mc-lint-go: ## Lint the Mission Control backend
+	cd $(MC_DIR)/backend && golangci-lint run --config $(CURDIR)/backend/.golangci.yml ./...
+
+mc-test: mc-test-go ## Run every Mission Control test
+
+mc-lint: mc-lint-go ## Run every Mission Control linter
+
 # ---- local stack ------------------------------------------------------------
 .PHONY: obs-check dev down logs dtctl seed smoke latency osrm-data lan-https courier-link
 
@@ -225,4 +252,4 @@ staging-wake: ## Start the staging database and host now (outside 08:00-20:00 Mo
 staging-sleep: ## Stop the staging host and database now
 	scripts/staging.sh sleep
 
-ci: lint test build-web audit-web vuln secrets ## Run the CI checks locally
+ci: lint test mc-lint mc-test build-web audit-web vuln secrets ## Run the CI checks locally

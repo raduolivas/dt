@@ -1,0 +1,9 @@
+# Mission Control thresholds (spec §4.6). Embedded in the binary; MC_THRESHOLDS_FILE overrides it.
+# Later tasks fill the empty sections; keep keys stable.
+courier_stale: 30s # no location update for this long: the courier shows as stale
+courier_lost: 300s # ... and as lost after this long
+slow: 1s           # an edge slower than this pulses amber
+# Per-edge overrides of `slow`, keyed "<source>-><target>" (filled by the pulse and edge tasks).
+edges: {}
+# Alert-style rules (filled by the health task).
+rules: {}
