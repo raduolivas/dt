@@ -57,7 +57,15 @@ func newNorm(self *ingest.Self) *normalize.Normalizer {
 
 func newJS(t *testing.T) jetstream.JetStream {
 	t.Helper()
-	nc, err := nats.Connect(testkit.StartNATS(t))
+	_, js := newNATS(t)
+	return js
+}
+
+// newNATS starts NATS with DT's four streams and returns its URL and a client.
+func newNATS(t *testing.T) (string, jetstream.JetStream) {
+	t.Helper()
+	url := testkit.StartNATS(t)
+	nc, err := nats.Connect(url)
 	require.NoError(t, err)
 	t.Cleanup(nc.Close)
 	js, err := jetstream.New(nc)
@@ -66,7 +74,7 @@ func newJS(t *testing.T) jetstream.JetStream {
 	for _, cfg := range []jetstream.StreamConfig{outbox.StreamAccounts, outbox.StreamDeliveries, outbox.StreamTracking, outbox.StreamGateway} {
 		require.NoError(t, outbox.EnsureStream(ctx, js, cfg))
 	}
-	return js
+	return url, js
 }
 
 func publish(t *testing.T, js jetstream.JetStream, eventType, delivery string) {

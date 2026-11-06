@@ -120,6 +120,10 @@ func (s *Self) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			// Final flush so drops counted during shutdown are not lost.
+			fc, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+			s.Flush(fc, time.Now().UTC())
+			cancel()
 			return nil
 		case now := <-t.C:
 			beat(now)

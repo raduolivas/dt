@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/store"
@@ -11,8 +12,9 @@ import (
 const DefaultBuffer = 10000
 
 const (
-	writeBatch = 500
-	writeEvery = 200 * time.Millisecond
+	writeBatch   = 500
+	writeEvery   = 200 * time.Millisecond
+	writeTimeout = 5 * time.Second
 )
 
 type item struct {
@@ -21,11 +23,15 @@ type item struct {
 }
 
 // Writer buffers events and inserts them in batches. Add never blocks: when the
-// buffer is full the event is dropped and counted in self-health.
+// buffer is full, or the writer has stopped, the event is dropped and counted
+// in self-health.
 type Writer struct {
 	st   *store.Store
 	self *Self
 	ch   chan item
+
+	mu     sync.RWMutex // guards closed against Add
+	closed bool
 }
 
 // NewWriter returns a Writer with room for size events.
@@ -38,7 +44,13 @@ func NewWriter(st *store.Store, self *Self, size int) *Writer {
 
 // Add queues events from source, dropping (and counting) what does not fit.
 func (w *Writer) Add(source string, evs ...store.Event) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	for _, e := range evs {
+		if w.closed {
+			w.self.Drop(source, 1)
+			continue
+		}
 		select {
 		case w.ch <- item{source, e}:
 		default:
@@ -55,12 +67,15 @@ func (w *Writer) Sink(source string) func(store.Event) {
 	return func(e store.Event) { w.Add(source, e) }
 }
 
-// Run inserts queued events until ctx ends, then flushes what is left.
+// Run inserts queued events until ctx ends. Then it refuses new events
+// (counted as drops), inserts everything already accepted and returns. Give it
+// a context that ends after the producers (HTTP servers, pollers) have stopped.
 func (w *Writer) Run(ctx context.Context) {
 	t := time.NewTicker(writeEvery)
 	defer t.Stop()
 	var batch []item
-	flush := func(c context.Context) {
+	// Inserts use their own deadline so a cancelled ctx cannot fail the final flush.
+	flush := func() {
 		if len(batch) == 0 {
 			return
 		}
@@ -68,7 +83,10 @@ func (w *Writer) Run(ctx context.Context) {
 		for i, it := range batch {
 			evs[i] = it.ev
 		}
-		if err := w.st.InsertEvents(c, evs); err != nil {
+		fc, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
+		err := w.st.InsertEvents(fc, evs)
+		cancel()
+		if err != nil {
 			seen := map[string]bool{}
 			for _, it := range batch {
 				if !seen[it.source] {
@@ -82,26 +100,30 @@ func (w *Writer) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			w.mu.Lock()
+			w.closed = true
+			w.mu.Unlock()
 			for {
 				select {
 				case it := <-w.ch:
 					batch = append(batch, it)
+					if len(batch) >= writeBatch {
+						flush()
+					}
 					continue
 				default:
 				}
 				break
 			}
-			fc, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			flush(fc)
-			cancel()
+			flush()
 			return
 		case it := <-w.ch:
 			batch = append(batch, it)
 			if len(batch) >= writeBatch {
-				flush(ctx)
+				flush()
 			}
 		case <-t.C:
-			flush(ctx)
+			flush()
 		}
 	}
 }

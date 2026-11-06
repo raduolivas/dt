@@ -15,9 +15,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/jetstream"
-
 	"github.com/raduolivas/dt/backend/pkg/httpx"
 	"github.com/raduolivas/dt/backend/pkg/logx"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/config"
@@ -65,44 +62,64 @@ func run(ctx context.Context, stop context.CancelFunc) error {
 	writer := ingest.NewWriter(st, self, ingest.DefaultBuffer)
 	otlpSrv := &http.Server{Addr: cfg.OTLPAddr, Handler: ingest.OTLPHandler(writer, norm, self, log), ReadHeaderTimeout: 5 * time.Second}
 
-	var wg sync.WaitGroup
-	spawn := func(f func()) {
-		wg.Add(1)
-		go func() { defer wg.Done(); f() }()
+	// Shutdown order: stop the servers (no new OTLP), stop pollers and consumers
+	// (ctx), let the writer drain and flush (wctx), then flush self-health
+	// (sctx), then close the store.
+	var wg, wwg, swg sync.WaitGroup
+	wctx, wcancel := context.WithCancel(context.Background())
+	defer wcancel()
+	sctx, scancel := context.WithCancel(context.Background())
+	defer scancel()
+	spawn := func(g *sync.WaitGroup, f func()) {
+		g.Add(1)
+		go func() { defer g.Done(); f() }()
 	}
-	spawn(func() {
-		if err := self.Run(ctx); err != nil {
+	spawn(&swg, func() {
+		if err := self.Run(sctx); err != nil {
 			log.Error("self-health stopped", "error", err.Error())
 		}
 	})
-	spawn(func() { writer.Run(ctx) })
-	spawn(func() { prune(ctx, st, cfg, log) })
-	spawn(func() { ingest.PollHealth(ctx, healthTargets(cfg), ingest.PollInterval, writer.Sink("health")) })
-	spawn(func() {
+	spawn(&wwg, func() { writer.Run(wctx) })
+	spawn(&wg, func() { prune(ctx, st, cfg, log) })
+	spawn(&wg, func() { ingest.PollHealth(ctx, healthTargets(cfg), ingest.PollInterval, writer.Sink("health")) })
+	spawn(&wg, func() {
 		ingest.PollConsumers(ctx, cfg.NATSMonitorURL, ingest.PollInterval, writer.Sink("nats.monitor"))
 	})
-	spawn(func() { runNATS(ctx, cfg, st, norm, self, writer, log) })
-	// The server goroutines end through Shutdown below; wg covers the rest.
-	defer wg.Wait()
-	defer stop() // LIFO: cancel, wait for goroutines, then st.Close
+	spawn(&wg, func() {
+		emit := func(outcome, reason string) {
+			now := time.Now().UTC()
+			writer.Add("nats", store.Event{ObservedAt: now, OccurredAt: now, Kind: "health", Source: "nats", Target: "mission-control",
+				Outcome: outcome, Reason: reason, Origin: "live"})
+		}
+		ingest.RunNATSLoop(ctx, cfg.NATSURL, st, norm,
+			ingest.NATSOptions{Self: self, Log: log, Retention: cfg.Retention}, emit)
+	})
 
 	errc := make(chan error, 2)
 	go func() { errc <- srv.ListenAndServe() }()
 	go func() { errc <- otlpSrv.ListenAndServe() }()
 	log.Info("mission control listening", "addr", cfg.HTTPAddr, "env", cfg.Env, "simulation", cfg.Simulation)
+	var runErr error
 	select {
-	case err := <-errc:
-		return err
+	case runErr = <-errc:
 	case <-ctx.Done():
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = otlpSrv.Shutdown(shutdownCtx)
-	if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+	if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) && runErr == nil {
+		runErr = err
 	}
-	stop()
-	return nil
+	stop()     // pollers, consumers, prune
+	wg.Wait()  // no more producers
+	wcancel()  // writer drains and flushes what it accepted
+	wwg.Wait() //
+	scancel()  // final self-health flush includes the writer's drops
+	swg.Wait()
+	if errors.Is(runErr, http.ErrServerClosed) {
+		runErr = nil
+	}
+	return runErr
 }
 
 // openStore retries while Postgres starts, so compose start order is not a race.
@@ -152,46 +169,5 @@ func healthTargets(cfg config.Config) map[string]string {
 		"gateway":  cfg.GatewayURL,
 		"tracking": "http://tracking:8082",
 		"webhooks": "http://webhooks:8083",
-	}
-}
-
-// runNATS connects to NATS and runs the consumers. If NATS is unreachable it
-// keeps retrying (logging once a minute) and reports the state as a health
-// event; startup never fails on it (ruling R5).
-func runNATS(ctx context.Context, cfg config.Config, st *store.Store, norm *normalize.Normalizer, self *ingest.Self, w *ingest.Writer, log *slog.Logger) {
-	emit := func(outcome, reason string) {
-		now := time.Now().UTC()
-		w.Add("nats", store.Event{ObservedAt: now, OccurredAt: now, Kind: "health", Source: "nats", Target: "mission-control",
-			Outcome: outcome, Reason: reason, Origin: "live"})
-	}
-	var lastWarn time.Time
-	for ctx.Err() == nil {
-		nc, err := nats.Connect(cfg.NATSURL, nats.Name("mission-control"), nats.Timeout(3*time.Second), nats.MaxReconnects(-1),
-			nats.DisconnectErrHandler(func(_ *nats.Conn, _ error) { emit("failed", "nats_disconnected") }),
-			nats.ReconnectHandler(func(_ *nats.Conn) { emit("ok", "") }))
-		if err != nil {
-			if time.Since(lastWarn) >= time.Minute {
-				lastWarn = time.Now()
-				log.Warn("NATS not reachable, retrying", "error", err.Error())
-				emit("failed", "nats_unreachable")
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(5 * time.Second):
-			}
-			continue
-		}
-		js, err := jetstream.New(nc)
-		if err != nil {
-			nc.Close()
-			log.Error("jetstream init failed", "error", err.Error())
-			return
-		}
-		log.Info("NATS connected")
-		emit("ok", "")
-		_ = ingest.RunNATS(ctx, js, st, norm, ingest.NATSOptions{Self: self, Log: log, Retention: cfg.Retention})
-		nc.Close()
-		return
 	}
 }
