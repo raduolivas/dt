@@ -21,13 +21,33 @@ import (
 func New(w io.Writer, level slog.Level, service string) *slog.Logger {
 	var h slog.Handler = slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})
 	if endpointSet() {
-		h = fanout{h, otelslog.NewHandler(service, otelslog.WithLoggerProvider(otel.GetLoggerProvider()))}
+		// The OTLP side always says yes to Enabled, so it gets the same level
+		// filter as stdout.
+		h = fanout{h, minLevel{otelslog.NewHandler(service, otelslog.WithLoggerProvider(otel.GetLoggerProvider())), level}}
 	}
 	return slog.New(NewRedactingHandler(h)).With("service", service)
 }
 
 // endpointSet mirrors otelx.Enabled without importing otelx (which imports httpx).
 func endpointSet() bool { return os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" }
+
+// minLevel drops records below min before they reach the wrapped handler.
+type minLevel struct {
+	slog.Handler
+	min slog.Level
+}
+
+func (m minLevel) Enabled(ctx context.Context, l slog.Level) bool {
+	return l >= m.min && m.Handler.Enabled(ctx, l)
+}
+
+func (m minLevel) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return minLevel{m.Handler.WithAttrs(attrs), m.min}
+}
+
+func (m minLevel) WithGroup(name string) slog.Handler {
+	return minLevel{m.Handler.WithGroup(name), m.min}
+}
 
 // fanout sends each record to every child handler.
 type fanout []slog.Handler

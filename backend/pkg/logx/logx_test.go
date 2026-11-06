@@ -247,6 +247,35 @@ func TestNoEndpointNoTee(t *testing.T) {
 	}
 }
 
+func TestOTLPTeeHonoursLogLevel(t *testing.T) {
+	exp := installMemLogProvider(t)
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://unused.invalid:4318")
+
+	tp := sdktrace.NewTracerProvider()
+	ctx, span := tp.Tracer("t").Start(context.Background(), "op")
+	defer span.End()
+
+	var buf bytes.Buffer
+	l := logx.New(&buf, slog.LevelWarn, "test")
+	l.DebugContext(ctx, "d")
+	l.InfoContext(ctx, "i")
+	if len(exp.recs) != 0 {
+		t.Fatalf("exported %d records below the level, want 0", len(exp.recs))
+	}
+	l.WarnContext(ctx, "w", "lat", 52.1)
+	if len(exp.recs) != 1 {
+		t.Fatalf("exported %d records at the level, want 1", len(exp.recs))
+	}
+	got := map[string]string{}
+	exp.recs[0].WalkAttributes(func(kv attribute.KeyValue) bool {
+		got[string(kv.Key)] = kv.Value.String()
+		return true
+	})
+	if got["lat"] != logx.Redacted || got["trace_id"] != span.SpanContext().TraceID().String() {
+		t.Fatalf("attrs = %v", got)
+	}
+}
+
 func TestSensitiveKeysSortedAndComplete(t *testing.T) {
 	keys := logx.SensitiveKeys()
 	if !sort.StringsAreSorted(keys) {
