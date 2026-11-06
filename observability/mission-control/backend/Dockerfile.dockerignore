@@ -3,5 +3,7 @@
 !backend/pkg
 !backend/gen
 !observability/mission-control/backend
+!observability/mission-control/web
 **/node_modules
+**/dist
 **/*_test.go

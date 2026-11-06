@@ -121,7 +121,7 @@ obs-check: ## Validate the OTel collector config and its redaction (needs Docker
 lint: lint-go lint-web lint-contracts obs-check ## Run every linter
 
 # ---- Mission Control --------------------------------------------------------
-.PHONY: mc mc-down mc-test mc-test-go mc-lint mc-lint-go
+.PHONY: mc mc-down mc-test mc-test-go mc-test-web mc-lint mc-lint-go mc-lint-web mc-web-dev
 
 MC_DIR := observability/mission-control
 # MC_COMPOSE_OVERRIDE optionally names an extra Compose file (for example build.network: host on hosts whose build containers have no network).
@@ -143,9 +143,19 @@ mc-test-go: ## Run the Mission Control backend tests with the race detector (Doc
 mc-lint-go: ## Lint the Mission Control backend
 	cd $(MC_DIR)/backend && golangci-lint run --config $(CURDIR)/backend/.golangci.yml ./...
 
-mc-test: mc-test-go ## Run every Mission Control test
+mc-test-web: ## Run the Mission Control web tests (pnpm -C observability/mission-control/web install first)
+	pnpm -C $(MC_DIR)/web test
 
-mc-lint: mc-lint-go ## Run every Mission Control linter
+mc-lint-web: ## Lint and typecheck the Mission Control web app
+	pnpm -C $(MC_DIR)/web lint
+	pnpm -C $(MC_DIR)/web typecheck
+
+mc-web-dev: ## Vite dev server for the Mission Control UI (proxies /api to mc-backend on 127.0.0.1:8095; run make mc first)
+	pnpm -C $(MC_DIR)/web dev
+
+mc-test: mc-test-go mc-test-web ## Run every Mission Control test
+
+mc-lint: mc-lint-go mc-lint-web ## Run every Mission Control linter
 
 # ---- local stack ------------------------------------------------------------
 .PHONY: obs-check dev down logs dtctl seed smoke latency osrm-data lan-https courier-link

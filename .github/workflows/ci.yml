@@ -51,9 +51,16 @@ jobs:
         with:
           node-version-file: web/.nvmrc
           cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
+          cache-dependency-path: |
+            web/pnpm-lock.yaml
+            observability/mission-control/web/pnpm-lock.yaml
       - run: pnpm -C web install --frozen-lockfile
       - run: make lint-web test-web build-web audit-web
+      # Mission Control's web app is its own pnpm project (same pnpm and Node as web/).
+      - run: pnpm -C observability/mission-control/web install --frozen-lockfile
+      - run: make mc-lint-web mc-test-web
+      - run: pnpm -C observability/mission-control/web build
+      - run: pnpm -C observability/mission-control/web audit --audit-level high
 
   contracts:
     runs-on: ubuntu-24.04

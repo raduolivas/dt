@@ -1,7 +1,15 @@
 # syntax=docker/dockerfile:1
 # Build context: the repository root (Mission Control imports backend/pkg and backend/gen through
-# replace directives). Multi-stage: Go build, then a static non-root runtime. A web build stage joins in
-# the web task; until then there is no UI to serve.
+# replace directives). Multi-stage: web build, Go build, then a static non-root runtime that serves
+# the built UI at "/" (ruling R3).
+FROM node:24-trixie-slim AS web
+RUN npm install -g pnpm@12.14.0
+WORKDIR /web
+COPY observability/mission-control/web/package.json observability/mission-control/web/pnpm-lock.yaml observability/mission-control/web/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY observability/mission-control/web/ ./
+RUN pnpm build
+
 FROM golang:1.27.3-trixie AS build
 WORKDIR /src
 COPY backend/pkg ./backend/pkg
@@ -12,5 +20,6 @@ RUN GOWORK=off CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/mc ./cm
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/mc /mc
+COPY --from=web /web/dist /web
 USER nonroot:nonroot
 ENTRYPOINT ["/mc"]
