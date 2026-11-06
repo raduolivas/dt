@@ -4,11 +4,14 @@ go 1.27.3
 
 require (
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/raduolivas/dt/backend/gen v0.0.0
 	github.com/raduolivas/dt/backend/pkg v0.0.0
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
+	go.opentelemetry.io/proto/otlp v1.11.0
 	go.yaml.in/yaml/v3 v3.0.5
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
