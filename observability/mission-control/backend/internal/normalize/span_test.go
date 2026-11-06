@@ -119,6 +119,43 @@ func TestSpanAttrsRedactedAndCounted(t *testing.T) {
 	require.Contains(t, string(e.Attrs), "req_1")
 }
 
+func TestStandardOTelKeysAreKeptAndNotCounted(t *testing.T) {
+	n := newNormalizer()
+	var total int
+	n.OnRedacted = func(d int) { total += d }
+	sp := mkSpan("consume tracking.tracking.eta_changed", tracepb.Span_SPAN_KIND_CONSUMER, 1,
+		kvS("messaging.destination.name", "tracking.tracking.eta_changed"), kvS("server.address", "nats"),
+		kvS("client.address", "203.0.113.9"), kvS("network.peer.address", "10.0.0.7"),
+		kvS("url.full", "http://x/?a=b"), kvS("db.statement", "select 1"))
+	e := n.FromSpan(map[string]string{"service.name": "deliveries"}, sp)[0]
+	require.Equal(t, 0, total, "standard keys and expected skips are not redaction hits")
+	require.Contains(t, string(e.Attrs), "messaging.destination.name")
+	require.Contains(t, string(e.Attrs), "server.address")
+	for _, bad := range []string{"client.address", "203.0.113.9", "network.peer.address", "10.0.0.7", "url.full", "select 1"} {
+		require.NotContains(t, string(e.Attrs), bad)
+	}
+}
+
+func TestCredentialKeysInStandardNamespacesAreDroppedAndCounted(t *testing.T) {
+	n := newNormalizer()
+	var total int
+	n.OnRedacted = func(d int) { total += d }
+	sp := mkSpan("GET /v1/x", tracepb.Span_SPAN_KIND_SERVER, 1,
+		kvS("http.request.header.authorization", "Bearer abc"), kvS("http.route", "/v1/x"))
+	e := n.FromSpan(map[string]string{"service.name": "gateway"}, sp)[0]
+	require.Equal(t, 1, total)
+	require.NotContains(t, string(e.Attrs), "authorization")
+	require.Contains(t, string(e.Attrs), "http.route")
+}
+
+func TestIDsPreferDTKeys(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		tn, env, d := ids(map[string]any{"tenant_id": "wrong", "dt.tenant_id": "right",
+			"environment": "wrong", "dt.environment": "right", "delivery_id": "wrong", "dt.delivery_id": "right"})
+		require.Equal(t, []string{"right", "right", "right"}, []string{tn, env, d})
+	}
+}
+
 func TestLogKeepsTraceID(t *testing.T) {
 	n := newNormalizer()
 	var total int

@@ -23,11 +23,17 @@ var liftedKeys = map[string]string{
 }
 
 // skippedKeys are never copied: they can embed values (SQL text, URLs with
-// query strings). Skipped silently; they are not DT redaction bugs.
+// query strings) or are client addresses. Skipped silently and not counted as
+// redactions; they are not DT redaction bugs.
 var skippedKeys = map[string]bool{
 	"db.statement": true, "db.query.text": true, "db.operation.parameter": true,
 	"url.full": true, "url.query": true, "http.url": true, "http.target": true,
-	"http.request.body.size": false,
+	// Client and peer addresses are personal data and never stored (R19).
+	"client.address": true, "client.port": true, "client.socket.address": true,
+	"network.peer.address": true, "network.peer.port": true, "network.local.address": true,
+	"net.peer.ip": true, "net.sock.peer.addr": true, "net.sock.peer.port": true, "net.peer.name": true,
+	"http.client_ip": true, "http.request.header.x-forwarded-for": true, "http.request.header.x-real-ip": true,
+	"http.request.header.forwarded": true,
 }
 
 const maxAttrString = 200
@@ -182,8 +188,19 @@ func (n *Normalizer) spanLog(parent store.Event, se *tracepb.Span_Event) store.E
 
 // spanAttrs copies attributes through the skip list, the lifted-id filter, the
 // length cap and the redact deny-list.
+//
+// Redaction accounting (R20): OnRedacted counts only deny-list hits, i.e. keys
+// or dt_sk_/dt_pk_ values that DT should already have stripped. Expected skips
+// (skippedKeys: SQL text, URLs, client/peer addresses; bytes values dropped by
+// anyValue) are silent, so the "DT redaction bug" signal is not noise.
+//
+// Like DT's collector (R18), keys in the standard OTel namespaces are not
+// segment-tested (messaging.destination.name, server.address, ...); only
+// credential-looking keys inside them are still dropped and counted.
 func (n *Normalizer) spanAttrs(raw map[string]any) map[string]any {
-	keep := map[string]any{}
+	out := map[string]any{}
+	dropped := 0
+	segTested := map[string]any{}
 	for k, v := range raw {
 		if skippedKeys[k] || liftedKeys[k] != "" {
 			continue
@@ -191,11 +208,54 @@ func (n *Normalizer) spanAttrs(raw map[string]any) map[string]any {
 		if s, ok := v.(string); ok && len(s) > maxAttrString {
 			v = s[:maxAttrString]
 		}
-		keep[k] = v
+		if !standardNamespace(k) {
+			segTested[k] = v
+			continue
+		}
+		if credentialKey(k) {
+			dropped++
+			continue
+		}
+		// Standard key: not segment-tested, but its value is still checked.
+		cleaned, d := redact.Attrs(map[string]any{"v": v})
+		dropped += d
+		if cv, ok := cleaned["v"]; ok {
+			out[k] = cv
+		}
 	}
-	out, dropped := redact.Attrs(keep)
+	rest, d := redact.Attrs(segTested)
+	dropped += d
+	for k, v := range rest {
+		out[k] = v
+	}
 	n.redacted(dropped)
 	return out
+}
+
+var standardPrefixes = []string{"messaging.", "server.", "client.", "network.", "db.", "rpc.", "http.", "url.", "service."}
+
+func standardNamespace(k string) bool {
+	k = strings.ToLower(k)
+	for _, p := range standardPrefixes {
+		if strings.HasPrefix(k, p) {
+			return true
+		}
+	}
+	return false
+}
+
+var credentialSegments = map[string]bool{
+	"authorization": true, "cookie": true, "token": true, "key": true, "apikey": true,
+	"secret": true, "password": true, "jwt": true, "bearer": true,
+}
+
+func credentialKey(k string) bool {
+	for _, seg := range strings.FieldsFunc(strings.ToLower(k), func(r rune) bool { return r == '_' || r == '.' || r == '-' }) {
+		if credentialSegments[seg] {
+			return true
+		}
+	}
+	return false
 }
 
 // callerFor picks the calling component of a client span: the single part of
@@ -230,19 +290,18 @@ func streamOf(dest, spanName string) string {
 	return strings.ToUpper(pre)
 }
 
+// ids reads tenant, environment and delivery id; the dt.* key wins over the
+// bare one, so the choice never depends on map order.
 func ids(raw map[string]any) (tenant, env, delivery string) {
-	for k, v := range raw {
-		s, _ := v.(string)
-		switch liftedKeys[k] {
-		case "tenant":
-			tenant = s
-		case "env":
-			env = s
-		case "delivery":
-			delivery = s
+	get := func(keys ...string) string {
+		for _, k := range keys {
+			if s, ok := raw[k].(string); ok && s != "" {
+				return s
+			}
 		}
+		return ""
 	}
-	return
+	return get("dt.tenant_id", "tenant_id"), get("dt.environment", "environment"), get("dt.delivery_id", "delivery_id")
 }
 
 func httpStatus(raw map[string]any) int {
