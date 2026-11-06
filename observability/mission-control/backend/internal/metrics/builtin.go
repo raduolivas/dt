@@ -37,6 +37,7 @@ type builtin struct {
 func (builtin) Name() string { return config.MetricsBuiltin }
 
 func (b builtin) WireTraffic(ctx context.Context, window time.Duration) ([]WireStat, error) {
+	// Live and simulated events both count: simulated traffic is real DT traffic (R27).
 	window = clampWindow(window)
 	aggs, err := b.st.WireAggregates(ctx, time.Now().Add(-window))
 	if err != nil {

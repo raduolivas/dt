@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -75,6 +76,29 @@ func TestPrometheusParsesVectors(t *testing.T) {
 	require.Len(t, got, 1)
 	require.Equal(t, "gateway.partner_api>deliveries.rpc", got[0].WireID)
 	require.InDelta(t, 3.5, got[0].Rate, 1e-9)
+}
+
+func TestPrometheusWholeCallBounded(t *testing.T) {
+	stop := make(chan struct{})
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("query")
+		if !strings.Contains(q, "histogram_quantile") && !strings.Contains(q, "5..") { // the rate query answers
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{"wire":"a>b"},"value":[1,"1"]}]}}`))
+			return
+		}
+		select { // error-rate and p95 queries hang
+		case <-stop:
+		case <-r.Context().Done():
+		}
+	}))
+	defer prom.Close()
+	defer close(stop)
+	p := metrics.New(config.Config{MetricsSource: config.MetricsPrometheus, PrometheusURL: prom.URL}, nil, topology.Default())
+	start := time.Now()
+	got, err := p.WireTraffic(context.Background(), time.Minute)
+	require.NoError(t, err, "optional queries failing must not fail the call")
+	require.Len(t, got, 1)
+	require.Less(t, time.Since(start), 2500*time.Millisecond)
 }
 
 func TestPrometheusEmptyIsError(t *testing.T) {

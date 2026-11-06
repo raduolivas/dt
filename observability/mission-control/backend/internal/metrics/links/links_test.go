@@ -37,6 +37,14 @@ func TestLinkNeverUnsafeScheme(t *testing.T) {
 	require.False(t, links.SafeTemplate(" javascript:x"))
 }
 
+func TestDotSegmentVarSkipsLink(t *testing.T) {
+	tpl := map[string]string{"grafana_trace": "https://g/t/{trace_id}"}
+	for _, v := range []string{".", ".."} {
+		require.Empty(t, links.Render(tpl, "grafana_trace", map[string]string{"trace_id": v}), v)
+	}
+	require.Len(t, links.Render(tpl, "grafana_trace", map[string]string{"trace_id": "a.b"}), 1)
+}
+
 func TestMissingVarSkipsLink(t *testing.T) {
 	tpl := map[string]string{"grafana_trace": "https://g/{trace_id}"}
 	require.Empty(t, links.Render(tpl, "grafana_trace", map[string]string{}))

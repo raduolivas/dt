@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,6 +93,21 @@ func TestLoadDropsNonHTTPLinks(t *testing.T) {
 	require.NotContains(t, cfg.Links, "grafana_trace")
 	require.NotContains(t, cfg.Links, "grafana_logs")
 	require.Contains(t, cfg.Links, "xray_trace")
+}
+
+func TestLoadWarnsOnUnknownLinkName(t *testing.T) {
+	clearEnv(t)
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(old)
+	t.Setenv("MC_LINK_GRAFANA", "http://localhost:3000/x")
+	t.Setenv("MC_LINK_GRAFANA_TRACE", "http://localhost:3000/t/{trace_id}")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.Contains(t, buf.String(), "unknown")
+	require.Contains(t, buf.String(), "grafana")
+	require.Contains(t, cfg.Links, "grafana_trace")
 }
 
 func TestLoadLinksAndThresholdsOverride(t *testing.T) {

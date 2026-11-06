@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
 	"go.yaml.in/yaml/v3"
 
 	mcconfig "github.com/raduolivas/dt/observability/mission-control/backend/config"
+	linkkinds "github.com/raduolivas/dt/observability/mission-control/backend/internal/metrics/links"
 )
 
 // SandboxKeyPrefix is the only API key prefix simulation may use.
@@ -130,6 +132,10 @@ func links() map[string]string {
 			if l := strings.ToLower(v); !strings.HasPrefix(l, "http://") && !strings.HasPrefix(l, "https://") {
 				slog.Warn("config: dropping link template that is not http(s)", "name", strings.ToLower(name))
 				continue
+			}
+			if !slices.Contains(linkkinds.Kinds(), strings.ToLower(name)) {
+				slog.Warn("config: unknown MC_LINK_ name, no link will be shown",
+					"name", strings.ToLower(name), "valid", strings.Join(linkkinds.Kinds(), ","))
 			}
 			out[strings.ToLower(name)] = v
 		}
