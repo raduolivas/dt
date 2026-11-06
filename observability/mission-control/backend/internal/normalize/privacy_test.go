@@ -101,6 +101,56 @@ func fillValue(_ protoreflect.Message, fd protoreflect.FieldDescriptor, cur prot
 	return cur
 }
 
+// The forbidden set is hard-coded on purpose: it is independent of Allowed and
+// of the redact deny-list, so a wrong Allowed entry cannot hide behind redact.
+var (
+	forbiddenExact = map[string]bool{"pickup_name": true, "display_name": true, "photo_url": true, "notes": true, "dropoff": true, "pickup": true}
+	forbiddenWords = []string{"phone", "email", "address", "name", "token", "secret", "key"}
+	safeIDFields   = map[string]bool{"event_id": true, "delivery_id": true, "courier_id": true, "tenant_id": true}
+)
+
+func forbiddenName(name string) bool {
+	if safeIDFields[name] {
+		return false
+	}
+	if forbiddenExact[name] {
+		return true
+	}
+	for _, w := range forbiddenWords {
+		if strings.Contains(name, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// forbiddenPath walks a dotted sentinel path from md: forbidden when any
+// component is a forbidden name or has message type LatLng.
+func forbiddenPath(md protoreflect.MessageDescriptor, path string) bool {
+	cur := md
+	for _, name := range strings.Split(path, ".") {
+		if forbiddenName(name) {
+			return true
+		}
+		if cur == nil {
+			return false
+		}
+		fd := cur.Fields().ByName(protoreflect.Name(name))
+		if fd == nil {
+			return false
+		}
+		if fd.Message() != nil {
+			if fd.Message().FullName() == "dt.events.v1.LatLng" {
+				return true
+			}
+			cur = fd.Message()
+		} else {
+			cur = nil
+		}
+	}
+	return false
+}
+
 func allMessages(t *testing.T) []protoreflect.MessageDescriptor {
 	t.Helper()
 	var all []protoreflect.MessageDescriptor
@@ -147,8 +197,14 @@ func TestEveryPayloadTypeIsAllowListed(t *testing.T) {
 			if !strings.Contains(text, rendered) {
 				continue
 			}
+			require.False(t, forbiddenPath(md, path), "%s: forbidden field %q (value %s) reached the event", md.FullName(), path, rendered)
 			require.True(t, allowed[path], "%s: field %q (value %s) reached the event but is not in Allowed", md.FullName(), path, rendered)
 			allowedSeen++
+		}
+		// Independent of the sentinels and of the redactor: no forbidden field
+		// may even be listed in Allowed.
+		for _, f := range Allowed[string(md.FullName())] {
+			require.False(t, forbiddenPath(md, f), "%s: Allowed lists forbidden field %q", md.FullName(), f)
 		}
 		count++
 	}
