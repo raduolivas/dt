@@ -376,7 +376,9 @@ func isDependency(c string) bool { return c == "redis" || c == "osrm" || strings
 // dependencyFailing (ruling R15): at least N failed outcomes in the window on
 // a wire into redis / osrm / pg.*, or a failing dependency in a health event.
 // OSRM's client in tracking is not traced, so its outage is read from the
-// route_fallback log lines instead.
+// route_fallback log lines instead. Those lines appear only when tracking
+// makes a routing call, so (ruling R28) scenario 6 is driven by the Task 13/14
+// break script forcing a routing call after stopping OSRM.
 func dependencyFailing(in *input) []Finding {
 	w := in.th.Detect.DependencyFailing.Window
 	var spans, osrmLogs []ev

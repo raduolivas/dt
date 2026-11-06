@@ -144,10 +144,22 @@ func (s *Store) DeliveryEventsByType(ctx context.Context, deliveryID string, typ
 		WHERE delivery_id = $1 AND attrs->>'event_type' = ANY($2) ORDER BY id LIMIT 1000`, deliveryID, types)
 }
 
-// DeliveryDetectors returns the stored detector findings of a delivery.
+// DeliveryDetectors returns the newest 200 stored detector findings of a
+// delivery, oldest first.
 func (s *Store) DeliveryDetectors(ctx context.Context, deliveryID string) ([]Event, error) {
-	return s.events(ctx, "delivery detectors", `SELECT `+eventCols+` FROM mc_event
-		WHERE delivery_id = $1 AND kind = 'detector' ORDER BY id LIMIT 200`, deliveryID)
+	return s.events(ctx, "delivery detectors", `SELECT * FROM (SELECT `+eventCols+` FROM mc_event
+		WHERE delivery_id = $1 AND kind = 'detector' ORDER BY id DESC LIMIT 200) x ORDER BY id`, deliveryID)
+}
+
+// LatestFinding returns the newest stored finding of a rule for a delivery
+// (a clear included); ok is false when there is none.
+func (s *Store) LatestFinding(ctx context.Context, deliveryID, rule string) (Event, bool, error) {
+	evs, err := s.events(ctx, "latest finding", `SELECT `+eventCols+` FROM mc_event
+		WHERE delivery_id = $1 AND kind = 'detector' AND attrs->>'rule' = $2 ORDER BY id DESC LIMIT 1`, deliveryID, rule)
+	if err != nil || len(evs) == 0 {
+		return Event{}, false, err
+	}
+	return evs[0], true, nil
 }
 
 // DeliverySpan returns the first and last occurred_at of the delivery's own
@@ -196,7 +208,7 @@ func (s *Store) RecentDetectors(ctx context.Context, since time.Time, limit int)
 // LastAcceptedFix is the newest accepted fix of one delivery (see
 // LastAcceptedFixes); ok is false when there is none.
 func (s *Store) LastAcceptedFix(ctx context.Context, deliveryID string) (Fix, bool, error) {
-	m, err := s.LastAcceptedFixes(ctx, []string{deliveryID})
+	m, err := s.LastAcceptedFixes(ctx, []string{deliveryID}, time.Time{})
 	f, ok := m[deliveryID]
 	return f, ok, err
 }

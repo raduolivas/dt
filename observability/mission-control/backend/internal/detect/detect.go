@@ -38,8 +38,8 @@ type Source interface {
 	Window(ctx context.Context, since time.Time) ([]store.Event, error)
 	// Statuses returns the newest delivery.created / delivery.status_changed event per delivery changed since.
 	Statuses(ctx context.Context, since time.Time) ([]store.Event, error)
-	// LastFixes returns the newest accepted fix per delivery id.
-	LastFixes(ctx context.Context, deliveryIDs []string) (map[string]store.Fix, error)
+	// LastFixes returns the newest accepted fix per delivery id, looking back to since.
+	LastFixes(ctx context.Context, deliveryIDs []string, since time.Time) (map[string]store.Fix, error)
 	// Health returns health events observed since plus the newest per (source, consumer).
 	Health(ctx context.Context, since time.Time) ([]store.Event, error)
 	Self(ctx context.Context) ([]store.SelfRow, error)
@@ -57,8 +57,8 @@ func (s storeSource) Window(ctx context.Context, since time.Time) ([]store.Event
 func (s storeSource) Statuses(ctx context.Context, since time.Time) ([]store.Event, error) {
 	return s.st.DeliveryStatuses(ctx, since)
 }
-func (s storeSource) LastFixes(ctx context.Context, ids []string) (map[string]store.Fix, error) {
-	return s.st.LastAcceptedFixes(ctx, ids)
+func (s storeSource) LastFixes(ctx context.Context, ids []string, since time.Time) (map[string]store.Fix, error) {
+	return s.st.LastAcceptedFixes(ctx, ids, since)
 }
 func (s storeSource) Health(ctx context.Context, since time.Time) ([]store.Event, error) {
 	return s.st.HealthSince(ctx, since)

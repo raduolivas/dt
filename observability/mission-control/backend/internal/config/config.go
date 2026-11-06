@@ -71,6 +71,16 @@ func (d Detect) validate() error {
 			return fmt.Errorf("config: thresholds: detect.%s must be > 0", name)
 		}
 	}
+	for name, v := range map[string]time.Duration{
+		"fixes_dropped": d.FixesDropped, "rejected_at_gateway": d.RejectedAtGateway,
+		"processed_not_published": d.ProcessedNotPublished, "consumer_lagging": d.ConsumerLagging,
+		"snapshot_not_delivered": d.SnapshotNotDelivered, "storm.window": d.Storm.Window,
+		"dependency_failing.window": d.DependencyFailing.Window,
+	} {
+		if d.Window < v {
+			return fmt.Errorf("config: thresholds: detect.window (%s) must be >= detect.%s (%s)", d.Window, name, v)
+		}
+	}
 	if d.Storm.Count <= 0 || d.DependencyFailing.Count <= 0 {
 		return errors.New("config: thresholds: detect storm and dependency_failing counts must be > 0")
 	}

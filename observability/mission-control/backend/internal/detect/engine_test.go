@@ -17,6 +17,8 @@ type fakeSource struct {
 	fixes                 map[string]store.Fix
 	self                  []store.SelfRow
 	stored                []store.Event
+	fixIDs                []string
+	fixSince              time.Time
 	nextID                int64
 }
 
@@ -24,7 +26,8 @@ func (f *fakeSource) Window(context.Context, time.Time) ([]store.Event, error) {
 func (f *fakeSource) Statuses(context.Context, time.Time) ([]store.Event, error) {
 	return f.statuses, nil
 }
-func (f *fakeSource) LastFixes(_ context.Context, _ []string) (map[string]store.Fix, error) {
+func (f *fakeSource) LastFixes(_ context.Context, ids []string, since time.Time) (map[string]store.Fix, error) {
+	f.fixIDs, f.fixSince = ids, since
 	return f.fixes, nil
 }
 func (f *fakeSource) Health(context.Context, time.Time) ([]store.Event, error) { return f.health, nil }
@@ -146,18 +149,67 @@ func TestEngineRestartDoesNotReEmitAnActiveFinding(t *testing.T) {
 func TestEngineMCBehindDropsOpenThenCloseAfterTheHold(t *testing.T) {
 	src, ck, eng, got := setup(t)
 	ctx := context.Background()
-	src.self = []store.SelfRow{{Source: "otlp", Drops: 3}}
+	// Drops counted during this run (the row was flushed after the engine started).
+	src.self = []store.SelfRow{{Source: "otlp", Drops: 3, LastSeen: ck.t}}
 	require.NoError(t, eng.Tick(ctx))
-	require.Len(t, *got, 1, "first sight of a non-zero drop counter counts as a drop now")
+	require.Len(t, *got, 1)
 	require.Equal(t, "events_dropped", (*got)[0].Reason)
 
-	ck.t = ck.t.Add(2 * time.Minute) // counter unchanged for longer than drops_hold
+	ck.t = ck.t.Add(2 * time.Minute) // counter unchanged for longer than drops_hold, row still flushed
+	src.self[0].LastSeen = ck.t
 	require.NoError(t, eng.Tick(ctx))
 	require.Len(t, *got, 2)
 	require.Equal(t, SevCleared, (*got)[1].Severity)
 
-	src.self = []store.SelfRow{{Source: "otlp", Drops: 5}} // grows again
+	src.self = []store.SelfRow{{Source: "otlp", Drops: 5, LastSeen: ck.t}} // grows again
 	require.NoError(t, eng.Tick(ctx))
 	require.Len(t, *got, 3)
 	require.Equal(t, SevWarning, (*got)[2].Severity)
+}
+
+// mc_self keeps the previous run's counters until the first flush: a restart
+// must not report them as drops or lag of this run.
+func TestEngineMCBehindIgnoresRowsFromBeforeTheRestart(t *testing.T) {
+	src, ck, eng, got := setup(t)
+	src.self = []store.SelfRow{{Source: "otlp", Drops: 9, LagMS: 60000, LastSeen: t0.Add(-time.Hour)}}
+	require.NoError(t, eng.Tick(context.Background()))
+	require.Empty(t, *got)
+
+	// this run flushes its own (zero) counters, then drops
+	ck.t = t0.Add(5 * time.Second)
+	src.self = []store.SelfRow{{Source: "otlp", Drops: 0, LastSeen: ck.t}}
+	require.NoError(t, eng.Tick(context.Background()))
+	require.Empty(t, *got)
+	ck.t = t0.Add(10 * time.Second)
+	src.self = []store.SelfRow{{Source: "otlp", Drops: 2, LastSeen: ck.t}}
+	require.NoError(t, eng.Tick(context.Background()))
+	require.Len(t, *got, 1)
+	require.Equal(t, "events_dropped", (*got)[0].Reason)
+}
+
+// A source that stopped flushing must not keep a lag finding open forever.
+func TestEngineMCBehindIgnoresStaleRows(t *testing.T) {
+	src, ck, eng, got := setup(t)
+	src.self = []store.SelfRow{{Source: "nats.TRACKING", LagMS: 30000, LastSeen: ck.t}}
+	require.NoError(t, eng.Tick(context.Background()))
+	require.Len(t, *got, 1)
+	require.Equal(t, "ingest_lag", (*got)[0].Reason)
+
+	ck.t = ck.t.Add(time.Minute) // no flush for a minute (3 x 5 s allowed)
+	require.NoError(t, eng.Tick(context.Background()))
+	require.Len(t, *got, 2)
+	require.Equal(t, SevCleared, (*got)[1].Severity)
+}
+
+// Only active deliveries are asked for, and the fix lookup is bounded in time.
+func TestEngineAsksForFixesOfActiveDeliveriesOnly(t *testing.T) {
+	src, ck, eng, _ := setup(t)
+	src.statuses = []store.Event{
+		status(1, "active", "picked_up", t0.Add(-time.Hour)).Event,
+		status(2, "done", "delivered", t0.Add(-time.Hour)).Event,
+		status(3, "waiting", "confirmed", t0.Add(-time.Hour)).Event,
+	}
+	require.NoError(t, eng.Tick(context.Background()))
+	require.Equal(t, []string{"active"}, src.fixIDs)
+	require.Equal(t, ck.t.Add(-defaults(t).Detect.StatusLookback), src.fixSince)
 }
