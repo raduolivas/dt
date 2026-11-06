@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -118,9 +119,73 @@ func TestTimelinePagination(t *testing.T) {
 	require.Equal(t, 3, pages)
 	require.IsIncreasing(t, got)
 
-	evs, _, err := s.Timeline(ctx, "del_1", 0, 100000)
+}
+
+func TestTimelineLimitIsClamped(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	now := time.Now().UTC()
+	in := make([]store.Event, store.MaxTimelineLimit+11)
+	for i := range in {
+		in[i] = store.Event{ObservedAt: now, OccurredAt: now, Kind: "event", Source: "d", DeliveryID: "del_1"}
+	}
+	require.NoError(t, s.InsertEvents(ctx, in))
+	evs, next, err := s.Timeline(ctx, "del_1", 0, 100000)
 	require.NoError(t, err)
-	require.Len(t, evs, 5, "limit is clamped, not rejected")
+	require.Len(t, evs, store.MaxTimelineLimit, "limit is clamped, not rejected")
+	require.NotZero(t, next)
+	rest, next2, err := s.Timeline(ctx, "del_1", next, 100000)
+	require.NoError(t, err)
+	require.Len(t, rest, 11)
+	require.Zero(t, next2)
+}
+
+func TestRetentionKeepsOrderWhileEventsExist(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	now := time.Now().UTC()
+	old := now.Add(-8 * 24 * time.Hour)
+	idx := index.New(s)
+	require.NoError(t, idx.OnEvent(ctx, created("t", "e", "LIVE", "del_live", old)))
+	require.NoError(t, s.InsertEvents(ctx, []store.Event{
+		{ObservedAt: old, OccurredAt: old, Kind: "event", Source: "d", DeliveryID: "del_live"},
+		{ObservedAt: now, OccurredAt: now, Kind: "event", Source: "d", DeliveryID: "del_live"},
+	}))
+	require.NoError(t, idx.OnEvent(ctx, created("t", "e", "DEAD", "del_dead", old)))
+	cutoff := now.Add(-7 * 24 * time.Hour)
+	_, err := s.DeleteOlderThan(ctx, cutoff)
+	require.NoError(t, err)
+	n, err := s.DeleteOrdersOlderThan(ctx, cutoff)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n)
+	h, _ := s.SearchOrder(ctx, "LIVE")
+	require.Len(t, h, 1, "order stays searchable while its events exist")
+	h, _ = s.SearchOrder(ctx, "DEAD")
+	require.Empty(t, h)
+}
+
+func TestTimelineUsesIndexes(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	now := time.Now().UTC()
+	in := make([]store.Event, 50000)
+	for i := range in {
+		in[i] = store.Event{ObservedAt: now, OccurredAt: now, Kind: "event", Source: "d",
+			DeliveryID: fmt.Sprintf("del_%d", i%2000), TraceID: fmt.Sprintf("tr_%d", i%2000)}
+		if i%3 == 0 {
+			in[i].DeliveryID = "" // span-like sibling
+		}
+	}
+	for i := 0; i < len(in); i += 5000 {
+		require.NoError(t, s.InsertEvents(ctx, in[i:i+5000]))
+	}
+	plan, err := s.ExplainTimeline(ctx, "del_7", 0, 100)
+	require.NoError(t, err)
+	t.Log("\n" + plan)
+	require.NotContains(t, plan, "Seq Scan on mc_event")
+	require.NotContains(t, plan, "mc_event_pkey")
+	require.Contains(t, plan, "mc_event_delivery_idx")
+	require.Contains(t, plan, "mc_event_trace_idx")
 }
 
 func TestDowntimeOverlap(t *testing.T) {
@@ -153,7 +218,7 @@ func TestRetentionDeletesOld(t *testing.T) {
 	require.NoError(t, idx.OnEvent(ctx, created("t", "e", "NEW", "del_n", now)))
 
 	done := make(chan struct{})
-	go func() { defer close(done); retention.Run(ctx, s, time.Hour, 7*24*time.Hour) }() // first prune runs at startup
+	go func() { defer close(done); retention.Run(ctx, s, time.Hour, 7*24*time.Hour, nil) }() // first prune runs at startup
 	require.Eventually(t, func() bool { n, _ := s.CountEvents(ctx); return n == 1 }, 5*time.Second, 50*time.Millisecond)
 	require.Eventually(t, func() bool { h, _ := s.SearchOrder(ctx, "OLD"); return len(h) == 0 }, 5*time.Second, 50*time.Millisecond)
 	h, _ := s.SearchOrder(ctx, "NEW")

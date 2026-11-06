@@ -15,9 +15,12 @@ type Pruner interface {
 }
 
 // Run prunes once immediately, then every `every`, until ctx ends. Failures
-// are logged and retried at the next tick.
-func Run(ctx context.Context, st Pruner, every, keep time.Duration) {
-	prune(ctx, st, keep)
+// are logged (to log) and retried at the next tick.
+func Run(ctx context.Context, st Pruner, every, keep time.Duration, log *slog.Logger) {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	prune(ctx, st, keep, log)
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -25,12 +28,12 @@ func Run(ctx context.Context, st Pruner, every, keep time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			prune(ctx, st, keep)
+			prune(ctx, st, keep, log)
 		}
 	}
 }
 
-func prune(ctx context.Context, st Pruner, keep time.Duration) {
+func prune(ctx context.Context, st Pruner, keep time.Duration, log *slog.Logger) {
 	cutoff := time.Now().Add(-keep)
 	steps := []struct {
 		name string
@@ -43,10 +46,10 @@ func prune(ctx context.Context, st Pruner, keep time.Duration) {
 		switch {
 		case err != nil:
 			if ctx.Err() == nil {
-				slog.Warn("retention prune failed", "table", s.name, "error", err.Error())
+				log.Warn("retention prune failed", "table", s.name, "error", err.Error())
 			}
 		case n > 0:
-			slog.Info("retention prune", "table", s.name, "deleted", n)
+			log.Info("retention prune", "table", s.name, "deleted", n)
 		}
 	}
 }
