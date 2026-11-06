@@ -6,6 +6,10 @@ export interface StreamOptions {
   lastEventId?: number;
   /** Wait between reconnects; defaults to setTimeout. */
   sleep?: (ms: number) => Promise<void>;
+  /** Reconnect when no bytes (data or keep-alive comment) arrive for this long. Default 45 s (server keep-alive: 15 s). */
+  idleMs?: number;
+  /** Drop the connection when an unfinished frame grows past this many characters. Default 1 MiB. */
+  maxBuffer?: number;
   onStatus?: (s: 'connecting' | 'open' | 'closed') => void;
 }
 
@@ -15,6 +19,8 @@ export interface StreamHandle {
 
 export const BACKOFF_START_MS = 500;
 export const BACKOFF_MAX_MS = 10_000;
+export const IDLE_MS = 45_000;
+export const MAX_BUFFER = 1 << 20;
 
 const TYPES = new Set(['event', 'detector', 'gap', 'bundle']);
 
@@ -25,9 +31,11 @@ interface Frame {
   data: string;
 }
 
-/** Splits an SSE byte stream into frames; keeps partial input between chunks. */
+/** Splits an SSE byte stream into frames; keeps partial input between chunks, up to a cap. */
 export class FrameParser {
   private buf = '';
+  constructor(private readonly max = MAX_BUFFER) {}
+
   push(chunk: string): Frame[] {
     this.buf += chunk;
     const out: Frame[] = [];
@@ -50,6 +58,7 @@ export class FrameParser {
       f.data = data.join('\n');
       if (data.length > 0 || f.id !== null) out.push(f);
     }
+    if (this.buf.length > this.max) throw new Error('stream: frame exceeds the buffer cap');
     return out;
   }
 }
@@ -58,7 +67,9 @@ export class FrameParser {
  * Opens the live stream (all events, or one delivery's). It reconnects for as
  * long as it is open, sends Last-Event-ID (the newest id received) on every
  * reconnect, and backs off 0.5 s, 1 s, 2 s ... capped at 10 s; the delay
- * resets once a message arrives.
+ * resets once a connection opens. A connection that goes quiet for idleMs
+ * (no data and no keep-alive) or whose frame outgrows maxBuffer is dropped
+ * and reopened.
  */
 export function openStream(
   deliveryId: string | undefined,
@@ -67,24 +78,19 @@ export function openStream(
 ): StreamHandle {
   const doFetch = opts.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const idleMs = opts.idleMs ?? IDLE_MS;
   const ctl = new AbortController();
   let last = opts.lastEventId ?? null;
   let delay = BACKOFF_START_MS;
   const url = '/api/stream' + (deliveryId ? `?delivery_id=${encodeURIComponent(deliveryId)}` : '');
 
-  async function once(): Promise<void> {
-    const headers: Record<string, string> = { Accept: 'text/event-stream' };
-    if (last !== null) headers['Last-Event-ID'] = String(last);
-    opts.onStatus?.('connecting');
-    const res = await doFetch(url, { headers, signal: ctl.signal, cache: 'no-store' });
-    if (!res.ok || !res.body) throw new Error(`stream: HTTP ${res.status}`);
-    opts.onStatus?.('open');
-    const parser = new FrameParser();
+  async function pump(reader: ReadableStreamDefaultReader<Uint8Array>, arm: () => void): Promise<void> {
+    const parser = new FrameParser(opts.maxBuffer);
     const dec = new TextDecoder();
-    const reader = res.body.getReader();
     for (;;) {
       const { done, value } = await reader.read();
       if (done) return;
+      arm();
       for (const f of parser.push(dec.decode(value, { stream: true }))) {
         const id = f.id === null ? NaN : Number(f.id);
         if (Number.isFinite(id)) last = id;
@@ -95,9 +101,35 @@ export function openStream(
         } catch {
           continue; // a malformed frame is skipped, never fatal
         }
-        delay = BACKOFF_START_MS;
         onMsg({ type: f.event, id, data } as StreamMessage);
       }
+    }
+  }
+
+  async function once(): Promise<void> {
+    const headers: Record<string, string> = { Accept: 'text/event-stream' };
+    if (last !== null) headers['Last-Event-ID'] = String(last);
+    opts.onStatus?.('connecting');
+    // One controller per connection: close() and the idle watchdog both abort it.
+    const conn = new AbortController();
+    const onClose = () => conn.abort();
+    ctl.signal.addEventListener('abort', onClose);
+    let idle: ReturnType<typeof setTimeout> | undefined;
+    const arm = () => {
+      clearTimeout(idle);
+      idle = setTimeout(() => conn.abort(), idleMs);
+    };
+    try {
+      arm();
+      const res = await doFetch(url, { headers, signal: conn.signal, cache: 'no-store' });
+      if (!res.ok || !res.body) throw new Error(`stream: HTTP ${res.status}`);
+      delay = BACKOFF_START_MS; // an opened connection is healthy, with or without a data frame
+      opts.onStatus?.('open');
+      await pump(res.body.getReader(), arm);
+    } finally {
+      clearTimeout(idle);
+      ctl.signal.removeEventListener('abort', onClose);
+      conn.abort();
     }
   }
 

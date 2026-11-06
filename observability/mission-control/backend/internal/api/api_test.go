@@ -50,14 +50,13 @@ func newServer(t *testing.T, st *store.Store, bc *api.Broadcaster, mod func(*api
 	return srv
 }
 
-func getJSON(t *testing.T, url string, out any) *http.Response {
+func getJSON(t *testing.T, url string, out any) {
 	t.Helper()
 	resp, err := http.Get(url)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode, url)
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(out))
-	return resp
 }
 
 type sseMsg struct{ ID, Event, Data string }
@@ -72,7 +71,7 @@ func openSSE(t *testing.T, url, lastID string) <-chan sseMsg {
 	if lastID != "" {
 		req.Header.Set("Last-Event-ID", lastID)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:bodyclose // closed by the reader goroutine below
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")

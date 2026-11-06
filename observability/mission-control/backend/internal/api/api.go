@@ -6,7 +6,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -96,7 +95,7 @@ func New(o Options) http.Handler {
 		a.links = noLinks{}
 	}
 	if a.log == nil {
-		a.log = slog.New(slog.NewTextHandler(io.Discard, nil))
+		a.log = slog.New(slog.DiscardHandler)
 	}
 	if a.rate <= 0 {
 		a.rate = defaultRate

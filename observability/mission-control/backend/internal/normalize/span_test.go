@@ -95,7 +95,7 @@ func TestSpanKindsAndWires(t *testing.T) {
 	k, s, tg = got("tracking", mkSpan("tracking.apply", tracepb.Span_SPAN_KIND_INTERNAL, 1))
 	require.Equal(t, []string{"state_change", "tracking.state", "tracking.state"}, []string{k, s, tg})
 
-	k, s, tg = got("deliveries", mkSpan("deliveries.assign", tracepb.Span_SPAN_KIND_INTERNAL, 1))
+	k, s, _ = got("deliveries", mkSpan("deliveries.assign", tracepb.Span_SPAN_KIND_INTERNAL, 1))
 	require.Equal(t, "state_change", k)
 	require.Equal(t, "deliveries.state_machine", s)
 }
@@ -178,4 +178,9 @@ func TestLogKeepsTraceID(t *testing.T) {
 	require.NotContains(t, string(e.Attrs), "Ann")
 	require.Contains(t, string(e.Attrs), "snapshot_publish_failed")
 	require.Equal(t, time.Unix(0, 42).UTC(), e.OccurredAt)
+}
+
+func TestNanoTimeClampsInsteadOfWrapping(t *testing.T) {
+	require.Equal(t, time.Unix(0, 5).UTC(), nanoTime(5))
+	require.False(t, nanoTime(1<<63+10).Before(time.Unix(0, 0)), "values past int64 must not wrap negative")
 }

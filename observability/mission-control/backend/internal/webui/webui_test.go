@@ -68,6 +68,20 @@ func TestNoTraversalAndGETOnly(t *testing.T) {
 	require.Equal(t, 405, code)
 }
 
+func TestDottedClientRoutesFallBack(t *testing.T) {
+	h := site(t)
+	for _, p := range []string{"/orders/del_1.2", "/orders/ORD-2026.11.05"} {
+		code, body, _ := get(h, "GET", p)
+		require.Equal(t, 200, code, p)
+		require.Contains(t, body, "INDEX", p)
+	}
+	for _, p := range []string{"/assets/missing.9", "/missing.js", "/missing.css", "/a/b.woff2", "/x.map", "/m.webmanifest", "/i.svg", "/i.png", "/f.ico", "/d.json", "/t.txt"} {
+		code, body, _ := get(h, "GET", p)
+		require.Equal(t, 404, code, p)
+		require.NotContains(t, body, "INDEX", p)
+	}
+}
+
 func TestNoIndexNoHandler(t *testing.T) {
 	_, ok := Handler(t.TempDir())
 	require.False(t, ok)
