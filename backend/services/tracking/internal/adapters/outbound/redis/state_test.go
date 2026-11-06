@@ -165,8 +165,11 @@ func TestPublisherSendsSnapshotJSON(t *testing.T) {
 	}
 	select {
 	case m := <-sub.Channel():
-		var got domain.TrackingSnapshot
-		if err := json.Unmarshal([]byte(m.Payload), &got); err != nil || got.Version != 42 || m.Channel != "dt:snap:del_1" {
+		var env struct {
+			S domain.TrackingSnapshot `json:"s"`
+		}
+		got := &env.S
+		if err := json.Unmarshal([]byte(m.Payload), &env); err != nil || got.Version != 42 || m.Channel != "dt:snap:del_1" {
 			t.Fatalf("got %s on %s: %v", m.Payload, m.Channel, err)
 		}
 	case <-time.After(5 * time.Second):

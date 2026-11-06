@@ -13,10 +13,16 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/raduolivas/dt/backend/pkg/viewerjwt"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/app"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/domain"
 )
+
+const tracerName = "github.com/raduolivas/dt/backend/services/tracking/internal/adapters/inbound/http"
 
 // Defaults (MVP spec §5.4, contract).
 const (
@@ -328,8 +334,13 @@ func scopeOf(c viewerjwt.Claims) app.Scope { return app.Scope{TenantID: c.Tenant
 
 // Snapshot implements app.FeedHandler: it fans a published snapshot out to
 // the delivery's local streams. It never blocks.
-func (h *Hub) Snapshot(deliveryID string, data []byte) {
+func (h *Hub) Snapshot(ctx context.Context, deliveryID string, data []byte) {
 	streams := h.streamsOf(h.byDelivery, deliveryID)
+	_, span := otel.Tracer(tracerName).Start(ctx, "tracking.viewer_fanout", trace.WithAttributes(
+		attribute.String("dt.delivery_id", deliveryID),
+		attribute.Int("tracking.viewers", len(streams)),
+	))
+	defer span.End()
 	if len(streams) == 0 {
 		return
 	}

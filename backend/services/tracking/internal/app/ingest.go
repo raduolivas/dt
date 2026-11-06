@@ -4,6 +4,12 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"sort"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	eventsv1 "github.com/raduolivas/dt/backend/gen/dt/events/v1"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/domain"
@@ -18,11 +24,25 @@ import (
 // Ingest fails only when every delivery failed. It returns
 // ErrCourierNotFound when the courier is not the scope's.
 func (s *Service) Ingest(ctx context.Context, sc Scope, courierID string, fixes []domain.Fix, source string) (accepted, dropped int, err error) {
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "tracking.ingest", trace.WithAttributes(
+		attribute.String("dt.tenant_id", sc.TenantID), attribute.String("dt.environment", sc.Env)))
+	defer func() {
+		span.SetAttributes(attribute.Int("tracking.fixes.accepted", accepted), attribute.Int("tracking.fixes.dropped", dropped))
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "ingest failed")
+		}
+		span.End()
+	}()
 	ids, err := s.States.ActiveDeliveriesForCourier(ctx, sc.TenantID, sc.Env, courierID)
 	if err != nil {
 		return 0, 0, err
 	}
-	if len(ids) == 0 || len(fixes) == 0 {
+	if len(fixes) == 0 {
+		return 0, 0, nil
+	}
+	if len(ids) == 0 {
+		s.reportDropped(ctx, "", map[string]int{ReasonNoActiveDelivery: len(fixes)})
 		return 0, len(fixes), nil
 	}
 	sorted := slices.Clone(fixes)
@@ -35,14 +55,21 @@ func (s *Service) Ingest(ctx context.Context, sc Scope, courierID string, fixes 
 	var rows []TrailRow
 	var failed []error
 	attempted := 0
+	// dropReasons[id][i] is why delivery id dropped fix i ("" when it did
+	// not); a fix only counts as dropped when no delivery kept it.
+	dropReasons := make(map[string][]string, len(ids))
 	for _, id := range ids {
 		var keptHere []bool
 		var rowsHere []TrailRow
+		var reasonsHere []string
 		err := s.Apply(ctx, sc, id, func(st *domain.State) error {
 			// Reset per attempt: Apply may run the mutation again.
-			keptHere, rowsHere = make([]bool, len(sorted)), nil
-			if st.Status.IsFinal() || st.Courier == nil || st.Courier.ID != courierID {
+			keptHere, rowsHere, reasonsHere = make([]bool, len(sorted)), nil, make([]string, len(sorted))
+			if reason := staleReason(st, courierID); reason != "" {
 				// A stale active set: the delivery was finished or reassigned.
+				for i := range reasonsHere {
+					reasonsHere[i] = reason
+				}
 				return ErrNoChange
 			}
 			now := s.Clock.Now()
@@ -56,6 +83,7 @@ func (s *Service) Ingest(ctx context.Context, sc Scope, courierID string, fixes 
 					}
 				case domain.TrailOnly:
 				default:
+					reasonsHere[i] = v.Reason
 					continue
 				}
 				keptHere[i] = true
@@ -69,6 +97,12 @@ func (s *Service) Ingest(ctx context.Context, sc Scope, courierID string, fixes 
 			return nil
 		})
 		if errors.Is(err, ErrNotFound) {
+			// The delivery is gone: not an outage, but the fixes were not kept.
+			reasons := make([]string, len(sorted))
+			for i := range reasons {
+				reasons[i] = ReasonDeliveryNotFound
+			}
+			dropReasons[id] = reasons
 			continue
 		}
 		attempted++
@@ -78,8 +112,14 @@ func (s *Service) Ingest(ctx context.Context, sc Scope, courierID string, fixes 
 			// kept them) and go on.
 			s.log().WarnContext(ctx, "ingest_delivery_failed", "delivery_id", id, "courier_id", courierID, "error", err)
 			failed = append(failed, err)
+			reasons := make([]string, len(sorted))
+			for i := range reasons {
+				reasons[i] = ReasonStateUpdateFailed
+			}
+			dropReasons[id] = reasons
 			continue
 		}
+		dropReasons[id] = reasonsHere
 		for i, k := range keptHere {
 			kept[i] = kept[i] || k
 		}
@@ -90,6 +130,15 @@ func (s *Service) Ingest(ctx context.Context, sc Scope, courierID string, fixes 
 			accepted++
 		}
 	}
+	for _, id := range ids {
+		counts := map[string]int{}
+		for i, r := range dropReasons[id] {
+			if r != "" && !kept[i] {
+				counts[r]++
+			}
+		}
+		s.reportDropped(ctx, id, counts)
+	}
 	if len(rows) > 0 {
 		s.Trail.Append(rows)
 	}
@@ -98,9 +147,47 @@ func (s *Service) Ingest(ctx context.Context, sc Scope, courierID string, fixes 
 	}
 	if len(failed) > 0 && len(failed) == attempted {
 		// Nothing could be applied anywhere: report the outage.
-		return 0, 0, errors.Join(failed...)
+		return 0, len(fixes), errors.Join(failed...)
 	}
 	return accepted, len(fixes) - accepted, nil
+}
+
+// Reasons a fix is dropped by Ingest. The domain verdict reasons (invalid,
+// future, speed, jump) are used as they are.
+const (
+	ReasonNoActiveDelivery  = "no_active_delivery"
+	ReasonDeliveryFinal     = "delivery_final"
+	ReasonDeliveryReassign  = "delivery_reassigned"
+	ReasonStateUpdateFailed = "state_update_failed"
+	ReasonDeliveryNotFound  = "delivery_not_found"
+)
+
+// staleReason is why a delivery in the courier's active set no longer takes
+// the courier's fixes, or "" when it does.
+func staleReason(st *domain.State, courierID string) string {
+	switch {
+	case st.Status.IsFinal():
+		return ReasonDeliveryFinal
+	case st.Courier == nil || st.Courier.ID != courierID:
+		return ReasonDeliveryReassign
+	}
+	return ""
+}
+
+// reportDropped records, per reason, how many fixes a delivery dropped: a
+// span event and a log line, neither with coordinates.
+func (s *Service) reportDropped(ctx context.Context, deliveryID string, counts map[string]int) {
+	reasons := make([]string, 0, len(counts))
+	for r := range counts {
+		reasons = append(reasons, r)
+	}
+	sort.Strings(reasons)
+	span := trace.SpanFromContext(ctx)
+	for _, r := range reasons {
+		span.AddEvent("fix_dropped", trace.WithAttributes(
+			attribute.String("dt.delivery_id", deliveryID), attribute.String("reason", r), attribute.Int("count", counts[r])))
+		s.log().WarnContext(ctx, "ingest_fixes_dropped", "delivery_id", deliveryID, "reason", r, "count", counts[r])
+	}
 }
 
 // reportLocation enqueues courier.location_reported at most once a minute

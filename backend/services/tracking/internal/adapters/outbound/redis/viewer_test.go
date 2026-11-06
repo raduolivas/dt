@@ -2,11 +2,17 @@ package redis_test
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/raduolivas/dt/backend/pkg/viewerjwt"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/adapters/outbound/redis"
@@ -133,6 +139,7 @@ func TestSnapshotLimiterFixedWindow(t *testing.T) {
 type feedEvents struct {
 	mu      sync.Mutex
 	snaps   map[string][]string
+	ctxs    []context.Context
 	revoked []string
 	expiry  map[string]time.Time
 	resyncs int
@@ -150,8 +157,9 @@ func (e *feedEvents) poke() {
 	}
 }
 
-func (e *feedEvents) Snapshot(id string, b []byte) {
+func (e *feedEvents) Snapshot(ctx context.Context, id string, b []byte) {
 	e.mu.Lock()
+	e.ctxs = append(e.ctxs, ctx)
 	e.snaps[id] = append(e.snaps[id], string(b))
 	e.mu.Unlock()
 	e.poke()
@@ -271,3 +279,107 @@ func TestFeedResubscribesAndResyncsAfterReconnect(t *testing.T) {
 }
 
 func goredisZ(score float64, m string) goredis.Z { return goredis.Z{Score: score, Member: m} }
+
+func useTracing(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+	prevProp, prevTP := otel.GetTextMapPropagator(), otel.GetTracerProvider()
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{}, propagation.Baggage{}))
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+		otel.SetTracerProvider(prevTP)
+		otel.SetTextMapPropagator(prevProp)
+	})
+	return rec
+}
+
+func TestPublishWrapsTraceparent(t *testing.T) {
+	useTracing(t)
+	rdb := client(t)
+	ctx, span := otel.Tracer("test").Start(context.Background(), "parent")
+	defer span.End()
+	sub := rdb.Subscribe(ctx, redis.SnapChannel("del_1"))
+	defer func() { _ = sub.Close() }()
+	if _, err := sub.Receive(ctx); err != nil { // the subscribe confirmation
+		t.Fatal(err)
+	}
+	snap := domain.TrackingSnapshot{DeliveryID: "del_1", Version: 3}
+	if err := redis.NewPublisher(rdb).Snapshot(ctx, "del_1", snap); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := sub.ReceiveMessage(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env struct {
+		TP string          `json:"tp"`
+		S  json.RawMessage `json:"s"`
+	}
+	if err := json.Unmarshal([]byte(msg.Payload), &env); err != nil {
+		t.Fatal(err)
+	}
+	want := "00-" + span.SpanContext().TraceID().String() + "-" + span.SpanContext().SpanID().String() + "-01"
+	if env.TP != want {
+		t.Fatalf("tp = %q, want %q", env.TP, want)
+	}
+	var got domain.TrackingSnapshot
+	if err := json.Unmarshal(env.S, &got); err != nil || got.DeliveryID != "del_1" || got.Version != 3 {
+		t.Fatalf("s = %s (%v)", env.S, err)
+	}
+}
+
+func runFeed(t *testing.T, rdb *goredis.Client) *feedEvents {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	feed := redis.NewFeed(rdb, nil)
+	ev := newFeedEvents()
+	done := make(chan error, 1)
+	go func() { done <- feed.Run(ctx, ev) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("feed Run = %v", err)
+		}
+	})
+	if err := feed.Subscribe(ctx, "del_1"); err != nil {
+		t.Fatal(err)
+	}
+	return ev
+}
+
+func TestFeedAcceptsBareSnapshot(t *testing.T) {
+	rdb := client(t)
+	ev := runFeed(t, rdb)
+	bare := `{"delivery_id":"del_1","version":9}`
+	rdb.Publish(context.Background(), redis.SnapChannel("del_1"), bare)
+	ev.waitFor(t, "bare snapshot", func() bool { return len(ev.snaps["del_1"]) == 1 })
+	if got := ev.snaps["del_1"][0]; got != bare {
+		t.Fatalf("handler got %q, want %q", got, bare)
+	}
+	if sc := trace.SpanContextFromContext(ev.ctxs[0]); sc.IsValid() {
+		t.Fatalf("bare snapshot ctx carries a span context: %v", sc)
+	}
+}
+
+func TestFeedExtractsContext(t *testing.T) {
+	useTracing(t)
+	rdb := client(t)
+	ev := runFeed(t, rdb)
+	ctx, span := otel.Tracer("test").Start(context.Background(), "parent")
+	defer span.End()
+	if err := redis.NewPublisher(rdb).Snapshot(ctx, "del_1", domain.TrackingSnapshot{DeliveryID: "del_1", Version: 4}); err != nil {
+		t.Fatal(err)
+	}
+	ev.waitFor(t, "enveloped snapshot", func() bool { return len(ev.snaps["del_1"]) == 1 })
+	var got domain.TrackingSnapshot
+	if err := json.Unmarshal([]byte(ev.snaps["del_1"][0]), &got); err != nil || got.Version != 4 {
+		t.Fatalf("handler got %q (%v)", ev.snaps["del_1"][0], err)
+	}
+	sc := trace.SpanContextFromContext(ev.ctxs[0])
+	if !sc.IsRemote() || sc.TraceID() != span.SpanContext().TraceID() {
+		t.Fatalf("ctx span context = %v, want remote with trace %s", sc, span.SpanContext().TraceID())
+	}
+}

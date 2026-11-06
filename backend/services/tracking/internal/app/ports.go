@@ -185,8 +185,9 @@ type Router interface {
 // FeedHandler receives what a ViewerFeed delivers. Its methods are called
 // from the feed's receive loop and must not block.
 type FeedHandler interface {
-	// Snapshot is a viewer snapshot (JSON) of a subscribed delivery.
-	Snapshot(deliveryID string, snapshot []byte)
+	// Snapshot is a viewer snapshot (JSON) of a subscribed delivery. ctx
+	// carries the publisher's trace context as a remote span context, if any.
+	Snapshot(ctx context.Context, deliveryID string, snapshot []byte)
 	// Revoked names a tracking link the gateway revoked.
 	Revoked(linkID string)
 	// Expiry is a tracking link's expiry, announced by the gateway.

@@ -1,0 +1,27 @@
+# Attribute keys the collector deletes. Must equal logx.SensitiveKeys()
+# (backend/pkg/logx/collector_keys_test.go). One key per line, sorted.
+- {key: address, action: delete}
+- {key: api_key, action: delete}
+- {key: apikey, action: delete}
+- {key: authorization, action: delete}
+- {key: bearer, action: delete}
+- {key: cookie, action: delete}
+- {key: coordinates, action: delete}
+- {key: database_url, action: delete}
+- {key: dsn, action: delete}
+- {key: email, action: delete}
+- {key: jwt, action: delete}
+- {key: key, action: delete}
+- {key: lat, action: delete}
+- {key: latitude, action: delete}
+- {key: lng, action: delete}
+- {key: location, action: delete}
+- {key: lon, action: delete}
+- {key: longitude, action: delete}
+- {key: name, action: delete}
+- {key: notes, action: delete}
+- {key: password, action: delete}
+- {key: phone, action: delete}
+- {key: position, action: delete}
+- {key: secret, action: delete}
+- {key: token, action: delete}
