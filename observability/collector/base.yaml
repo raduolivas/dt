@@ -22,13 +22,18 @@ processors:
     actions: ${file:/etc/otelcol/redact-keys.yaml}
   # logx matches keys by segment ("dropoff_lat", "x-api-key"); the exact-key
   # list above cannot. These statements delete any key with a sensitive
-  # segment and mask any value that looks like a DT API key.
+  # segment and mask any value that looks like a DT API key. Standard OTel
+  # namespaces (messaging.destination.name, server.address, ...) are stashed
+  # in cache first and merged back, since "name" and "address" are segments.
   transform/redact:
     error_mode: ignore
     trace_statements:
       - context: span
         statements: &redact_statements
+          - set(cache, attributes)
+          - keep_matching_keys(cache, "^(messaging|server|client|network|db|rpc|http|url|service)\\.")
           - delete_matching_keys(attributes, "(?i)(^|[_.-])(lat|lng|lon|latitude|longitude|location|position|coordinates|name|notes|email|phone|address|token|authorization|apikey|key|password|secret|cookie|jwt|bearer|dsn)([_.-]|$)")
+          - merge_maps(attributes, cache, "upsert")
           - replace_all_patterns(attributes, "value", "^(dt_sk_|dt_pk_).*", "[REDACTED]")
       - context: spanevent
         statements: *redact_statements

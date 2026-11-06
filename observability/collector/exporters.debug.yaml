@@ -1,7 +1,7 @@
 # Merged on top only when OTELCOL_DEBUG=1 (the Makefile sets OTELCOL_EXTRA_CONFIG).
 exporters:
   debug:
-    verbosity: basic
+    verbosity: detailed
 service:
   pipelines:
     traces:

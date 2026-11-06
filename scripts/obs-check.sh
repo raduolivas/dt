@@ -44,7 +44,7 @@ docker run -d --name "$cname" -p 127.0.0.1::4318 "${mounts[@]}" \
   "$image" "${args[@]}" --config /etc/otelcol/file.yaml >/dev/null
 port="$(docker port "$cname" 4318/tcp | head -1 | sed 's/.*://')"
 
-span='{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"obs-check"}}]},"scopeSpans":[{"spans":[{"traceId":"5b8efff798038103d269b633813fc60c","spanId":"eee19b7ec3c1b174","name":"obs-check-span","kind":1,"startTimeUnixNano":"1700000000000000000","endTimeUnixNano":"1700000001000000000","attributes":[{"key":"lat","value":{"stringValue":"52.1"}},{"key":"phone","value":{"stringValue":"+31612345678"}},{"key":"note","value":{"stringValue":"dt_sk_test_x"}},{"key":"dropoff_lat","value":{"stringValue":"seg-lat-77"}},{"key":"x-api-key","value":{"stringValue":"seg-apikey-88"}},{"key":"dt.delivery_id","value":{"stringValue":"keep-me"}}],"events":[{"name":"obs-check-event","timeUnixNano":"1700000000500000000","attributes":[{"key":"customer_phone","value":{"stringValue":"event-phone-99"}},{"key":"dt.event_id","value":{"stringValue":"keep-event"}}]}]}]}]}]}'
+span='{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"obs-check"}}]},"scopeSpans":[{"spans":[{"traceId":"5b8efff798038103d269b633813fc60c","spanId":"eee19b7ec3c1b174","name":"obs-check-span","kind":1,"startTimeUnixNano":"1700000000000000000","endTimeUnixNano":"1700000001000000000","attributes":[{"key":"lat","value":{"stringValue":"52.1"}},{"key":"phone","value":{"stringValue":"+31612345678"}},{"key":"note","value":{"stringValue":"dt_sk_test_x"}},{"key":"dropoff_lat","value":{"stringValue":"seg-lat-77"}},{"key":"x-api-key","value":{"stringValue":"seg-apikey-88"}},{"key":"dt.delivery_id","value":{"stringValue":"keep-me"}},{"key":"messaging.destination.name","value":{"stringValue":"keep-dest"}},{"key":"server.address","value":{"stringValue":"keep-server"}}],"events":[{"name":"obs-check-event","timeUnixNano":"1700000000500000000","attributes":[{"key":"customer_phone","value":{"stringValue":"event-phone-99"}},{"key":"dt.event_id","value":{"stringValue":"keep-event"}}]}]}]}]}]}'
 for _ in $(seq 1 30); do
   if curl -fsS -o /dev/null -X POST -H 'Content-Type: application/json' -d "$span" "http://127.0.0.1:$port/v1/traces"; then sent=1; break; fi
   sleep 1
@@ -70,6 +70,10 @@ grep -q 'obs-check-log' "$out" || { echo "FAIL: log record missing" >&2; fail=1;
 grep -q 'keep-event' "$out" || { echo "FAIL: dt.event_id on the span event was dropped" >&2; fail=1; }
 grep -q 'keep-log' "$out" || { echo "FAIL: dt.request_id on the log was dropped" >&2; fail=1; }
 grep -q 'keep-me' "$out" || { echo "FAIL: dt.delivery_id was dropped" >&2; fail=1; }
+# Standard OTel namespaces must survive the segment rule (name/address are sensitive segments).
+for keep in messaging.destination.name keep-dest server.address keep-server; do
+  grep -qF -- "$keep" "$out" || { echo "FAIL: standard attribute $keep was stripped" >&2; fail=1; }
+done
 for needle in '52.1' '+31612345678' 'dt_sk_test_x' seg-lat-77 seg-apikey-88 event-phone-99 log-email-11 log-lng-22; do
   if grep -qF -- "$needle" "$out"; then echo "FAIL: $needle survived redaction" >&2; fail=1; fi
 done

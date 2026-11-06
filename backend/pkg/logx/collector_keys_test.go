@@ -50,4 +50,8 @@ func TestCollectorSegmentRegexMatchesLogx(t *testing.T) {
 	got := strings.Split(m[1], "|")
 	sort.Strings(got)
 	require.Equal(t, logx.SensitiveSegments(), got)
+
+	// The stash/restore pair keeps standard OTel namespaces out of the delete.
+	require.Contains(t, string(raw), `keep_matching_keys(cache, "^(messaging|server|client|network|db|rpc|http|url|service)\\.")`)
+	require.Contains(t, string(raw), `merge_maps(attributes, cache, "upsert")`)
 }
