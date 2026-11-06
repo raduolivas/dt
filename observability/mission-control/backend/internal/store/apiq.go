@@ -227,3 +227,25 @@ func (s *Store) Activity(ctx context.Context, since time.Time) (map[string]time.
 	}
 	return out, rows.Err()
 }
+
+// MaxEventID is the newest stored event id, or 0 when there are none.
+func (s *Store) MaxEventID(ctx context.Context) (int64, error) {
+	var id int64
+	if err := s.pool.QueryRow(ctx, `SELECT coalesce(max(id), 0) FROM mc_event`).Scan(&id); err != nil {
+		return 0, fmt.Errorf("store: max event id: %w", err)
+	}
+	return id, nil
+}
+
+// FirstStart is when Mission Control first started (recorded by
+// RecordStartup); ok is false when it never recorded one.
+func (s *Store) FirstStart(ctx context.Context) (t time.Time, ok bool, err error) {
+	err = s.pool.QueryRow(ctx, `SELECT at FROM mc_meta WHERE key = 'first_start'`).Scan(&t)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return t, false, nil
+	}
+	if err != nil {
+		return t, false, fmt.Errorf("store: first start: %w", err)
+	}
+	return t, true, nil
+}

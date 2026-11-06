@@ -220,6 +220,7 @@ const (
 	typeCreated    = "delivery.created"
 	typeStatus     = "delivery.status_changed"
 	typeSignalLost = "tracking.courier_signal_lost"
+	typeRestored   = "tracking.courier_signal_restored"
 )
 
 type step struct {
@@ -239,12 +240,12 @@ type orderState struct {
 // into a warning when a CourierSignalLost event exists (tracking) or a stored
 // courier_stale finding does (ruling R14), unless the delivery already ended.
 func (a *API) loadOrderState(r *http.Request, deliveryID string, detectors []store.Event) (orderState, error) {
-	evs, err := a.st.DeliveryEventsByType(r.Context(), deliveryID, []string{typeCreated, typeStatus, typeSignalLost})
+	evs, err := a.st.DeliveryEventsByType(r.Context(), deliveryID, []string{typeCreated, typeStatus, typeSignalLost, typeRestored})
 	if err != nil {
 		return orderState{}, err
 	}
 	reached := map[string]time.Time{}
-	warn := false
+	var lostAt, restoredAt time.Time
 	for _, e := range evs {
 		var s string
 		switch attrString(e, "event_type") {
@@ -253,7 +254,13 @@ func (a *API) loadOrderState(r *http.Request, deliveryID string, detectors []sto
 		case typeStatus:
 			s = attrString(e, "to")
 		case typeSignalLost:
-			warn = true
+			if e.OccurredAt.After(lostAt) {
+				lostAt = e.OccurredAt
+			}
+		case typeRestored:
+			if e.OccurredAt.After(restoredAt) {
+				restoredAt = e.OccurredAt
+			}
 		}
 		if s == "" {
 			continue
@@ -262,8 +269,11 @@ func (a *API) loadOrderState(r *http.Request, deliveryID string, detectors []sto
 			reached[s] = e.OccurredAt
 		}
 	}
+	// Warning only while the newest of lost/restored is a loss, or a stale
+	// finding is newer than the last restore (ruling R14, amended).
+	warn := !lostAt.IsZero() && lostAt.After(restoredAt)
 	for _, d := range detectors {
-		if d.Reason == "courier_stale" || attrString(d, "rule") == "courier_stale" {
+		if (d.Reason == "courier_stale" || attrString(d, "rule") == "courier_stale") && d.OccurredAt.After(restoredAt) {
 			warn = true
 		}
 	}
@@ -337,6 +347,13 @@ type gap struct {
 	Kind string    `json:"kind"` // mc_down | no_trace
 }
 
+func earlier(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
 func intParam(r *http.Request, name string) (int64, error) {
 	v := r.URL.Query().Get(name)
 	if v == "" {
@@ -356,8 +373,8 @@ func intParam(r *http.Request, name string) (int64, error) {
 //
 // gaps: mc_down = Mission Control was not running inside the order's span
 // (first event to last event, or to now while the order is open); no_trace =
-// a run of consecutive events on this page without a trace id, linked to the
-// others only by delivery id and timing (spec §6.3 inferred links).
+// one band from the order's first event to Mission Control's first recorded
+// start when the order began earlier (no trace data for that period).
 func (a *API) getTimeline(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := r.PathValue("delivery_id")
@@ -400,25 +417,17 @@ func (a *API) getTimeline(w http.ResponseWriter, r *http.Request) {
 		for _, d := range downs {
 			gaps = append(gaps, gap{From: d.Start, To: d.End, Kind: "mc_down"})
 		}
-	}
-	var run []store.Event
-	flush := func() {
-		if len(run) > 0 {
-			gaps = append(gaps, gap{From: run[0].OccurredAt, To: run[len(run)-1].OccurredAt, Kind: "no_trace"})
-			run = nil
+		// Before Mission Control's first start only NATS history exists (OTLP
+		// is not recoverable): one band, not a per-event heuristic (R23).
+		fs, haveFirst, err := a.st.FirstStart(ctx)
+		if err != nil {
+			a.fail(w, "timeline first start", err)
+			return
+		}
+		if haveFirst && first.Before(fs) {
+			gaps = append(gaps, gap{From: first, To: earlier(fs, last), Kind: "no_trace"})
 		}
 	}
-	for _, e := range evs {
-		if e.Kind == "log" || e.Kind == "mc_self" {
-			continue
-		}
-		if e.TraceID == "" {
-			run = append(run, e)
-		} else {
-			flush()
-		}
-	}
-	flush()
 	writeJSON(w, http.StatusOK, map[string]any{"events": toEventDTOs(evs), "next": next, "gaps": gaps})
 }
 

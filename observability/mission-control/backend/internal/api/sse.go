@@ -16,22 +16,22 @@ const (
 	defaultRate      = 200
 	defaultWindow    = time.Second
 	defaultKeepAlive = 15 * time.Second
-	subBuffer        = 1024
 	replayPage       = store.MaxTimelineLimit
+	// writeTimeout bounds one SSE write, so a stalled client releases its
+	// goroutine and subscription.
+	writeTimeout = 10 * time.Second
 )
 
-// Sub is one SSE client's feed from the Broadcaster.
-type Sub struct {
-	C chan store.Event
-	// Overflow is signalled (never blocks) when C was full and events were
-	// dropped for this client; it then re-reads from the store.
-	Overflow chan struct{}
-}
+// Sub is one SSE client's wake-up channel.
+type Sub struct{ Wake chan struct{} }
 
-// Broadcaster fans newly inserted events out to SSE clients. OnEvent is the
-// ingest OnInserted hook: it never blocks. A client that cannot keep up loses
-// events from its buffer and catches up from the store (the same path as
-// Last-Event-ID resume), so nothing is lost, only delayed.
+// Broadcaster tells SSE clients that new events were stored. OnEvent is the
+// ingest OnInserted hook: it never blocks. It carries no payload on purpose:
+// writers call the hook after their own commit, so two writers can announce
+// out of order. Clients therefore read what is new from the store
+// (id > high-water mark); InsertEvents serialises inserts so id order equals
+// commit order and that read never leaves a hole (R24). A slow client just
+// wakes later and reads a bigger page.
 type Broadcaster struct {
 	mu   sync.RWMutex
 	subs map[*Sub]struct{}
@@ -42,11 +42,18 @@ func NewBroadcaster() *Broadcaster { return &Broadcaster{subs: map[*Sub]struct{}
 
 // Subscribe registers a client.
 func (b *Broadcaster) Subscribe() *Sub {
-	s := &Sub{C: make(chan store.Event, subBuffer), Overflow: make(chan struct{}, 1)}
+	s := &Sub{Wake: make(chan struct{}, 1)}
 	b.mu.Lock()
 	b.subs[s] = struct{}{}
 	b.mu.Unlock()
 	return s
+}
+
+// Len is the number of connected clients.
+func (b *Broadcaster) Len() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.subs)
 }
 
 // Unsubscribe removes a client.
@@ -56,21 +63,14 @@ func (b *Broadcaster) Unsubscribe(s *Sub) {
 	b.mu.Unlock()
 }
 
-// OnEvent delivers a stored event (ID set) to every client without blocking.
-func (b *Broadcaster) OnEvent(_ context.Context, e store.Event) error {
-	if e.ID == 0 {
-		return nil
-	}
+// OnEvent wakes every client without blocking.
+func (b *Broadcaster) OnEvent(_ context.Context, _ store.Event) error {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for s := range b.subs {
 		select {
-		case s.C <- e:
+		case s.Wake <- struct{}{}:
 		default:
-			select {
-			case s.Overflow <- struct{}{}:
-			default:
-			}
 		}
 	}
 	return nil
@@ -78,31 +78,30 @@ func (b *Broadcaster) OnEvent(_ context.Context, e store.Event) error {
 
 type bundleKey struct{ wire, outcome string }
 
-type bundle struct {
-	count  int
-	lastID int64
-}
-
 // client is the state of one SSE connection.
 type client struct {
 	w        http.ResponseWriter
 	fl       http.Flusher
+	rc       *http.ResponseController
 	st       *store.Store
 	delivery string
 	traces   map[string]bool // trace ids seen for the delivery (spans carry no delivery id)
 	rate     int
 
-	last    int64 // highest event id handled; -1 = none yet
+	last    int64 // high-water mark: highest event id handled
 	count   int   // live events sent in this window
-	bundles map[bundleKey]*bundle
+	bundles map[bundleKey]int
 	order   []bundleKey
 }
+
+func (c *client) deadline() { _ = c.rc.SetWriteDeadline(time.Now().Add(writeTimeout)) }
 
 func (c *client) write(id int64, event string, v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
+	c.deadline()
 	if _, err := fmt.Fprintf(c.w, "id: %d\nevent: %s\ndata: %s\n\n", id, event, b); err != nil {
 		return err
 	}
@@ -131,7 +130,9 @@ func wireOf(e store.Event) string {
 }
 
 // deliver sends e unless it was handled already or is filtered out. Live
-// events past the per-window rate are bundled; replayed history never is.
+// events past the per-window rate are bundled, except detector findings and
+// health changes, which always go out individually (R25). Replayed history is
+// never bundled.
 func (c *client) deliver(e store.Event, live bool) error {
 	if e.ID <= c.last {
 		return nil
@@ -140,19 +141,16 @@ func (c *client) deliver(e store.Event, live bool) error {
 	if !c.match(e) {
 		return nil
 	}
-	if live && c.count >= c.rate {
-		k := bundleKey{wireOf(e), e.Outcome}
-		b := c.bundles[k]
-		if b == nil {
-			b = &bundle{}
-			c.bundles[k] = b
-			c.order = append(c.order, k)
+	important := e.Kind == "detector" || e.Kind == "health"
+	if live && !important {
+		if c.count >= c.rate {
+			k := bundleKey{wireOf(e), e.Outcome}
+			if _, ok := c.bundles[k]; !ok {
+				c.order = append(c.order, k)
+			}
+			c.bundles[k]++
+			return nil
 		}
-		b.count++
-		b.lastID = e.ID
-		return nil
-	}
-	if live {
 		c.count++
 	}
 	name := "event"
@@ -162,22 +160,22 @@ func (c *client) deliver(e store.Event, live bool) error {
 	return c.write(e.ID, name, toEventDTO(e))
 }
 
-// endWindow resets the rate counter and emits the pending bundles.
+// endWindow resets the rate counter and emits the pending bundles. They carry
+// the high-water mark as id, so Last-Event-ID never moves backwards.
 func (c *client) endWindow() error {
 	c.count = 0
 	for _, k := range c.order {
-		b := c.bundles[k]
-		if err := c.write(b.lastID, "bundle", map[string]any{"wire": k.wire, "count": b.count, "outcome": k.outcome}); err != nil {
+		if err := c.write(c.last, "bundle", map[string]any{"wire": k.wire, "count": c.bundles[k], "outcome": k.outcome}); err != nil {
 			return err
 		}
 	}
-	c.bundles = map[bundleKey]*bundle{}
+	c.bundles = map[bundleKey]int{}
 	c.order = nil
 	return nil
 }
 
-// replay sends stored events after c.last, oldest first.
-func (c *client) replay(ctx context.Context) error {
+// catchUp sends stored events after the high-water mark, oldest first.
+func (c *client) catchUp(ctx context.Context, live bool) error {
 	if c.st == nil {
 		return nil
 	}
@@ -198,7 +196,7 @@ func (c *client) replay(ctx context.Context) error {
 			return err
 		}
 		for _, e := range evs {
-			if err := c.deliver(e, false); err != nil {
+			if err := c.deliver(e, live); err != nil {
 				return err
 			}
 		}
@@ -226,7 +224,7 @@ func (c *client) resume(ctx context.Context, last int64) error {
 		}
 		c.last = min - 1
 	}
-	return c.replay(ctx)
+	return c.catchUp(ctx, false)
 }
 
 func (a *API) stream(w http.ResponseWriter, r *http.Request) {
@@ -236,36 +234,55 @@ func (a *API) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	c := &client{w: w, fl: fl, st: a.st, delivery: r.URL.Query().Get("delivery_id"), traces: map[string]bool{},
-		rate: a.rate, last: -1, bundles: map[bundleKey]*bundle{}}
-	sub := a.bc.Subscribe() // before the replay, so no event falls between replay and live
+	c := &client{w: w, fl: fl, rc: http.NewResponseController(w), st: a.st, delivery: r.URL.Query().Get("delivery_id"),
+		traces: map[string]bool{}, rate: a.rate, bundles: map[bundleKey]int{}}
+	sub := a.bc.Subscribe() // before reading the start point, so no wake is missed
 	defer a.bc.Unsubscribe(sub)
 
+	resumed := false
+	if v := r.Header.Get("Last-Event-ID"); v != "" {
+		if id, err := strconv.ParseInt(v, 10, 64); err == nil && id >= 0 {
+			resumed = true
+			c.last = id
+		}
+	}
+	if c.st != nil {
+		if c.delivery != "" { // learn the delivery's trace ids before filtering
+			evs, _, err := c.st.Timeline(ctx, c.delivery, 0, replayPage)
+			if err != nil {
+				a.log.Warn("sse: seed traces failed", "error", err.Error())
+			}
+			for _, e := range evs {
+				if e.TraceID != "" {
+					c.traces[e.TraceID] = true
+				}
+			}
+		}
+		if !resumed { // live only: start at the newest stored event
+			max, err := c.st.MaxEventID(ctx)
+			if err != nil {
+				a.log.Warn("sse: start point failed", "error", err.Error())
+				writeErr(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+			c.last = max
+		}
+	}
+	// Headers go out only after the start point is fixed: a client that sees
+	// the response can rely on receiving everything stored after it.
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-cache")
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
+	c.deadline()
 	_, _ = fmt.Fprint(w, ": connected\n\n")
 	fl.Flush()
 
-	if c.delivery != "" && c.st != nil {
-		evs, _, err := c.st.Timeline(ctx, c.delivery, 0, replayPage)
-		if err != nil {
-			a.log.Warn("sse: seed traces failed", "error", err.Error())
-		}
-		for _, e := range evs {
-			if e.TraceID != "" {
-				c.traces[e.TraceID] = true
-			}
-		}
-	}
-	if v := r.Header.Get("Last-Event-ID"); v != "" {
-		if id, err := strconv.ParseInt(v, 10, 64); err == nil && id >= 0 {
-			if err := c.resume(ctx, id); err != nil {
-				a.log.Warn("sse: resume failed", "error", err.Error())
-				return
-			}
+	if resumed && c.st != nil {
+		if err := c.resume(ctx, c.last); err != nil {
+			a.log.Warn("sse: resume failed", "error", err.Error())
+			return
 		}
 	}
 
@@ -278,25 +295,19 @@ func (a *API) stream(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
-		case e := <-sub.C:
-			if c.last < 0 {
-				c.last = e.ID - 1
-			}
-			err = c.deliver(e, true)
-		case <-sub.Overflow:
-			for len(sub.C) > 0 { // everything dropped or queued is in the store
-				<-sub.C
-			}
-			if c.last >= 0 {
-				err = c.replay(ctx)
-			}
+		case <-sub.Wake:
+			err = c.catchUp(ctx, true)
 		case <-win.C:
 			err = c.endWindow()
 		case <-keep.C:
+			c.deadline()
 			_, err = fmt.Fprint(w, ": keep-alive\n\n")
 			fl.Flush()
 		}
 		if err != nil {
+			if ctx.Err() == nil {
+				a.log.Warn("sse: client stream ended", "error", err.Error())
+			}
 			return
 		}
 	}

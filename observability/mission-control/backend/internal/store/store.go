@@ -38,6 +38,9 @@ type Event struct {
 	Attrs      []byte
 }
 
+// insertLockKey is the advisory lock InsertEvents holds for its transaction.
+const insertLockKey int64 = 0x4d43455645 // "MCEVE"
+
 // Store wraps the connection pool.
 type Store struct{ pool *pgxpool.Pool }
 
@@ -95,6 +98,11 @@ func (s *Store) InsertEvents(ctx context.Context, events []Event) error {
 		return fmt.Errorf("store: insert events: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Serialise inserters so id order equals commit order: the SSE stream and
+	// its Last-Event-ID resume rely on a gap-free high-water mark (R24).
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, insertLockKey); err != nil {
+		return fmt.Errorf("store: insert events: %w", err)
+	}
 	res := tx.SendBatch(ctx, b)
 	ids := make([]int64, len(events))
 	for i := range events {
@@ -155,6 +163,10 @@ func (s *Store) Heartbeat(ctx context.Context, now time.Time) error {
 // RecordStartup writes the gap between the last heartbeat and now as a
 // downtime window. With no earlier heartbeat (first start) it writes nothing.
 func (s *Store) RecordStartup(ctx context.Context, now time.Time) error {
+	// The very first start is remembered: before it, only NATS history exists.
+	if _, err := s.pool.Exec(ctx, `INSERT INTO mc_meta (key, at) VALUES ('first_start', $1) ON CONFLICT DO NOTHING`, now); err != nil {
+		return fmt.Errorf("store: record startup: %w", err)
+	}
 	var last time.Time
 	err := s.pool.QueryRow(ctx, `SELECT last_seen FROM mc_self WHERE source = $1`, selfSourceMC).Scan(&last)
 	if errors.Is(err, pgx.ErrNoRows) {
