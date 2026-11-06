@@ -1,6 +1,9 @@
 package topology
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestEveryWireEndsExist(t *testing.T) {
 	tp := Default()
@@ -51,6 +54,21 @@ func TestResolveTrackingSpans(t *testing.T) {
 		if got := tp.Resolve(c.svc, c.name, c.attrs); got != c.want {
 			t.Errorf("Resolve(%s,%q) = %q, want %q", c.svc, c.name, got, c.want)
 		}
+	}
+}
+
+func TestGatewayWires(t *testing.T) {
+	var limiterRedis bool
+	for _, w := range Default().Wires {
+		if w.From == "gateway.rate_limiter" && w.To == "redis" && w.Channel == ChanRedis {
+			limiterRedis = true
+		}
+		if w.To == "accounts" && w.Channel == ChanRPC && strings.HasPrefix(w.From, "gateway") {
+			t.Errorf("gateway has no accounts rpc client: %s", w.ID)
+		}
+	}
+	if !limiterRedis {
+		t.Error("missing gateway.rate_limiter -> redis")
 	}
 }
 
