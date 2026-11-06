@@ -400,7 +400,16 @@ func TestRelayPublishSpanErrorOnFailure(t *testing.T) {
 	js.failing.Store(true)
 	e.enqueue(t, context.Background(), newEnvelope(t), true)
 
-	runFor(t, 400*time.Millisecond, e.relay(js).Run)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- e.relay(js).Run(ctx) }()
+	waitFor(t, 10*time.Second, "the failed publish span", func() bool {
+		return endedSpan(rec, "publish "+revokedSubject) != nil
+	})
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("relay returned %v", err)
+	}
 
 	pub := endedSpan(rec, "publish "+revokedSubject)
 	if pub == nil {

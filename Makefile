@@ -163,7 +163,7 @@ dev: osrm-data ## Build and start the local stack, then wait until every service
 	scripts/wait-ready.sh
 
 down: ## Stop the local stack and delete its volumes
-	$(COMPOSE) down -v
+	$(COMPOSE) down -v --remove-orphans
 
 logs: ## Follow the local stack logs
 	$(COMPOSE) logs -f
