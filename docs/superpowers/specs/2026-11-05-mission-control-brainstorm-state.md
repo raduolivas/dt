@@ -140,3 +140,10 @@ Claude proposed collector-as-hub + backend adapters + deep links (see design §4
 **MC-14 (owner, 2026-11-05):** integrations section added (design §4.6): collector hub, adapters builtin/prometheus (v1) and cloudwatch (staging), Grafana/Tempo/Loki links (v1), X-Ray/CloudWatch Logs links (staging). Next: owner reads and approves the design → superpowers:writing-plans.
 
 **Design approved by the owner, 2026-11-05 ("approved, write the plan").**
+
+**PR 1 (DT groundwork), 2026-11-06:** plan `2026-11-05-mc1-dt-groundwork.md` done on branch `mc-groundwork`
+(Tasks 1–7, final review + one fix wave clean). Live checks passed: `make dev && make smoke` with the collector up
+(collector only logs export drops while Mission Control is absent), `OBS=0` (no collector, no export errors),
+`make latency` (p95 5 ms), and one end-to-end trace gateway `POST /v1/courier/locations` → `IngestLocations` →
+`tracking.ingest` → `tracking.apply` → `tracking.viewer_fanout`. A viewer fan-out span appears only after pickup,
+when the snapshot carries the courier. PR to `main` opened. Next: PR 2, `2026-11-05-mc2-mission-control-app.md`.
