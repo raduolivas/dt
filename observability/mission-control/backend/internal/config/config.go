@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -125,6 +126,11 @@ func links() map[string]string {
 	for _, kv := range os.Environ() {
 		k, v, _ := strings.Cut(kv, "=")
 		if name, ok := strings.CutPrefix(k, "MC_LINK_"); ok && v != "" && name != "" {
+			// Only http(s) templates: never a javascript: or data: URL. The value is not logged.
+			if l := strings.ToLower(v); !strings.HasPrefix(l, "http://") && !strings.HasPrefix(l, "https://") {
+				slog.Warn("config: dropping link template that is not http(s)", "name", strings.ToLower(name))
+				continue
+			}
 			out[strings.ToLower(name)] = v
 		}
 	}

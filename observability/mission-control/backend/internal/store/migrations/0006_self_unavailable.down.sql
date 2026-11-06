@@ -1,0 +1,1 @@
+ALTER TABLE mc_self DROP COLUMN IF EXISTS unavailable;

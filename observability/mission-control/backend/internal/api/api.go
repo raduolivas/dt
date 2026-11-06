@@ -20,6 +20,10 @@ type WireTraffic struct {
 	Wire   string `json:"wire"`
 	Count  int64  `json:"count"`
 	Failed int64  `json:"failed"`
+	// Rate is events per second, ErrorRate the failed fraction (0..1), P95Ms the 95th percentile duration.
+	Rate      float64 `json:"rate"`
+	ErrorRate float64 `json:"errorRate"`
+	P95Ms     float64 `json:"p95Ms"`
 }
 
 // Link is an "Open in..." deep link (Task 7).

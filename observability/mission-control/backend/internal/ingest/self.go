@@ -22,6 +22,15 @@ const selfInterval = 5 * time.Second
 type Counts struct {
 	Drops, Redacted, StorageErrors int64
 	LagMS                          int64
+	Unavailable                    bool
+}
+
+// SourceMetrics is the mc_self row that holds the metrics-source flag.
+const SourceMetrics = "metrics"
+
+// MetricsSourceUnavailable sets metrics_source_unavailable (metrics.Flag).
+func (s *Self) MetricsSourceUnavailable(v bool) {
+	s.with(SourceMetrics, func(c *Counts) { c.Unavailable = v })
 }
 
 // Self holds Mission Control's own health counters per source. All methods are
@@ -95,7 +104,7 @@ func (s *Self) Flush(ctx context.Context, now time.Time) {
 	}
 	for src, c := range s.Snapshot() {
 		err := s.st.SaveSelf(ctx, store.SelfRow{Source: src, LastSeen: now, LagMS: c.LagMS,
-			Drops: c.Drops, Redacted: c.Redacted, StorageErrors: c.StorageErrors})
+			Drops: c.Drops, Redacted: c.Redacted, StorageErrors: c.StorageErrors, Unavailable: c.Unavailable})
 		if err != nil {
 			s.log.Warn("self-health flush failed", "source", src, "error", err.Error())
 		}

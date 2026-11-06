@@ -606,10 +606,12 @@ func (a *API) getSelf(w http.ResponseWriter, r *http.Request) {
 		Drops         int64     `json:"drops"`
 		Redacted      int64     `json:"redacted"`
 		StorageErrors int64     `json:"storageErrors"`
+		// MetricsSourceUnavailable is true while the configured metrics source fails and builtin is used.
+		MetricsSourceUnavailable bool `json:"metricsSourceUnavailable"`
 	}
 	out := make([]row, len(rows))
 	for i, x := range rows {
-		out[i] = row{x.Source, x.LastSeen, x.LagMS, x.Drops, x.Redacted, x.StorageErrors}
+		out[i] = row{x.Source, x.LastSeen, x.LagMS, x.Drops, x.Redacted, x.StorageErrors, x.Unavailable}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
