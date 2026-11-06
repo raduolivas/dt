@@ -42,7 +42,7 @@ func (s *Store) DeliveryStatuses(ctx context.Context, since time.Time) ([]Event,
 // courier's deliveries), so the trace links them.
 const acceptedFixSQL = `SELECT DISTINCT ON (a.delivery_id) a.delivery_id, a.id, a.occurred_at
 	FROM mc_event a
-	WHERE a.delivery_id = ANY($1) AND a.kind = 'state_change' AND a.outcome = 'ok'
+	WHERE a.delivery_id = ANY($1) AND a.occurred_at >= $2 AND a.kind = 'state_change' AND a.outcome = 'ok'
 	  AND a.attrs->>'span_name' = 'tracking.apply' AND a.trace_id <> ''
 	  AND EXISTS (SELECT 1 FROM mc_event i WHERE i.trace_id = a.trace_id AND i.kind = 'request'
 	      AND i.attrs->>'span_name' = 'tracking.ingest'
@@ -53,12 +53,12 @@ const acceptedFixSQL = `SELECT DISTINCT ON (a.delivery_id) a.delivery_id, a.id, 
 
 // LastAcceptedFixes returns the newest accepted fix of each listed delivery
 // that has one.
-func (s *Store) LastAcceptedFixes(ctx context.Context, deliveryIDs []string) (map[string]Fix, error) {
+func (s *Store) LastAcceptedFixes(ctx context.Context, deliveryIDs []string, since time.Time) (map[string]Fix, error) {
 	out := map[string]Fix{}
 	if len(deliveryIDs) == 0 {
 		return out, nil
 	}
-	rows, err := s.pool.Query(ctx, acceptedFixSQL, deliveryIDs)
+	rows, err := s.pool.Query(ctx, acceptedFixSQL, deliveryIDs, since)
 	if err != nil {
 		return nil, fmt.Errorf("store: last accepted fixes: %w", err)
 	}

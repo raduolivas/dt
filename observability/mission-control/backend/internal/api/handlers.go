@@ -239,7 +239,7 @@ type orderState struct {
 // into a warning while the courier signal is lost (tracking) or an open stored
 // courier_stale finding is newer than the last accepted fix (ruling R14,
 // amended), unless the delivery already ended.
-func (a *API) loadOrderState(r *http.Request, deliveryID string, detectors []store.Event) (orderState, error) {
+func (a *API) loadOrderState(r *http.Request, deliveryID string) (orderState, error) {
 	evs, err := a.st.DeliveryEventsByType(r.Context(), deliveryID, []string{typeCreated, typeStatus, typeSignalLost, typeRestored})
 	if err != nil {
 		return orderState{}, err
@@ -275,13 +275,11 @@ func (a *API) loadOrderState(r *http.Request, deliveryID string, detectors []sto
 	// accepted-fix test (store.LastAcceptedFixes) drops the warning the moment a
 	// fix lands, before the detector's next tick stores the clear.
 	warn := !lostAt.IsZero() && lostAt.After(restoredAt)
-	var stale *store.Event
-	for i, d := range detectors { // oldest first: the last match is the newest finding
-		if d.Reason == "courier_stale" || attrString(d, "rule") == "courier_stale" {
-			stale = &detectors[i]
-		}
+	stale, hasStale, err := a.st.LatestFinding(r.Context(), deliveryID, "courier_stale")
+	if err != nil {
+		return orderState{}, err
 	}
-	if stale != nil && stale.Outcome != "cleared" {
+	if hasStale && stale.Outcome != "cleared" {
 		fix, ok, err := a.st.LastAcceptedFix(r.Context(), deliveryID)
 		if err != nil {
 			return orderState{}, err
@@ -346,7 +344,7 @@ func (a *API) getOrder(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "order detectors", err)
 		return
 	}
-	state, err := a.loadOrderState(r, id, detectors)
+	state, err := a.loadOrderState(r, id)
 	if err != nil {
 		a.fail(w, "order status", err)
 		return
@@ -413,7 +411,7 @@ func (a *API) getTimeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ok {
-		state, err := a.loadOrderState(r, id, nil)
+		state, err := a.loadOrderState(r, id)
 		if err != nil {
 			a.fail(w, "timeline status", err)
 			return

@@ -12,6 +12,10 @@ import (
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/store"
 )
 
+// selfFresh is how recent an mc_self row must be to count: three flush
+// intervals (ingest.Self flushes every 5 s).
+const selfFresh = 15 * time.Second
+
 func (f Finding) key() string { return f.Detector + "|" + f.Hop + "|" + f.DeliveryID + "|" + f.Reason }
 
 // activeRec is a finding that has been stored and not yet cleared.
@@ -28,6 +32,7 @@ type Engine struct {
 	emit       func(Finding)
 	onInserted func(ctx context.Context, e store.Event) error
 
+	start     time.Time // when this process's engine began; older mc_self rows are the previous run's
 	loaded    bool
 	active    map[string]activeRec
 	prevDrops map[string]int64
@@ -40,7 +45,7 @@ func NewEngine(src Source, th config.Thresholds, now func() time.Time, emit func
 	if now == nil {
 		now = time.Now
 	}
-	return &Engine{src: src, th: th, now: now, emit: emit, onInserted: onInserted,
+	return &Engine{src: src, th: th, now: now, start: now().UTC(), emit: emit, onInserted: onInserted,
 		active: map[string]activeRec{}, prevDrops: map[string]int64{}, dropAt: map[string]time.Time{}}
 }
 
@@ -80,9 +85,11 @@ func (e *Engine) input(ctx context.Context, now time.Time) (*input, error) {
 	var ids []string
 	for _, s := range wrap(sts) {
 		in.status[s.DeliveryID] = s
-		ids = append(ids, s.DeliveryID)
+		if activeStatuses[statusOf(s)] { // only courier_stale needs fixes
+			ids = append(ids, s.DeliveryID)
+		}
 	}
-	if in.fixes, err = e.src.LastFixes(ctx, ids); err != nil {
+	if in.fixes, err = e.src.LastFixes(ctx, ids, now.Add(-d.StatusLookback)); err != nil {
 		return nil, err
 	}
 	if in.fixes == nil {
@@ -93,8 +100,17 @@ func (e *Engine) input(ctx context.Context, now time.Time) (*input, error) {
 		return nil, err
 	}
 	in.health = wrap(h)
-	if in.self, err = e.src.Self(ctx); err != nil {
+	rows, err := e.src.Self(ctx)
+	if err != nil {
 		return nil, err
+	}
+	// mc_self keeps the previous run's counters until this run's first flush, and
+	// a source that stopped flushing keeps its last numbers: use only rows this
+	// run wrote recently.
+	for _, r := range rows {
+		if !r.LastSeen.Before(e.start) && now.Sub(r.LastSeen) <= selfFresh {
+			in.self = append(in.self, r)
+		}
 	}
 	for _, r := range in.self {
 		if r.Drops > e.prevDrops[r.Source] {
