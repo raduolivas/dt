@@ -74,7 +74,7 @@ func Default() Topology {
 	add("deliveries", "Deliveries", ZoneServices, "", true, "")
 	parts("deliveries", ZoneServices, "rpc", "state_machine", "outbox", "consumers")
 	add("tracking", "Tracking", ZoneServices, "", true, "")
-	parts("tracking", ZoneServices, "ingest", "consumers", "state", "hub", "sweeper", "outbox")
+	parts("tracking", ZoneServices, "ingest", "consumers", "state", "hub", "sweeper", "outbox", "simulator")
 	add("accounts", "Accounts", ZoneServices, "", true, "")
 	add("webhooks", "Webhooks", ZoneServices, "", false, "not_built")
 
@@ -116,6 +116,9 @@ func Default() Topology {
 	w("nats.ACCOUNTS", "deliveries.consumers", ChanNATS)
 	w("deliveries.consumers", "deliveries.state_machine", ChanSQL)
 
+	// DT's built-in sandbox simulator path (tracking/internal/app/simulator.go):
+	// it calls the deliveries RPCs (Get, UpsertCourier, Assign, Report).
+	w("tracking.simulator", "deliveries.rpc", ChanRPC)
 	w("tracking.ingest", "tracking.state", ChanRedis)
 	w("tracking.ingest", "osrm", ChanOSRM)
 	w("tracking.ingest", "tracking.outbox", ChanSQL)
@@ -164,6 +167,8 @@ func (t Topology) Resolve(service, spanName string, attrs map[string]string) str
 		return part("outbox")
 	case strings.HasPrefix(spanName, "consume "):
 		return part("consumers")
+	case service == "tracking" && spanName == "/dt.tracking.v1.TrackingService/Simulate":
+		return "tracking.simulator" // DT's built-in sandbox simulator
 	case strings.HasPrefix(spanName, "/dt."):
 		// Connect span (client and server share the name): the callee's rpc part.
 		switch strings.SplitN(strings.TrimPrefix(spanName, "/dt."), ".", 2)[0] {
