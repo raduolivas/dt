@@ -18,8 +18,10 @@ import (
 	"github.com/raduolivas/dt/backend/pkg/httpx"
 	"github.com/raduolivas/dt/backend/pkg/logx"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/config"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/index"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/ingest"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/normalize"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/retention"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/store"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/topology"
 )
@@ -59,7 +61,9 @@ func run(ctx context.Context, stop context.CancelFunc) error {
 
 	self := ingest.NewSelf(st, log)
 	norm := &normalize.Normalizer{Topology: topology.Default(), Thresholds: cfg.Thresholds, OnRedacted: self.Redacted}
+	idx := index.New(st)
 	writer := ingest.NewWriter(st, self, ingest.DefaultBuffer)
+	writer.OnInserted = idx.OnEvent
 	otlpSrv := &http.Server{Addr: cfg.OTLPAddr, Handler: ingest.OTLPHandler(writer, norm, self, log), ReadHeaderTimeout: 5 * time.Second}
 
 	// Shutdown order: stop the servers (no new OTLP), stop pollers and consumers
@@ -80,7 +84,7 @@ func run(ctx context.Context, stop context.CancelFunc) error {
 		}
 	})
 	spawn(&wwg, func() { writer.Run(wctx) })
-	spawn(&wg, func() { prune(ctx, st, cfg, log) })
+	spawn(&wg, func() { retention.Run(ctx, st, pruneInterval, cfg.Retention) })
 	spawn(&wg, func() { ingest.PollHealth(ctx, healthTargets(cfg), ingest.PollInterval, writer.Sink("health")) })
 	spawn(&wg, func() {
 		ingest.PollConsumers(ctx, cfg.NATSMonitorURL, ingest.PollInterval, writer.Sink("nats.monitor"))
@@ -92,7 +96,7 @@ func run(ctx context.Context, stop context.CancelFunc) error {
 				Outcome: outcome, Reason: reason, Origin: "live"})
 		}
 		ingest.RunNATSLoop(ctx, cfg.NATSURL, st, norm,
-			ingest.NATSOptions{Self: self, Log: log, Retention: cfg.Retention}, emit)
+			ingest.NATSOptions{Self: self, Log: log, Retention: cfg.Retention, OnInserted: idx.OnEvent}, emit)
 	})
 
 	errc := make(chan error, 2)
@@ -138,24 +142,6 @@ func openStore(ctx context.Context, url string, log *slog.Logger) (*store.Store,
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-time.After(2 * time.Second):
-		}
-	}
-}
-
-// prune deletes events past retention once an hour.
-func prune(ctx context.Context, st *store.Store, cfg config.Config, log *slog.Logger) {
-	t := time.NewTicker(pruneInterval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case now := <-t.C:
-			if n, err := st.DeleteOlderThan(ctx, now.Add(-cfg.Retention)); err != nil {
-				log.Warn("retention prune failed", "error", err.Error())
-			} else if n > 0 {
-				log.Info("retention prune", "deleted", n)
-			}
 		}
 	}
 }
