@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"slices"
 	"strings"
@@ -102,9 +103,12 @@ type MCBehind struct {
 type Config struct {
 	// HTTPAddr serves the API and UI; loopback by default.
 	HTTPAddr string
-	// OTLPAddr receives the collector's OTLP/HTTP export. 0.0.0.0 is for the
-	// container only: compose publishes no OTLP port.
+	// OTLPAddr receives the collector's OTLP/HTTP export; loopback by default.
 	OTLPAddr string
+	// BindAll (MC_BIND_ALL=1) permits non-loopback listen addresses. Only the
+	// compose file sets it: there the HTTP port is published on 127.0.0.1 and
+	// the OTLP port is not published at all.
+	BindAll bool
 
 	DatabaseURL    string
 	NATSURL        string
@@ -133,7 +137,8 @@ const Retention = 7 * 24 * time.Hour
 func Load() (Config, error) {
 	cfg := Config{
 		HTTPAddr:       get("MC_HTTP_ADDR", "127.0.0.1:8095"),
-		OTLPAddr:       get("MC_OTLP_ADDR", "0.0.0.0:4318"),
+		OTLPAddr:       get("MC_OTLP_ADDR", "127.0.0.1:4318"),
+		BindAll:        os.Getenv("MC_BIND_ALL") == "1",
 		DatabaseURL:    get("MC_DATABASE_URL", "postgres://mc:mc@127.0.0.1:5433/mc?sslmode=disable"),
 		NATSURL:        get("MC_NATS_URL", "nats://127.0.0.1:4222"),
 		NATSMonitorURL: get("MC_NATS_MONITOR_URL", "http://127.0.0.1:8222"),
@@ -148,6 +153,11 @@ func Load() (Config, error) {
 		Retention:      Retention,
 	}
 
+	for _, a := range []struct{ key, addr string }{{"MC_HTTP_ADDR", cfg.HTTPAddr}, {"MC_OTLP_ADDR", cfg.OTLPAddr}} {
+		if err := checkBind(a.key, a.addr, cfg.BindAll); err != nil {
+			return Config{}, err
+		}
+	}
 	if cfg.EdgeURL == "" {
 		cfg.EdgeURL = cfg.GatewayURL
 	}
@@ -198,6 +208,28 @@ func Load() (Config, error) {
 		return Config{}, errors.New("config: thresholds: need 0 < courier_stale <= courier_lost and slow > 0")
 	}
 	return cfg, nil
+}
+
+// checkBind refuses a listen address that is not loopback (an empty host
+// means every interface) unless bindAll is set. There is no login: the
+// loopback bind is the access control (spec §2).
+func checkBind(key, addr string, bindAll bool) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("config: %s must be host:port", key)
+	}
+	if bindAll || isLoopback(host) {
+		return nil
+	}
+	return fmt.Errorf("config: %s %q is not a loopback address; set MC_BIND_ALL=1 only where the port is not exposed (compose)", key, addr)
+}
+
+func isLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func get(key, def string) string {
