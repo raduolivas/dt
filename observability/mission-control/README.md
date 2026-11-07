@@ -6,6 +6,13 @@ Mission Control shows one order at a time: search by order number, delivery id o
 
 ## Run
 
+Prerequisites, besides what `make doctor` checks:
+
+- `pnpm -C observability/mission-control/web install` once (and after the lockfile changes) before `make mc-test`, `make mc-lint`, `make mc-web-dev` or `make ci`: the Mission Control web app is its own pnpm project.
+- `jq` on the host for `make mc-sim` and `make mc-break`.
+- `curl` 7.55 or newer: `mc-sim` passes the sandbox key as a header on stdin (`-H @-`) so it never appears on the command line.
+- A host `go run ./cmd/mc` uses the defaults: `MC_DATABASE_URL` points at `127.0.0.1:5433`, which compose does not publish, so set it to a Postgres you run yourself.
+
 Start order (Mission Control joins the DT stack's `dt_default` network, so DT must be up first):
 
 ```
@@ -17,7 +24,7 @@ make mc-test mc-lint
 make mc-e2e   # the milestone test against the running stack (below); not part of make ci
 ```
 
-Open http://127.0.0.1:8095. It listens on `127.0.0.1:8095` only. `/readyz` means Mission Control's own Postgres answers; NATS and DT health are shown inside the app.
+Open http://127.0.0.1:8095 (or `localhost:8095`). It listens on `127.0.0.1:8095` only, and answers only requests whose `Host` is `127.0.0.1`, `localhost` or `[::1]` with that port (421 otherwise), so a DNS-rebinding page cannot read the API or drive simulation. After `make mc-down && make mc` an open tab is told the ids restarted, clears what it holds and reloads the open order. `/readyz` means Mission Control's own Postgres answers; NATS and DT health are shown inside the app.
 
 Example: `make mc-sim` prints an order such as `mc-sim-20261107-084053-6a8e38`. Paste it in the search box: the left panel lists its status steps and findings, the scene lights the path it touched, pulses travel along real events, the inspector shows each part's liveness, readiness, dependencies and recent events, and the timeline at the bottom replays it.
 
@@ -64,6 +71,6 @@ DT allows a reassignment only before pickup, so `make mc-break SCENARIO=4` makes
 
 ## Configuration
 
-Environment variables (`.env.example`): `MC_HTTP_ADDR`, `MC_OTLP_ADDR`, `MC_DATABASE_URL`, `MC_NATS_URL`, `MC_NATS_MONITOR_URL`, `MC_GATEWAY_URL`, `MC_EDGE_URL` (simulation only: the origin of the viewer API, default the gateway URL; compose sets `http://edge:8080`), `MC_ENV`, `MC_SIMULATION`, `MC_SANDBOX_KEY`, `MC_METRICS_SOURCE`, `MC_PROMETHEUS_URL`, `MC_LINK_<KIND>`, `MC_THRESHOLDS_FILE`.
+Environment variables (`.env.example`): `MC_HTTP_ADDR` (default `127.0.0.1:8095`), `MC_OTLP_ADDR` (default `127.0.0.1:4318`), `MC_BIND_ALL` (`1` permits a non-loopback `MC_HTTP_ADDR`/`MC_OTLP_ADDR`; only compose sets it, where the HTTP port is published on 127.0.0.1 and OTLP is not published; Mission Control refuses to start on a non-loopback address without it), `MC_DATABASE_URL`, `MC_NATS_URL`, `MC_NATS_MONITOR_URL`, `MC_GATEWAY_URL`, `MC_EDGE_URL` (simulation only: the origin of the viewer API, default the gateway URL; compose sets `http://edge:8080`), `MC_ENV`, `MC_SIMULATION`, `MC_SANDBOX_KEY`, `MC_METRICS_SOURCE`, `MC_PROMETHEUS_URL`, `MC_LINK_<KIND>`, `MC_THRESHOLDS_FILE`.
 
 "Open in..." links: `<KIND>` is one of `GRAFANA_TRACE`, `GRAFANA_LOGS`, `XRAY_TRACE`, `CLOUDWATCH_LOGS`. The value is a URL template starting with `http://` or `https://` (anything else is dropped) with `{trace_id}`, `{service}` and `{component}` placeholders, which are URL-escaped. A link shows only when its template is set and every placeholder it uses has a value (trace links need a trace id). An unknown `MC_LINK_` name is logged at startup and ignored.
