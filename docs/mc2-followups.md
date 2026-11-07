@@ -126,7 +126,7 @@ Items the reviews found and the controller chose not to fix in MC-PR2.
 - cache definitive "live" registry answers longer than 2 s (one SELECT per live delivery per 2 s on ingest); prefix rule applies to any event carrying OrderRef (superset, documented)
 ## Open check-later items
 
-- Task 6: `MC_HTTP_ADDR` override is not validated to loopback (compose publishes 127.0.0.1 only). Decide at the final review; matters before any staging deployment.
+- Resolved in the final fix wave (R40): `MC_HTTP_ADDR` and `MC_OTLP_ADDR` must be loopback unless `MC_BIND_ALL=1` (compose only), and both listeners have a Host allow-list (DNS rebinding).
 - Task 6 (carry to Task 8): the courier_stale warning clause on a status step compares with the last restore, while R14 says last accepted fix; a stale finding with no later loss keeps the step amber until the order ends.
 - Resolved in Task 14: Task 4 check (NATS rows on TRACKING and GATEWAY: the live system view shows `nats.TRACKING` and `nats.GATEWAY` wires), Task 8 scenario 4 (R36), Task 1 collector DNS.
 - Task 14: `make mc-e2e` needs a fresh `make mc-sim` (run cap 8); the sim has no "end run" API.
