@@ -2,7 +2,7 @@
 
 Written at the end of MC-PR2 (Mission Control app, branch `mission-control`) so the controller's rulings and the deferred minors outlive the scratch workspace (`.superpowers/sdd/`, gitignored). Source: the SDD progress log. Each ruling keeps the text it was recorded with, including its cost if wrong. Review the minors before the staging milestone.
 
-## Rulings R1-R39 (41 lines: R14 and R36 each have an amendment)
+## Rulings R1-R40 (42 lines: R14 and R36 each have an amendment)
 
 Rulings bind the code as built. A ruling with `(amended)` replaces the earlier text of the same number.
 
@@ -47,6 +47,7 @@ Rulings bind the code as built. A ruling with `(amended)` replaces the earlier t
 - **R37**: the milestone asserts scenarios 2, 3 and 4 through /api/system active warnings (no delivery id on those signals) and scenarios 1, 5, 6 where they surface (1 on the order; 5, 6 system); the order panel is not expected to show 2-4 — cost if wrong: none
 - **R38**: simulated origin must be durable and race-free — normalize marks DeliveryCreated with external_id prefix "mc-sim-" as simulated (the sim's order refs use that prefix), and the SimRegistry falls back to mc_order.origin for the delivery so later events and restarts keep origin=simulated — why: spec 9 "everything it creates is shown as SIMULATED"; in-memory registry filled after the delivery POST could race and is lost on restart — cost if wrong: a partner order ref starting "mc-sim-" in a real tenant would be marked simulated (sandbox-only prefix, documented)
 - **R39**: Task 14 implementer does Steps 1-4 and docs but NOT push/PR — the controller pushes and opens the PR after the final whole-branch review; PR #27 still open, so the branch stays stacked on mc-groundwork — cost if wrong: none
+- **R40**: final fix wave = I1 (SSE `reset` frame when Last-Event-ID is ahead of the store; the web clears its scope and refetches), I2 (OTLP default 127.0.0.1:4318; non-loopback HTTP/OTLP addresses refused unless MC_BIND_ALL=1, set only in compose; Host allow-list on the HTTP server — loopback names with the configured port — and on the OTLP listener — plus mc-backend), I3 (one row per finding identity, newest wins), M1 (govulncheck on the MC module), M2 (dsn + *.connection_string never stored), M3 (id columns capped at 128, oversize ids dropped to "" and counted, reason truncated at 1024), M5 (README prerequisites), M6 (frame-ancestors 'none' + nosniff) — cost if wrong: none
 
 ## Deferred minors, by task
 
@@ -124,6 +125,16 @@ Items the reviews found and the controller chose not to fix in MC-PR2.
 ### Task 13
 - run_id defaults to newest run; UI sim status loaded only on mount/after actions; DNS rebinding passes sameOrigin (loopback, sandbox only) — Host allow-list later; no token-refresh test; InDelta rate tests may flake under -race
 - cache definitive "live" registry answers longer than 2 s (one SELECT per live delivery per 2 s on ingest); prefix rule applies to any event carrying OrderRef (superset, documented)
+
+### Final whole-branch review (deferred)
+- `Self.Run` stops for good if `RecordStartup` fails once at boot.
+- The simulated-origin lookup is a synchronous DB call on the ingest path (up to 2 s); see the Task 13 caching note.
+- `TestCatchUpFromStreamHistory` checks rows land but does not also search the pre-start order.
+- Mission Control in `backend/go.work` can let shared dependency versions drift from what DT's images ship (versions match today; R21).
+- Document that a custom `MC_OTLP_ENDPOINT` host gets 421 — the OTLP listener accepts only `mc-backend` and loopback Host names (or extend the list in `main.go`).
+- When only tenant_id/environment is dropped by the id cap, the order index still upserts an `mc_order` row with "" tenant; skip indexing when the cap dropped anything.
+- No test asserts `MC_BIND_ALL=true`, `0` or `" 1"` is refused (the code accepts only exactly "1").
+- The 3D bundle is 1.2 MB (335 kB gzip).
 ## Open check-later items
 
 - Resolved in the final fix wave (R40): `MC_HTTP_ADDR` and `MC_OTLP_ADDR` must be loopback unless `MC_BIND_ALL=1` (compose only), and both listeners have a Host allow-list (DNS rebinding).
