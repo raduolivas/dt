@@ -35,6 +35,16 @@ var skippedKeys = map[string]bool{
 	"net.peer.ip": true, "net.sock.peer.addr": true, "net.sock.peer.port": true, "net.peer.name": true,
 	"http.client_ip": true, "http.request.header.x-forwarded-for": true, "http.request.header.x-real-ip": true,
 	"http.request.header.forwarded": true,
+	// A connection string can embed user:pass@ (M2); see also skipped().
+	"db.connection_string": true,
+}
+
+// skipped reports a key that is never copied: skippedKeys, or any
+// *.connection_string (db.connection_string and its namespace cousins).
+func skipped(k string) bool {
+	l := strings.ToLower(k)
+	return skippedKeys[k] || l == "connection_string" || strings.HasSuffix(l, ".connection_string") ||
+		strings.HasSuffix(l, "_connection_string")
 }
 
 const maxAttrString = 200
@@ -203,7 +213,7 @@ func (n *Normalizer) spanAttrs(raw map[string]any) map[string]any {
 	dropped := 0
 	segTested := map[string]any{}
 	for k, v := range raw {
-		if skippedKeys[k] || liftedKeys[k] != "" {
+		if skipped(k) || liftedKeys[k] != "" {
 			continue
 		}
 		if s, ok := v.(string); ok && len(s) > maxAttrString {
@@ -247,7 +257,7 @@ func standardNamespace(k string) bool {
 
 var credentialSegments = map[string]bool{
 	"authorization": true, "cookie": true, "token": true, "key": true, "apikey": true,
-	"secret": true, "password": true, "jwt": true, "bearer": true,
+	"secret": true, "password": true, "jwt": true, "bearer": true, "dsn": true,
 }
 
 func credentialKey(k string) bool {

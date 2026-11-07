@@ -148,6 +148,23 @@ func TestCredentialKeysInStandardNamespacesAreDroppedAndCounted(t *testing.T) {
 	require.Contains(t, string(e.Attrs), "http.route")
 }
 
+// M2: a DSN or connection string can carry user:pass@; neither is stored.
+func TestConnectionStringsAndDSNNeverStored(t *testing.T) {
+	n := newNormalizer()
+	var total int
+	n.OnRedacted = func(d int) { total += d }
+	sp := mkSpan("SELECT", tracepb.Span_SPAN_KIND_CLIENT, 1,
+		kvS("db.connection_string", "postgres://u:hunter2@db/x"),
+		kvS("messaging.connection_string", "nats://u:hunter3@nats"),
+		kvS("db.dsn", "postgres://u:hunter4@db/x"), kvS("db.system", "postgresql"))
+	e := n.FromSpan(map[string]string{"service.name": "deliveries"}, sp)[0]
+	for _, bad := range []string{"hunter2", "hunter3", "hunter4", "connection_string", "dsn"} {
+		require.NotContains(t, string(e.Attrs), bad)
+	}
+	require.Contains(t, string(e.Attrs), "db.system")
+	require.Equal(t, 1, total, "the dsn credential key is counted; connection strings are skipped like SQL text")
+}
+
 func TestIDsPreferDTKeys(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		tn, env, d := ids(map[string]any{"tenant_id": "wrong", "dt.tenant_id": "right",
