@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, type Client } from '../api/client';
 import type { McEvent, OrderResponse, StatusStep, SystemResponse } from '../api/types';
 import { store, useStore } from '../state/store';
+import { stepsAt, useActiveFindings } from './atTime';
 import { hitLabel, openOrder } from './Search';
 
 const POLL_MS = 5000;
@@ -49,12 +50,17 @@ function Finding({ f }: { f: McEvent }) {
 
 function OrderView({ id, client }: { id: string; client: Client }) {
   const { data, error } = usePolled<OrderResponse>(() => client.order(id), id);
-  const streamed = useStore((s) => s.findings);
-  const detectors = useMemo(() => {
-    const m = new Map<number, McEvent>();
-    for (const f of [...(data?.detectors ?? []), ...streamed]) m.set(f.id, f);
-    return [...m.values()].sort((a, b) => a.id - b.id);
-  }, [data, streamed]);
+  useEffect(() => {
+    store.setPanelFindings(data?.detectors ?? []);
+  }, [data]);
+  const detectors = useActiveFindings();
+  // In replay the panel shows what was known at the cursor (R34); events are read only then.
+  const cursor = useStore((s) => (s.mode === 'replay' ? s.replayAt : null));
+  const events = useStore((s) => (s.mode === 'replay' ? s.events : null));
+  const steps = useMemo(
+    () => (data && cursor !== null ? stepsAt(data.statusSteps, events ?? [], detectors, cursor) : (data?.statusSteps ?? [])),
+    [data, cursor, events, detectors],
+  );
 
   if (!data) {
     return (
@@ -78,7 +84,7 @@ function OrderView({ id, client }: { id: string; client: Client }) {
       </dl>
       <h3 className="mc-h">Status</h3>
       <ol className="mc-steps">
-        {data.statusSteps.map((s) => (
+        {steps.map((s) => (
           <li key={s.status} className={`mc-step is-${s.state}`}>
             {MARK[s.state] ?? '○'} {s.status}
             {s.at ? <time className="mc-muted"> {s.at}</time> : null}
@@ -93,6 +99,10 @@ function OrderView({ id, client }: { id: string; client: Client }) {
 
 function SystemView({ client }: { client: Client }) {
   const { data, error } = usePolled<SystemResponse>(() => client.system(), 'system');
+  useEffect(() => {
+    store.setPanelFindings(data?.warnings ?? []);
+  }, [data]);
+  const warnings = useActiveFindings();
   if (!data) {
     return (
       <p className="mc-placeholder" role="status">
@@ -132,7 +142,7 @@ function SystemView({ client }: { client: Client }) {
         </ul>
       )}
       <h3 className="mc-h">Active warnings</h3>
-      {data.warnings.length === 0 ? <p className="mc-muted">No active warnings.</p> : <ul className="mc-findings">{data.warnings.map((f) => <Finding key={f.id} f={f} />)}</ul>}
+      {warnings.length === 0 ? <p className="mc-muted">No active warnings.</p> : <ul className="mc-findings">{warnings.map((f) => <Finding key={f.id} f={f} />)}</ul>}
     </div>
   );
 }

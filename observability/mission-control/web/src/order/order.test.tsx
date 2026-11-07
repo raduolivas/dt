@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Client } from '../api/client';
-import type { OrderHit, OrderResponse, SystemResponse } from '../api/types';
+import type { OrderHit, OrderResponse } from '../api/types';
 import { store } from '../state/store';
 import { mkEvent } from '../test-utils';
 import { LeftPanel } from './OrderPanel';
@@ -24,8 +24,6 @@ const orderResp = (over: Partial<OrderResponse> = {}): OrderResponse => ({
   detectors: [],
   ...over,
 });
-const _emptySystem: SystemResponse = { traffic: [], recentOrders: [], warnings: [] };
-void _emptySystem;
 
 beforeEach(() => store.reset());
 afterEach(() => vi.restoreAllMocks());

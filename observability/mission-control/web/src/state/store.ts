@@ -32,6 +32,8 @@ export interface McState {
   replayAt: number | null;
   /** Time gaps of the selected order's timeline (Mission Control down, no trace data). */
   timelineGaps: TimelineGap[];
+  /** Findings the left panel loaded from the API (order detectors or system warnings); the top-bar count reads them too. */
+  panelFindings: McEvent[];
 }
 
 export interface McStore {
@@ -54,12 +56,13 @@ export interface McStore {
   noteStreamId(id: number): void;
   setReplayAt(t: number | null): void;
   setTimelineGaps(g: TimelineGap[]): void;
+  setPanelFindings(f: McEvent[]): void;
   reset(): void;
 }
 
 function initial(): McState {
   return {
-    mode: 'live', orderId: null, selection: null, events: [], gaps: [], bundles: [], findings: [], replayAt: null, timelineGaps: [],
+    mode: 'live', orderId: null, selection: null, events: [], gaps: [], bundles: [], findings: [], replayAt: null, timelineGaps: [], panelFindings: [],
     collapsed: { left: false, right: false, bottom: false }, lastEventId: null,
     reducedMotion:
       typeof window !== 'undefined' && typeof window.matchMedia === 'function'
@@ -173,12 +176,13 @@ export function createStore(frame: (cb: () => void) => void = nextFrame): McStor
     setMode: (mode) => set(mode === 'replay' ? { mode } : { mode, replayAt: null }),
     setReplayAt: (replayAt) => set({ replayAt }),
     setTimelineGaps: (timelineGaps) => set({ timelineGaps }),
+    setPanelFindings: (panelFindings) => set({ panelFindings }),
     selectOrder(orderId) {
       ids = new Set();
       queued = [];
       queuedCount = 0;
       // a replay cursor belongs to one order's buffer: back to live with the new order
-      set({ orderId, selection: null, events: [], gaps: [], bundles: [], findings: [], timelineGaps: [], replayAt: null, mode: state.mode === 'replay' ? 'live' : state.mode });
+      set({ orderId, selection: null, events: [], gaps: [], bundles: [], findings: [], timelineGaps: [], panelFindings: [], replayAt: null, mode: state.mode === 'replay' ? 'live' : state.mode });
     },
     select: (selection) => set({ selection }),
     addEvents(evs) {

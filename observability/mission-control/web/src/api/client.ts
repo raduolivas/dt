@@ -1,3 +1,4 @@
+import { MAX_EVENTS } from '../state/store';
 import type {
   ComponentResponse, EventResponse, LogsResponse, McEvent, OrderHit, OrderResponse, SelfRow, SystemResponse,
   TimelineGap, TimelineResponse, TopologyResponse,
@@ -28,6 +29,9 @@ export interface Client {
   system(): Promise<SystemResponse>;
   self(): Promise<SelfRow[]>;
 }
+
+/** A server that never says it is done must not keep the browser paging forever. */
+const MAX_PAGES = 200;
 
 const seg = encodeURIComponent;
 
@@ -65,14 +69,15 @@ export function createClient(f: typeof fetch = (...a) => fetch(...a)): Client {
       const events: McEvent[] = [];
       const gaps = new Map<string, TimelineGap>();
       let after = 0;
-      for (;;) {
+      for (let pages = 0; pages < MAX_PAGES; pages++) {
         const page = await timeline(id, { after, limit: 1000 });
-        events.push(...page.events);
+        for (const e of page.events) events.push(e);
         for (const g of page.gaps) gaps.set(`${g.kind}|${g.from}|${g.to}`, g);
         if (!page.next || page.next <= after) break;
         after = page.next;
       }
-      return { events, gaps: [...gaps.values()] };
+      // the buffer holds the newest MAX_EVENTS; keep the same bound here
+      return { events: events.length > MAX_EVENTS ? events.slice(events.length - MAX_EVENTS) : events, gaps: [...gaps.values()] };
     },
     component: (id, deliveryId) => get(`/api/components/${seg(id)}` + qs({ delivery_id: deliveryId })),
     componentLogs: (id, p = {}) =>

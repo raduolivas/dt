@@ -123,4 +123,26 @@ describe('PulseEngine', () => {
     eng.sync(s.getState(), NOW);
     expect(eng.frame(NOW + 10, false)).toHaveLength(3);
   });
+
+  it('replayMarkers: static counted markers for real pulse events in [cursor - 5 s, cursor] only', () => {
+    const eng = new PulseEngine(model, () => 8);
+    const C = NOW;
+    const evs = [
+      ev(1, C - 6000), // before the window
+      ev(2, C - 4000),
+      ev(3, C - 100),
+      ev(4, C - 100, { outcome: 'failed' }),
+      ev(5, C + 1000), // after the cursor
+      ev(6, C - 1000, { kind: 'log' }), // not a pulse event
+      ev(7, C - 1000, { source: 'tracking.ingest', target: 'tracking.state' }), // inside one cube: not placeable
+    ];
+    const items = eng.replayMarkers(evs, C);
+    expect(items.every((i) => i.static)).toBe(true);
+    const ok = items.find((i) => i.color === 'ok');
+    const fail = items.find((i) => i.color === 'fail');
+    expect(ok?.count).toBe(2);
+    expect(fail?.count).toBe(1);
+    expect(items).toHaveLength(2);
+    expect(eng.replayMarkers([], C)).toEqual([]);
+  });
 });

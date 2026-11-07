@@ -2,7 +2,7 @@
 // pulses, outside React. The scene reads it once per animation frame (useFrame)
 // and writes instance matrices; nothing re-renders per pulse. Pure TypeScript.
 import type { BundleData, McEvent } from '../api/types';
-import { RANK, toPulses, WINDOW_MS, type PulseColor } from '../state/pulses';
+import { RANK, toPulses, WINDOW_MS, type Pulse, type PulseColor } from '../state/pulses';
 import type { McState } from '../state/store';
 import type { SceneModel } from './model';
 import { pulseColor } from './visualState';
@@ -44,8 +44,35 @@ export interface FrameItem {
 }
 
 
+/** Replay shows the pulses of this long before the cursor (R34). */
+export const REPLAY_WINDOW_MS = 5000;
+
+interface MarkerSrc {
+  wire: string;
+  color: PulseColor;
+  simulated: boolean;
+  count: number;
+}
+
+/** One static marker per wire and colour, side by side (ok | unknown | warn | fail) so markers on one wire never overlap. */
+function markerItems(list: readonly MarkerSrc[]): FrameItem[] {
+  const markers = new Map<string, FrameItem>();
+  for (const a of list) {
+    const key = `m:${a.wire}:${a.color}`;
+    const m = markers.get(key);
+    if (m) {
+      m.count += a.count;
+      m.simulated ||= a.simulated;
+    } else {
+      markers.set(key, { key, wire: a.wire, t: 0.32 + 0.12 * RANK[a.color], color: a.color, simulated: a.simulated, count: a.count, bundle: true, static: true });
+    }
+  }
+  return [...markers.values()].sort((x, y) => RANK[x.color] - RANK[y.color]);
+}
+
 export class PulseEngine {
   private active: Active[] = [];
+  private replayMemo: { events: readonly McEvent[]; cursor: number; items: FrameItem[] } | null = null;
   private seq = 0;
   // sync() cursors
   private started = false;
@@ -73,7 +100,8 @@ export class PulseEngine {
    * applied per occurred-at second so late batches are not filtered away).
    * Returns the number of pulses spawned.
    */
-  ingestEvents(fresh: readonly McEvent[], now: number): number {
+  /** Pulses for a batch of events: attribution gates (R30 / R33), one per event or a bundle per wire and second. */
+  private pulsesFor(fresh: readonly McEvent[]): Pulse[] {
     const windows = new Map<number, McEvent[]>();
     for (const e of fresh) {
       // an event at one part is drawn only when its attribution passes the R30 / R33 gates
@@ -85,7 +113,11 @@ export class PulseEngine {
       if (l) l.push(e);
       else windows.set(end, [e]);
     }
-    const pulses = [...windows].flatMap(([end, evs]) => toPulses(evs, end)).sort((a, b) => a.at - b.at);
+    return [...windows].flatMap(([end, evs]) => toPulses(evs, end)).sort((a, b) => a.at - b.at);
+  }
+
+  ingestEvents(fresh: readonly McEvent[], now: number): number {
+    const pulses = this.pulsesFor(fresh);
     if (pulses.length === 0) return 0;
     const first = pulses[0].at;
     const spread = pulses[pulses.length - 1].at - first;
@@ -191,20 +223,36 @@ export class PulseEngine {
       }
       return;
     }
-    const markers = new Map<string, FrameItem>();
-    for (const a of keep) {
-      if (now < a.start) continue;
-      const key = `m:${a.wire}:${a.color}`;
-      const m = markers.get(key);
-      if (m) {
-        m.count += a.count;
-        m.simulated ||= a.simulated;
-      } else {
-        // side by side, ok | unknown | warn | fail, so markers on one wire never overlap
-        markers.set(key, { key, wire: a.wire, t: 0.32 + 0.12 * RANK[a.color], color: a.color, simulated: a.simulated, count: a.count, bundle: true, static: true });
-      }
+    markerItems(keep.filter((a) => now >= a.start)).forEach(fn);
+  }
+
+  /**
+   * Replay (R34): static counted markers, in the reduced-motion style, for the
+   * pulse events in [cursor - REPLAY_WINDOW_MS, cursor]. Same gating and
+   * bundling as live (pulsesFor, placement), so nothing is invented. Nothing
+   * travels and nothing is sent anywhere.
+   */
+  replayMarkers(events: readonly McEvent[], cursor: number): FrameItem[] {
+    const memo = this.replayMemo;
+    if (memo && memo.events === events && memo.cursor === cursor) return memo.items;
+    const items = this.computeMarkers(events, cursor);
+    this.replayMemo = { events, cursor, items };
+    return items;
+  }
+
+  private computeMarkers(events: readonly McEvent[], cursor: number): FrameItem[] {
+    const lo = cursor - REPLAY_WINDOW_MS;
+    const inWindow = events.filter((e) => {
+      const at = Date.parse(e.occurredAt);
+      return at >= lo && at <= cursor;
+    });
+    const placed: MarkerSrc[] = [];
+    for (const p of this.pulsesFor(inWindow)) {
+      const [source, target] = p.wire.split('>');
+      const place = this.model.place(source, target ?? '', true);
+      if (place) placed.push({ wire: place.wire, color: p.color, simulated: p.simulated, count: p.count ?? 1 });
     }
-    [...markers.values()].sort((x, y) => RANK[x.color] - RANK[y.color]).forEach(fn);
+    return markerItems(placed);
   }
 
   frame(now: number, reduced: boolean): FrameItem[] {
