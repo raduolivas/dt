@@ -85,7 +85,8 @@ export function stepsAt(steps: StatusStep[], events: readonly McEvent[], finding
 /**
  * The findings that are active: occurred at or before t (when a replay cursor
  * is given), and not cleared, meaning no later "cleared" finding with the same
- * identity (rule, hop, delivery, reason) at or before t. "cleared" entries themselves are not shown.
+ * identity (rule, hop, delivery, reason) at or before t, and the newest of its
+ * identity (an escalation replaces the warning). "cleared" entries themselves are not shown.
  */
 export function activeFindings(findings: readonly McEvent[], t: number | null): McEvent[] {
   const seen = t === null ? [...findings] : findings.filter((f) => ms(f.occurredAt) <= t);
@@ -95,7 +96,17 @@ export function activeFindings(findings: readonly McEvent[], t: number | null): 
     const at = ms(f.occurredAt);
     if (at > (clearedAt.get(identOf(f)) ?? -Infinity)) clearedAt.set(identOf(f), at);
   }
-  return seen.filter((f) => f.outcome !== 'cleared' && !(ms(f.occurredAt) <= (clearedAt.get(identOf(f)) ?? -Infinity)));
+  const open = seen.filter((f) => f.outcome !== 'cleared' && !(ms(f.occurredAt) <= (clearedAt.get(identOf(f)) ?? -Infinity)));
+  // An escalation (courier_stale warning, then failure) stores a new finding under the same
+  // identity: only the newest one is current (I3).
+  const newest = new Map<string, McEvent>();
+  for (const f of open) {
+    const k = identOf(f);
+    const cur = newest.get(k);
+    const at = ms(f.occurredAt);
+    if (!cur || at > ms(cur.occurredAt) || (at === ms(cur.occurredAt) && f.id > cur.id)) newest.set(k, f);
+  }
+  return open.filter((f) => newest.get(identOf(f)) === f);
 }
 
 /** What the left panel and the top-bar count both show: loaded plus streamed findings, as of the replay cursor in replay. */

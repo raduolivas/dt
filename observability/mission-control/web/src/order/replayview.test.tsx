@@ -71,6 +71,23 @@ describe('activeFindings', () => {
   });
 });
 
+describe('activeFindings escalation (I3)', () => {
+  it('shows only the newest finding per identity', () => {
+    const warn = finding(1, T0, { reason: 'no_accepted_fix', deliveryId: 'd-1' });
+    const fail = finding(2, T0 + 270_000, { reason: 'no_accepted_fix', deliveryId: 'd-1', outcome: 'failure' });
+    expect(activeFindings([warn, fail], null)).toEqual([fail]);
+    expect(activeFindings([fail, warn], null)).toEqual([fail]);
+    expect(activeFindings([warn, fail], T0 + 60_000)).toEqual([warn]);
+    const cleared = finding(3, T0 + 300_000, { reason: 'no_accepted_fix', deliveryId: 'd-1', outcome: 'cleared' });
+    expect(activeFindings([warn, fail, cleared], null)).toEqual([]);
+    const again = finding(4, T0 + 400_000, { reason: 'no_accepted_fix', deliveryId: 'd-1' });
+    expect(activeFindings([warn, fail, cleared, again], null)).toEqual([again]);
+    // another identity is kept alongside
+    const other = finding(5, T0 + 1000, { reason: 'no_accepted_fix', deliveryId: 'd-2' });
+    expect(activeFindings([warn, fail, other], null)).toEqual([fail, other]);
+  });
+});
+
 describe('activeFindings identity', () => {
   it('a clear for one delivery does not hide another delivery\'s open finding', () => {
     const base = { attrs: { rule: 'courier_stale' }, target: 'courier', reason: 'no_accepted_fix' };
