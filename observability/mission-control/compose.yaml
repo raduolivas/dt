@@ -36,6 +36,8 @@ services:
       MC_NATS_URL: ${MC_NATS_URL:-nats://nats:4222}
       MC_NATS_MONITOR_URL: ${MC_NATS_MONITOR_URL:-http://nats:8222}
       MC_GATEWAY_URL: ${MC_GATEWAY_URL:-http://gateway:8080}
+      # Simulation's viewer talks to the edge (the one origin the tracking page uses); MC_GATEWAY_URL stays the gateway.
+      MC_EDGE_URL: ${MC_EDGE_URL:-http://edge:8080}
       MC_ENV: ${MC_ENV:-local}
       MC_SIMULATION: ${MC_SIMULATION:-0}
       MC_SANDBOX_KEY: ${MC_SANDBOX_KEY:-}

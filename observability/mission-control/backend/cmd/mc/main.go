@@ -25,6 +25,7 @@ import (
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/metrics"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/normalize"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/retention"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/sim"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/store"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/topology"
 	"github.com/raduolivas/dt/observability/mission-control/backend/internal/webui"
@@ -76,6 +77,16 @@ func run(ctx context.Context, stop context.CancelFunc) error {
 	}
 	mux.Handle("/api/", api.New(api.Options{Store: st, Topology: topology.Default(), Broadcaster: bc, Log: log,
 		Traffic: metrics.Traffic(src), Links: metrics.Links(cfg.Links)}))
+	// Simulation mode (MC_SIMULATION=1, MC_ENV=local, dt_sk_test_ key): the only place Mission Control writes to DT.
+	simMgr, err := sim.FromConfig(cfg, log)
+	if err != nil {
+		return err
+	}
+	if simMgr != nil {
+		defer simMgr.Close()
+		sim.Mount(mux, simMgr) // more specific than /api/, so these win
+		log.Info("simulation mode on", "env", cfg.Env)
+	}
 	// The built UI (web/dist) at "/"; /api, /livez and /readyz keep their own routes (ruling R3).
 	webDir := os.Getenv("MC_WEB_DIR")
 	if webDir == "" {
@@ -89,6 +100,9 @@ func run(ctx context.Context, stop context.CancelFunc) error {
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: api.CSP(mux), ReadHeaderTimeout: 5 * time.Second}
 
 	norm := &normalize.Normalizer{Topology: topology.Default(), Thresholds: cfg.Thresholds, OnRedacted: self.Redacted}
+	if simMgr != nil {
+		norm.SimRegistry = simMgr.Registry() // a nil *Registry in the interface would still answer false, but stay explicit
+	}
 	idx := index.New(st)
 	// After an insert: update the order index, then feed the live stream
 	// (non-blocking; slow clients catch up from the store).
