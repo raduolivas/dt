@@ -56,4 +56,27 @@ describe('client', () => {
     expect(r.events.map((e) => e.id)).toEqual([1, 2, 3]);
     expect(r.gaps).toHaveLength(1);
   });
+
+  it('searchOrders URL-encodes q', async () => {
+    const { urls, api } = fake([]);
+    await api.searchOrders('a&b=<x>');
+    expect(urls).toEqual(['/api/orders?q=a%26b%3D%3Cx%3E']);
+  });
+
+  it('allTimeline stops after a page cap even if the server keeps saying next', async () => {
+    let n = 0;
+    const f = (async () => new Response(JSON.stringify({ events: [{ id: ++n }], next: n, gaps: [] }))) as unknown as typeof fetch;
+    const r = await createClient(f).allTimeline('d');
+    expect(n).toBe(200);
+    expect(r.events).toHaveLength(200);
+  });
+
+  it('allTimeline keeps at most MAX_EVENTS (the newest)', async () => {
+    const big = Array.from({ length: 1000 }, (_, i) => ({ id: i + 1 }));
+    let page = 0;
+    const f = (async () => new Response(JSON.stringify({ events: big.map((e) => ({ id: e.id + page * 1000 })), next: ++page < 25 ? page : 0, gaps: [] }))) as unknown as typeof fetch;
+    const r = await createClient(f).allTimeline('d');
+    expect(r.events).toHaveLength(20_000);
+    expect(r.events[r.events.length - 1].id).toBe(25_000);
+  });
 });

@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import { useActiveFindings } from '../order/atTime';
+import { eventsAt } from '../order/replay';
 import { Search } from '../order/Search';
 import { store, useStore, type Mode, type PanelName } from '../state/store';
 
@@ -44,8 +46,11 @@ function Panel({ panel, className, children }: { panel: PanelName; className: st
 
 function TopBar() {
   const mode = useStore((s) => s.mode);
-  const warnings = useStore((s) => s.findings.length);
-  const simulated = useStore((s) => s.events.some((e) => e.origin === 'simulated'));
+  const warnings = useActiveFindings().length;
+  // SIMULATED follows the replay cursor like the panels do: only events up to it count.
+  const simulated = useStore((s) =>
+    (s.mode === 'replay' && s.replayAt !== null ? eventsAt(s.events, s.replayAt) : s.events).some((e) => e.origin === 'simulated'),
+  );
   const allCollapsed = useStore((s) => s.collapsed.left && s.collapsed.right && s.collapsed.bottom);
   const reduced = useStore((s) => s.reducedMotion);
   return (

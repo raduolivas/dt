@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { store } from '../state/store';
 import { theme } from '../theme';
 import { DIM } from './ComponentCube';
-import type { PulseEngine } from './engine';
+import type { FrameItem, PulseEngine } from './engine';
 import { PULSE_HEX } from './visualState';
 
 export interface PulsesProps {
@@ -43,12 +43,15 @@ export function Pulses({ engine, curves, reduced, isDim, overlayRef }: PulsesPro
     const h = halo.current;
     if (!c || !h) return;
     const now = Date.now();
-    engine.sync(store.getState(), now);
+    const st = store.getState();
+    // Replay (R34): static markers for the 5 s before the cursor, nothing travels; the live stream is closed meanwhile.
+    const replaying = st.mode === 'replay' && st.replayAt !== null;
+    if (!replaying) engine.sync(st, now);
     const layer = overlayRef.current;
     let n = 0;
     let labels = 0;
     let overflow = false;
-    engine.each(now, reduced, (it) => {
+    const visit = (it: FrameItem) => {
       const curve = curves.get(it.wire);
       if (!curve) return;
       if (n >= cap) {
@@ -78,7 +81,9 @@ export function Pulses({ engine, curves, reduced, isDim, overlayRef }: PulsesPro
         el.style.display = '';
         labels++;
       }
-    });
+    };
+    if (replaying) engine.replayMarkers(st.events, st.replayAt as number).forEach(visit);
+    else engine.each(now, reduced, visit);
     if (layer) for (let i = labels; i < layer.children.length; i++) (layer.children[i] as HTMLElement).style.display = 'none';
     c.count = n;
     h.count = n;
