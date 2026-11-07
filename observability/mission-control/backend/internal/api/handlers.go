@@ -536,6 +536,25 @@ func (a *API) getComponentLogs(w http.ResponseWriter, r *http.Request) {
 	if source == "" {
 		source = id
 	}
+	tail, err := intParam(r, "tail")
+	if err != nil || tail > store.MaxLogTail {
+		writeErr(w, http.StatusBadRequest, "invalid tail")
+		return
+	}
+	if tail > 0 {
+		// the newest `tail` lines, oldest first; next is the newest id, where a follow poll continues (after=next)
+		logs, err := a.st.ComponentLogsTail(r.Context(), source, r.URL.Query().Get("delivery_id"), level, int(tail))
+		if err != nil {
+			a.fail(w, "component logs tail", err)
+			return
+		}
+		var newest int64
+		if len(logs) > 0 {
+			newest = logs[len(logs)-1].ID
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"logs": toEventDTOs(logs), "next": newest})
+		return
+	}
 	lim := int(limit)
 	if lim <= 0 {
 		lim = store.DefaultTimelineLimit

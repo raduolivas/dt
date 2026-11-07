@@ -151,3 +151,4 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--mc-accent);
 .mc-logline.is-selected { border-left-color: var(--mc-accent); background: rgba(34, 211, 238, 0.1); }
 .mc-logline.sev-warn .mc-sev, .mc-logline.sev-warning .mc-sev { color: var(--mc-warn); }
 .mc-logline.sev-error .mc-sev, .mc-logline.sev-fatal .mc-sev { color: #f87171; }
+.mc-expand-note { position: absolute; top: 40px; left: 8px; margin: 0; color: var(--mc-muted); font-size: 11px; pointer-events: none; }

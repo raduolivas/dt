@@ -137,6 +137,27 @@ func (s *Store) ComponentLogs(ctx context.Context, source, deliveryID, level str
 		ORDER BY id LIMIT $5`, deliveryID, source, after, sev, limit)
 }
 
+// MaxLogTail caps the tail option of ComponentLogsTail.
+const MaxLogTail = 1000
+
+// ComponentLogsTail returns the newest n log lines (n clamped to 1..MaxLogTail)
+// of a service, optionally for one delivery and at or above a level, oldest
+// first. It reads by id descending with a limit, so it uses the id index.
+func (s *Store) ComponentLogsTail(ctx context.Context, source, deliveryID, level string, n int) ([]Event, error) {
+	n = max(1, min(n, MaxLogTail))
+	sev := severities[level]
+	if deliveryID == "" {
+		return s.events(ctx, "component logs tail", `SELECT * FROM (SELECT `+eventCols+` FROM mc_event
+			WHERE kind = 'log' AND source = $1
+			  AND ($2::text[] IS NULL OR upper(attrs->>'severity') = ANY($2))
+			ORDER BY id DESC LIMIT $3) t ORDER BY id`, source, sev, n)
+	}
+	return s.events(ctx, "component logs tail", `SELECT * FROM (SELECT `+eventCols+` FROM mc_event
+		WHERE id IN (`+deliveryEventIDs+`) AND kind = 'log' AND source = $2
+		  AND ($3::text[] IS NULL OR upper(attrs->>'severity') = ANY($3))
+		ORDER BY id DESC LIMIT $4) t ORDER BY id`, deliveryID, source, sev, n)
+}
+
 // DeliveryEventsByType returns the delivery's own events whose attrs
 // event_type is one of types, oldest first.
 func (s *Store) DeliveryEventsByType(ctx context.Context, deliveryID string, types []string) ([]Event, error) {

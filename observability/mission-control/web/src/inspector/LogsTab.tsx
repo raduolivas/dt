@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, type Client } from '../api/client';
 import type { McEvent } from '../api/types';
-import { logEventId } from '../scene/linking';
 import { store, useStore } from '../state/store';
 import { atOrBefore, fmtTime, message, useCursor } from './util';
 
 const PAGE = 500;
-const MAX_PAGES = 10;
-const KEEP = 1000;
+const KEEP = 1000; // also the backend's tail cap
 const FOLLOW_MS = 2000;
+const PULSE_KINDS = new Set(['request', 'message_published', 'message_consumed']);
 
 /**
  * Log lines of a component (spec 6.4): this order by default (needs a selected order),
@@ -44,17 +43,11 @@ export function LogsTab({ id, client = api }: { id: string; client?: Client }) {
       });
     const load = async () => {
       try {
-        const got: McEvent[] = [];
-        let after = 0;
-        for (let i = 0; i < MAX_PAGES; i++) {
-          const r = await client.componentLogs(id, { deliveryId, level, after, limit: PAGE });
-          got.push(...r.logs);
-          if (!r.next || r.next <= after) break;
-          after = r.next;
-        }
+        // the newest KEEP lines (oldest first); follow continues after the newest id
+        const r = await client.componentLogs(id, { deliveryId, level, tail: KEEP });
         if (!alive) return;
-        last = got.length ? got[got.length - 1].id : 0;
-        append(got, true);
+        last = r.logs.length ? r.logs[r.logs.length - 1].id : 0;
+        append(r.logs, true);
         setError(null);
       } catch (e) {
         if (alive) {
@@ -92,6 +85,14 @@ export function LogsTab({ id, client = api }: { id: string; client?: Client }) {
   }, [shown.length, follow, live]);
 
   const selectedId = selection?.kind === 'event' ? Number(selection.id) : null;
+  // trace:span -> the pulse event of that span, built once per buffer change (not per line per render)
+  const eventOf = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const e of events) if (PULSE_KINDS.has(e.kind) && e.traceId && e.spanId) m.set(`${e.traceId}:${e.spanId}`, e.id);
+    return m;
+  }, [events]);
+  const idOf = (l: McEvent) => (l.traceId && l.spanId ? eventOf.get(`${l.traceId}:${l.spanId}`) : undefined) ?? l.id;
+  const service = id.split('.')[0];
 
   return (
     <div className="mc-logs">
@@ -107,20 +108,21 @@ export function LogsTab({ id, client = api }: { id: string; client?: Client }) {
         <label><input type="checkbox" checked={warn} onChange={(e) => setWarn(e.target.checked)} /> warn+ only</label>
         <label><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> follow</label>
       </div>
+      <p className="mc-muted">logs of service {service}</p>
       {error !== null ? <p className="mc-placeholder" role="alert">Logs unavailable: {error}</p> : null}
       {error === null && shown.length === 0 ? <p className="mc-muted">No log lines.</p> : null}
       <ol className="mc-logs-list" ref={box}>
         {shown.map((l) => {
           const sev = typeof l.attrs?.severity === 'string' ? l.attrs.severity : '';
           const body = typeof l.attrs?.body === 'string' ? l.attrs.body : l.reason;
-          const sel = selectedId !== null && logEventId(l, events) === selectedId;
+          const sel = selectedId !== null && idOf(l) === selectedId;
           return (
             <li key={l.id}>
               <button
                 type="button"
                 className={`mc-logline sev-${sev.toLowerCase()}${sel ? ' is-selected' : ''}`}
                 aria-pressed={sel}
-                onClick={() => store.select({ kind: 'event', id: String(logEventId(l, events)) })}
+                onClick={() => store.select({ kind: 'event', id: String(idOf(l)) })}
               >
                 <span className="mc-muted">{fmtTime(l.occurredAt)}</span> <span className="mc-sev">{sev}</span> <span>{body}</span>
               </button>
