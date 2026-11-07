@@ -151,5 +151,5 @@ when the snapshot carries the courier. PR to `main` opened. Next: PR 2, `2026-11
 **PR 2 (Mission Control app), 2026-11-07:** plan `2026-11-05-mc2-mission-control-app.md`, Tasks 1-14 done on branch
 `mission-control` (stacked on `mc-groundwork`, PR #27 still open). Code complete; `make mc-e2e` (milestone test against
 `make dev` + `make mc` + `make mc-sim`) passes, `make mc-down && make smoke` passes (DT does not depend on Mission
-Control), `make ci` green. Final whole-branch review pending; PR not yet opened. Scenario 4 correction (R36): DT reports
+Control), `make ci` green. Final whole-branch review clean after one fix wave (R40); PR #29 open, stacked on #27. Scenario 4 correction (R36): DT reports
 `no_active_delivery`, never `delivery_reassigned`. Rulings and deferred minors: `docs/mc2-followups.md`.
