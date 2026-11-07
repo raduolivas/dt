@@ -1,6 +1,7 @@
 import type { McEvent } from '../api/types';
 
-export type PulseColor = 'ok' | 'warn' | 'fail';
+/** ok green, warn amber, fail red, unknown neutral grey (R32: green means succeeded only). */
+export type PulseColor = 'ok' | 'warn' | 'fail' | 'unknown';
 
 export interface Pulse {
   id: string;
@@ -24,10 +25,12 @@ const WARN = new Set(['slow', 'retried', 'dropped', 'rejected']);
 
 export function colorOf(outcome: string): PulseColor {
   if (outcome === 'failed') return 'fail';
-  return WARN.has(outcome) ? 'warn' : 'ok';
+  if (WARN.has(outcome)) return 'warn';
+  return outcome === 'ok' ? 'ok' : 'unknown';
 }
 
-const RANK: Record<PulseColor, number> = { ok: 0, warn: 1, fail: 2 };
+/** Worst-first order for a bundle's colour: an unknown outcome outranks ok, never a warning or failure. */
+export const RANK: Record<PulseColor, number> = { ok: 0, unknown: 1, warn: 2, fail: 3 };
 
 /**
  * Pulses for the events observed in the last second (WINDOW_MS) before now.

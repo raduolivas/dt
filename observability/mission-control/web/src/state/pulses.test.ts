@@ -51,4 +51,12 @@ describe('toPulses', () => {
     const [p] = toPulses([at(NOW - 10, { origin: 'simulated' })], NOW);
     expect(p.simulated).toBe(true);
   });
+
+  it('R32: unknown outcomes are their own colour and rank between ok and warn in a bundle', () => {
+    expect(toPulses([at(NOW - 100, { outcome: 'unknown' })], NOW)[0].color).toBe('unknown');
+    const burst = (bad: string) =>
+      Array.from({ length: 25 }, (_, i) => at(NOW - 900 + i * 10, { outcome: i === 1 ? 'unknown' : i === 2 ? bad : 'ok' }));
+    expect(toPulses(burst('ok'), NOW)[0].color).toBe('unknown');
+    expect(toPulses(burst('slow'), NOW)[0].color).toBe('warn');
+  });
 });

@@ -4,6 +4,7 @@ export const theme = {
   ok: '#4ade80', // green: succeeded
   warn: '#f59e0b', // amber: slow, retried, dropped, rejected
   fail: '#ef4444', // red: failed
+  unknown: '#94a3b8', // neutral grey: outcome not known (R32), never green
   sim: '#a78bfa', // purple: simulated
   bg: '#0b0f14',
   panel: '#111821',

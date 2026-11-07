@@ -71,10 +71,34 @@ describe('PulseEngine', () => {
     expect(f[0]).toMatchObject({ wire: 'gateway>tracking', count: 42, bundle: true, color: 'fail' });
   });
 
+  it('R33: a viewer fanout reaches the viewer only with viewers > 0', () => {
+    const eng = new PulseEngine(model, () => 8);
+    const fan = (id: number, viewers: number) =>
+      ev(id, NOW, { source: 'tracking.hub', target: 'tracking.hub', attrs: { span_name: 'tracking.viewer_fanout', 'tracking.viewers': viewers } });
+    expect(eng.ingestEvents([fan(1, 0)], NOW)).toBe(0);
+    expect(eng.frame(NOW + 100, false)).toEqual([]);
+    expect(eng.ingestEvents([fan(2, 2)], NOW)).toBe(1);
+    const [p] = eng.frame(NOW + 100, false);
+    expect(p.wire).toBe('viewer>tracking');
+    expect(p.t).toBeGreaterThan(0.85); // from the tracking end out to the viewer
+  });
+
   it('simulated origin is carried to the pulse', () => {
     const eng = new PulseEngine(model, () => 8);
     eng.ingestEvents([ev(1, NOW, { origin: 'simulated' })], NOW);
     expect(eng.frame(NOW + 10, false)[0].simulated).toBe(true);
+  });
+
+  it('events delivered before a bundle in the same batch still animate', () => {
+    const s = createStore();
+    const eng = new PulseEngine(model, () => 8);
+    eng.sync(s.getState(), NOW);
+    s.addEvents([ev(10, NOW), ev(11, NOW)]);
+    s.addBundle({ wire: 'gateway.courier_api>tracking.ingest', count: 7, outcome: 'ok' }, 30); // folded 12..30
+    eng.sync(s.getState(), NOW); // one sync sees both
+    const f = eng.frame(NOW + 10, false);
+    expect(f.filter((i) => !i.bundle)).toHaveLength(2);
+    expect(f.filter((i) => i.bundle)).toHaveLength(1);
   });
 
   it('sync animates only new live events, once, and not events a server bundle may have folded', () => {

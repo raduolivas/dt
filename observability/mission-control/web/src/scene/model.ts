@@ -22,12 +22,20 @@ export interface SceneModel {
    * The scene wire between source and target, or null (same cube, no such wire,
    * unknown id: nothing is drawn, nothing invented). With attribute=true, an event
    * that happened at one part (source === target) is drawn on that part's only
-   * wire to the outside world, when it has exactly one.
+   * wire to the outside world, when it has exactly one: ungated, so callers pass
+   * only events placeEvent accepted.
    */
   place(source: string, target: string, attribute?: boolean): Placement | null;
+  /** place() for one event, with the R30 / R33 gates on attribution. */
+  placeEvent(e: McEvent): Placement | null;
 }
 
 const PULSE_KINDS = new Set(['request', 'message_published', 'message_consumed']);
+
+/** A span-derived event: FromSpan always records span_name and a trace id; NATS envelope events have neither. */
+export function fromSpan(e: McEvent): boolean {
+  return !!e.traceId && typeof e.attrs?.span_name === 'string';
+}
 
 export function buildModel(t: TopologyResponse): SceneModel {
   const byId = new Map(t.components.map((c) => [c.id, c]));
@@ -61,7 +69,7 @@ export function buildModel(t: TopologyResponse): SceneModel {
   }
 
   // Entry parts: a part with exactly one wire to an outside-zone cube.
-  const entry = new Map<string, Placement>();
+  const entry = new Map<string, Placement & { push: boolean }>();
   const outsideWires = new Map<string, Wire[]>();
   for (const w of t.wires) {
     for (const [part, other] of [[w.to, w.from], [w.from, w.to]] as const) {
@@ -79,21 +87,45 @@ export function buildModel(t: TopologyResponse): SceneModel {
     if (!sw) continue;
     // A request arrives from outside; WS/SSE is the hub pushing to the outside party.
     const toward = w.channel === 'ws_sse' ? rootOf(outside) : rootOf(part);
-    entry.set(part, { wire: sw.id, forward: sw.b === toward, attributed: true });
+    entry.set(part, { wire: sw.id, forward: sw.b === toward, attributed: true, push: w.channel === 'ws_sse' });
   }
+  const strip = (p: Placement & { push: boolean }): Placement => ({ wire: p.wire, forward: p.forward, attributed: true });
+
+  const place = (source: string, target: string, attribute = false): Placement | null => {
+    if (attribute && source && source === target) {
+      const p = entry.get(source);
+      return p ? strip(p) : null;
+    }
+    const a = rootOf(source);
+    const b = rootOf(target);
+    if (!a || !b || a === b) return null;
+    const sw = pair.get(`${a}>${b}`);
+    return sw ? { wire: sw.id, forward: sw.a === a, attributed: false } : null;
+  };
+
+  /**
+   * Gated attribution of an event that happened at one part:
+   * R30: a request observed only as a gateway API server span goes on that part's wire from the outside actor.
+   * R33: a tracking.viewer_fanout span with tracking.viewers > 0 goes out to the viewer; any other hub event
+   * (a fanout to nobody, a subscribe request) draws nothing.
+   */
+  const placeEvent = (e: McEvent): Placement | null => {
+    if (!e.source || e.source !== e.target) return place(e.source, e.target);
+    const p = entry.get(e.source);
+    if (!p || e.kind !== 'request') return null;
+    if (p.push) {
+      const viewers = Number(e.attrs?.['tracking.viewers']);
+      if (e.attrs?.span_name !== 'tracking.viewer_fanout' || !(viewers > 0)) return null;
+    }
+    return strip(p);
+  };
 
   return {
     cubes,
     wires,
     rootOf,
-    place(source, target, attribute = false) {
-      if (attribute && source && source === target) return entry.get(source) ?? null;
-      const a = rootOf(source);
-      const b = rootOf(target);
-      if (!a || !b || a === b) return null;
-      const sw = pair.get(`${a}>${b}`);
-      return sw ? { wire: sw.id, forward: sw.a === a, attributed: false } : null;
-    },
+    place,
+    placeEvent,
   };
 }
 
@@ -121,20 +153,18 @@ export function derive(m: SceneModel, events: readonly McEvent[]): Derived {
       if (Number.isFinite(t) && t > (activity.get(r) ?? -Infinity)) activity.set(r, t);
     }
     if (!PULSE_KINDS.has(e.kind) || !e.source || !e.target) continue;
-    const p = m.place(e.source, e.target, true);
+    const p = m.placeEvent(e);
     if (!p) continue;
     touched.add(p.wire);
     if (p.attributed) {
-      // the outside party at the other end of an attributed arrival acted too
+      // the outside party took part in the order, but it was not observed: touched, not active
       const sw = m.wires.find((w) => w.id === p.wire);
-      for (const r of sw ? [sw.a, sw.b] : []) {
-        touched.add(r);
-        if (Number.isFinite(t) && t > (activity.get(r) ?? -Infinity)) activity.set(r, t);
-      }
+      if (sw) touched.add(sw.a).add(sw.b);
     }
+    // measured = a traced hop (the event is a span); envelope events and attributions are inferred
     const ev = evidence.get(p.wire) ?? { measured: 0, inferred: 0 };
-    if (p.attributed || !e.traceId) ev.inferred++;
-    else ev.measured++;
+    if (!p.attributed && fromSpan(e)) ev.measured++;
+    else ev.inferred++;
     evidence.set(p.wire, ev);
   }
   return { activity, evidence, touched };

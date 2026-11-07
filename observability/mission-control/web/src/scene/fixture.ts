@@ -8,7 +8,7 @@ const add = (id: string, label: string, zone: Component['zone'], parent = '', in
 const parts = (parent: string, zone: Component['zone'], ...names: string[]) =>
   names.forEach((n) => add(`${parent}.${n}`, n, zone, parent));
 
-add('partner', 'Partner', 'outside');
+add('partner', 'Partner', 'outside', '', false);
 add('courier', 'Courier', 'outside', '', false);
 add('viewer', 'Viewer', 'outside', '', false);
 add('gateway', 'Gateway', 'edge');
@@ -22,10 +22,10 @@ add('webhooks', 'Webhooks', 'services', '', false, 'not_built');
 add('nats', 'NATS', 'messaging');
 for (const s of ['ACCOUNTS', 'DELIVERIES', 'TRACKING', 'GATEWAY']) add(`nats.${s}`, s, 'messaging', 'nats');
 add('redis', 'Redis', 'data');
-add('pg.deliveries', 'Postgres deliveries', 'data');
-add('pg.tracking', 'Postgres tracking', 'data');
-add('pg.accounts', 'Postgres accounts', 'data');
-add('pg.gateway', 'Postgres gateway', 'data');
+add('pg.deliveries', 'Postgres deliveries', 'data', '', false);
+add('pg.tracking', 'Postgres tracking', 'data', '', false);
+add('pg.accounts', 'Postgres accounts', 'data', '', false);
+add('pg.gateway', 'Postgres gateway', 'data', '', false);
 add('osrm', 'OSRM', 'data', '', false);
 
 const wires: Wire[] = [];

@@ -181,7 +181,8 @@ func (a *API) getTopology(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case c.Status == "not_built":
 			cs.State = stNotBuilt
-		case !c.Instrumented:
+		case !c.Instrumented && seen.IsZero():
+			// Not instrumented and nothing seen there: once a span names it, it lights like any cube.
 			cs.State = stNotInstrumeted
 		case live.State == hFailed || ready.State == hFailed:
 			cs.State = stUnreachable

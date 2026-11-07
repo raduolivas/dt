@@ -2,7 +2,7 @@
 // pulses, outside React. The scene reads it once per animation frame (useFrame)
 // and writes instance matrices; nothing re-renders per pulse. Pure TypeScript.
 import type { BundleData, McEvent } from '../api/types';
-import { toPulses, WINDOW_MS, type PulseColor } from '../state/pulses';
+import { RANK, toPulses, WINDOW_MS, type PulseColor } from '../state/pulses';
 import type { McState } from '../state/store';
 import type { SceneModel } from './model';
 import { pulseColor } from './visualState';
@@ -43,7 +43,6 @@ export interface FrameItem {
   static: boolean;
 }
 
-const RANK: Record<PulseColor, number> = { ok: 0, warn: 1, fail: 2 };
 
 export class PulseEngine {
   private active: Active[] = [];
@@ -77,6 +76,8 @@ export class PulseEngine {
   ingestEvents(fresh: readonly McEvent[], now: number): number {
     const windows = new Map<number, McEvent[]>();
     for (const e of fresh) {
+      // an event at one part is drawn only when its attribution passes the R30 / R33 gates
+      if (e.source && e.source === e.target && !this.model.placeEvent(e)) continue;
       const at = Date.parse(e.occurredAt);
       if (!Number.isFinite(at)) continue;
       const end = Math.ceil(at / WINDOW_MS) * WINDOW_MS; // toPulses covers (end - WINDOW_MS, end]
@@ -138,6 +139,24 @@ export class PulseEngine {
       for (const b of s.bundles) this.bundleHighWater = Math.max(this.bundleHighWater, b.streamId ?? -Infinity);
       return;
     }
+    // Events first, against the high-water mark from before this sync: an event delivered
+    // ahead of a bundle in the same batch is its own pulse, not part of that bundle.
+    if (evs !== this.lastEvents) {
+      this.lastEvents = evs;
+      let i = evs.length;
+      while (i > 0 && evs[i - 1].id > this.lastId) i--;
+      if (i < evs.length) {
+        const fresh: McEvent[] = [];
+        for (let j = i; j < evs.length; j++) {
+          const e = evs[j];
+          const seen = Date.parse(e.observedAt);
+          if (e.id <= this.bundleHighWater || !(now - seen <= LIVE_WINDOW_MS)) continue;
+          fresh.push(e);
+        }
+        this.lastId = evs[evs.length - 1].id;
+        if (fresh.length) this.ingestEvents(fresh, now);
+      }
+    }
     if (newestBundle > this.lastBundleSeq) {
       for (const b of s.bundles) {
         if (b.seq <= this.lastBundleSeq) continue;
@@ -146,20 +165,6 @@ export class PulseEngine {
       }
       this.lastBundleSeq = newestBundle;
     }
-    if (evs === this.lastEvents) return;
-    this.lastEvents = evs;
-    let i = evs.length;
-    while (i > 0 && evs[i - 1].id > this.lastId) i--;
-    if (i === evs.length) return;
-    const fresh: McEvent[] = [];
-    for (let j = i; j < evs.length; j++) {
-      const e = evs[j];
-      const seen = Date.parse(e.observedAt);
-      if (e.id <= this.bundleHighWater || !(now - seen <= LIVE_WINDOW_MS)) continue;
-      fresh.push(e);
-    }
-    this.lastId = evs[evs.length - 1].id;
-    if (fresh.length) this.ingestEvents(fresh, now);
   }
 
   /** Drops everything in flight (an order switch). The cursors keep moving forward. */
@@ -195,8 +200,8 @@ export class PulseEngine {
         m.count += a.count;
         m.simulated ||= a.simulated;
       } else {
-        // side by side, ok | warn | fail, so markers on one wire never overlap
-        markers.set(key, { key, wire: a.wire, t: 0.38 + 0.12 * RANK[a.color], color: a.color, simulated: a.simulated, count: a.count, bundle: true, static: true });
+        // side by side, ok | unknown | warn | fail, so markers on one wire never overlap
+        markers.set(key, { key, wire: a.wire, t: 0.32 + 0.12 * RANK[a.color], color: a.color, simulated: a.simulated, count: a.count, bundle: true, static: true });
       }
     }
     [...markers.values()].sort((x, y) => RANK[x.color] - RANK[y.color]).forEach(fn);

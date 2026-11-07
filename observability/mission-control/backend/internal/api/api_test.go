@@ -533,6 +533,27 @@ func TestComponentHealthNotProbed(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
+// An uninstrumented cube shows not_instrumented until something is seen there;
+// then it lights like any other (a future pgx tracing rollout lights pg.*).
+func TestTopologyUninstrumentedLightsWithActivity(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	srv := newServer(t, st, api.NewBroadcaster(), nil)
+	now := time.Now().UTC()
+	require.NoError(t, st.InsertEvents(ctx, []store.Event{ev(now.Add(-5*time.Second), "request", "tracking.outbox", "pg.tracking", "")}))
+	var r struct {
+		Components []struct{ ID, State string }
+	}
+	getJSON(t, srv.URL+"/api/topology", &r)
+	got := map[string]string{}
+	for _, c := range r.Components {
+		got[c.ID] = c.State
+	}
+	require.Equal(t, "active", got["pg.tracking"])
+	require.Equal(t, "not_instrumented", got["pg.deliveries"])
+	require.Equal(t, "not_instrumented", got["partner"])
+}
+
 func TestEventDetailAndComponentLogs(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t)
