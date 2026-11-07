@@ -43,7 +43,7 @@ func TestDefaultsBindLoopback(t *testing.T) {
 	cfg, err := config.Load()
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(cfg.HTTPAddr, "127.0.0.1:"), cfg.HTTPAddr)
-	require.Equal(t, "0.0.0.0:4318", cfg.OTLPAddr)
+	require.Equal(t, "127.0.0.1:4318", cfg.OTLPAddr)
 	require.Equal(t, "local", cfg.Env)
 	require.False(t, cfg.Simulation)
 	require.Equal(t, "builtin", cfg.MetricsSource)
@@ -133,4 +133,32 @@ func TestLoadLinksAndThresholdsOverride(t *testing.T) {
 	require.Equal(t, "http://localhost:3000/d/{trace_id}", cfg.Links["grafana"])
 	require.Equal(t, 10*time.Second, cfg.Thresholds.CourierStale)
 	require.Equal(t, 2*time.Second, cfg.Thresholds.Slow)
+}
+
+// I2/R40: a non-loopback listen address is refused unless MC_BIND_ALL=1.
+func TestLoadRefusesNonLoopbackBind(t *testing.T) {
+	for _, key := range []string{"MC_HTTP_ADDR", "MC_OTLP_ADDR"} {
+		for _, addr := range []string{"0.0.0.0:8095", ":8095", "192.168.1.5:8095", "[::]:8095", "example.com:8095"} {
+			clearEnv(t)
+			t.Setenv(key, addr)
+			_, err := config.Load()
+			require.Error(t, err, "%s=%s", key, addr)
+			require.Contains(t, err.Error(), key)
+			require.Contains(t, err.Error(), "MC_BIND_ALL")
+			t.Setenv("MC_BIND_ALL", "1")
+			cfg, err := config.Load()
+			require.NoError(t, err, "%s=%s with MC_BIND_ALL=1", key, addr)
+			require.True(t, cfg.BindAll)
+		}
+		for _, addr := range []string{"127.0.0.1:8095", "localhost:8095", "[::1]:8095", "127.0.0.2:8095"} {
+			clearEnv(t)
+			t.Setenv(key, addr)
+			_, err := config.Load()
+			require.NoError(t, err, "%s=%s", key, addr)
+		}
+		clearEnv(t)
+		t.Setenv(key, "no-port")
+		_, err := config.Load()
+		require.Error(t, err, "%s without a port", key)
+	}
 }

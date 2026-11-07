@@ -29,9 +29,11 @@ services:
       mc-postgres:
         condition: service_healthy
     environment:
-      # Inside the container the server must listen on all interfaces; the port is published on loopback only.
+      # Inside the container the servers must listen on all interfaces. MC_BIND_ALL=1 allows that, and only
+      # here: the HTTP port is published on 127.0.0.1 only and the OTLP port is not published at all.
       MC_HTTP_ADDR: 0.0.0.0:8095
       MC_OTLP_ADDR: 0.0.0.0:4318
+      MC_BIND_ALL: "1"
       MC_DATABASE_URL: postgres://mc:mc@mc-postgres:5432/mc?sslmode=disable # gitleaks:allow (dev-only placeholder)
       MC_NATS_URL: ${MC_NATS_URL:-nats://nats:4222}
       MC_NATS_MONITOR_URL: ${MC_NATS_MONITOR_URL:-http://nats:8222}

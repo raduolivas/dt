@@ -97,7 +97,12 @@ func run(ctx context.Context, stop context.CancelFunc) error {
 	} else {
 		log.Info("no built UI found; serving the API only", "dir", webDir)
 	}
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: api.CSP(mux), ReadHeaderTimeout: 5 * time.Second}
+	// Host allow-list before any handler (DNS rebinding, I2): only loopback names with our port.
+	httpHandler, err := api.AllowHosts(cfg.HTTPAddr, nil, mux)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: api.CSP(httpHandler), ReadHeaderTimeout: 5 * time.Second}
 
 	norm := &normalize.Normalizer{Topology: topology.Default(), Thresholds: cfg.Thresholds, OnRedacted: self.Redacted}
 	// Simulated deliveries stay simulated: the registry knows this process's runs and falls back to the stored
@@ -116,7 +121,12 @@ func run(ctx context.Context, stop context.CancelFunc) error {
 	}
 	writer := ingest.NewWriter(st, self, ingest.DefaultBuffer)
 	writer.OnInserted = onInserted
-	otlpSrv := &http.Server{Addr: cfg.OTLPAddr, Handler: ingest.OTLPHandler(writer, norm, self, log), ReadHeaderTimeout: 5 * time.Second}
+	// The collector addresses the OTLP listener as mc-backend:4318 (its compose alias); loopback names work too.
+	otlpHandler, err := api.AllowHosts(cfg.OTLPAddr, []string{"mc-backend"}, ingest.OTLPHandler(writer, norm, self, log))
+	if err != nil {
+		return err
+	}
+	otlpSrv := &http.Server{Addr: cfg.OTLPAddr, Handler: otlpHandler, ReadHeaderTimeout: 5 * time.Second}
 
 	// Shutdown order: stop the servers (no new OTLP), stop pollers and consumers
 	// (ctx), let the writer drain and flush (wctx), then flush self-health
