@@ -23,7 +23,7 @@ export interface Client {
   component(id: string, deliveryId?: string): Promise<ComponentResponse>;
   componentLogs(
     id: string,
-    p?: { deliveryId?: string; level?: string; after?: number; limit?: number },
+    p?: { deliveryId?: string; level?: string; after?: number; limit?: number; tail?: number },
   ): Promise<LogsResponse>;
   event(id: number): Promise<EventResponse>;
   system(): Promise<SystemResponse>;
@@ -81,7 +81,7 @@ export function createClient(f: typeof fetch = (...a) => fetch(...a)): Client {
     },
     component: (id, deliveryId) => get(`/api/components/${seg(id)}` + qs({ delivery_id: deliveryId })),
     componentLogs: (id, p = {}) =>
-      get(`/api/components/${seg(id)}/logs` + qs({ delivery_id: p.deliveryId, level: p.level, after: p.after, limit: p.limit })),
+      get(`/api/components/${seg(id)}/logs` + qs({ delivery_id: p.deliveryId, level: p.level, after: p.after, limit: p.limit, tail: p.tail })),
     event: (id) => get(`/api/events/${id}`),
     system: () => get('/api/system'),
     self: () => get('/api/self'),

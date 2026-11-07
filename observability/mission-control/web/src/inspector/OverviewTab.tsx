@@ -20,7 +20,7 @@ export function OverviewTab({ data, error }: { data: ComponentResponse | null; e
         {c.parent ? (<><dt>part of</dt><dd>{c.parent}</dd></>) : null}
         <dt>state</dt>
         <dd>
-          {c.status === 'not_built' ? 'not built yet' : !c.instrumented ? 'not instrumented' : data.health.liveness.state === 'not_probed' ? 'health not probed (mTLS)' : `liveness ${data.health.liveness.state}`}
+          {c.status === 'not_built' ? 'not built yet' : !c.instrumented && !last ? 'not instrumented' : data.health.liveness.state === 'not_probed' ? 'health not probed (mTLS)' : `liveness ${data.health.liveness.state}`}
         </dd>
         <dt>last activity</dt>
         <dd>{last ? `${fmtTime(last.occurredAt)} · ${last.kind} · ${last.outcome}` : 'none seen'}</dd>

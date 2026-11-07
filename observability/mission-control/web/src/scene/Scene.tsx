@@ -394,6 +394,7 @@ export function Scene() {
       <div className="mc-pulse-labels" ref={overlay} aria-hidden="true" />
       <div className="mc-pulse-labels" ref={overlay2} aria-hidden="true" />
       <Breadcrumb label={(id) => states.get(id)?.label ?? id} />
+      {view ? <p className="mc-expand-note">Traffic between components shows on the system view.</p> : null}
       {model && error ? (
         <p className="mc-scene-banner" role="status">
           Topology refresh failed: {error}. States may be out of date.

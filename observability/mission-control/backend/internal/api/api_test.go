@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -601,4 +602,56 @@ func TestOrdersSearch(t *testing.T) {
 	getJSON(t, srv.URL+"/api/orders?q=nope", &hits)
 	require.NotNil(t, hits)
 	require.Empty(t, hits)
+}
+
+func TestComponentLogsTail(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	srv := newServer(t, st, api.NewBroadcaster(), nil)
+	now := time.Now().UTC()
+	var batch []store.Event
+	for i := 0; i < 6; i++ {
+		del, sev := "del_1", "INFO"
+		if i%2 == 1 {
+			del, sev = "del_2", "WARN"
+		}
+		batch = append(batch, withAttrs(ev(now, "log", "tracking", "", del), `{"body":"l`+strconv.Itoa(i)+`","severity":"`+sev+`"}`))
+	}
+	require.NoError(t, st.InsertEvents(ctx, batch))
+
+	bodies := func(logs []map[string]any) []string {
+		var out []string
+		for _, l := range logs {
+			out = append(out, l["attrs"].(map[string]any)["body"].(string))
+		}
+		return out
+	}
+	var l struct {
+		Logs []map[string]any
+		Next float64
+	}
+	// the newest 3, oldest first, next = the newest id
+	getJSON(t, srv.URL+"/api/components/tracking/logs?tail=3", &l)
+	require.Equal(t, []string{"l3", "l4", "l5"}, bodies(l.Logs))
+	require.Equal(t, float64(batch[5].ID), l.Next)
+	// tail honours the level and delivery filters
+	l.Logs = nil
+	getJSON(t, srv.URL+"/api/components/tracking/logs?tail=2&level=warn", &l)
+	require.Equal(t, []string{"l3", "l5"}, bodies(l.Logs))
+	l.Logs = nil
+	getJSON(t, srv.URL+"/api/components/tracking/logs?tail=2&delivery_id=del_1", &l)
+	require.Equal(t, []string{"l2", "l4"}, bodies(l.Logs))
+	// fewer rows than tail: all of them
+	l.Logs = nil
+	getJSON(t, srv.URL+"/api/components/tracking/logs?tail=50", &l)
+	require.Len(t, l.Logs, 6)
+	// follow continues after the newest id
+	l.Logs = nil
+	getJSON(t, srv.URL+"/api/components/tracking/logs?after="+idStr(batch[5].ID), &l)
+	require.Empty(t, l.Logs)
+	// over the cap is refused
+	resp, err := http.Get(srv.URL + "/api/components/tracking/logs?tail=1001")
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
