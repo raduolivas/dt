@@ -26,6 +26,18 @@ func clearEnv(t *testing.T) {
 	}
 }
 
+func TestEdgeURLDefaultsToGateway(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("MC_GATEWAY_URL", "http://gw:1")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.Equal(t, "http://gw:1", cfg.EdgeURL)
+	t.Setenv("MC_EDGE_URL", "http://edge:2")
+	cfg, err = config.Load()
+	require.NoError(t, err)
+	require.Equal(t, "http://edge:2", cfg.EdgeURL)
+}
+
 func TestDefaultsBindLoopback(t *testing.T) {
 	clearEnv(t)
 	cfg, err := config.Load()

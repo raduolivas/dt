@@ -121,7 +121,7 @@ obs-check: ## Validate the OTel collector config and its redaction (needs Docker
 lint: lint-go lint-web lint-contracts obs-check ## Run every linter
 
 # ---- Mission Control --------------------------------------------------------
-.PHONY: mc mc-down mc-test mc-test-go mc-test-web mc-lint mc-lint-go mc-lint-web mc-web-dev
+.PHONY: mc mc-sim mc-break mc-down mc-test mc-test-go mc-test-web mc-lint mc-lint-go mc-lint-web mc-web-dev
 
 MC_DIR := observability/mission-control
 # MC_COMPOSE_OVERRIDE optionally names an extra Compose file (for example build.network: host on hosts whose build containers have no network).
@@ -133,6 +133,19 @@ mc: ## Build and start Mission Control (needs the DT stack: make dev), then wait
 	  curl -fsS http://127.0.0.1:8095/readyz >/dev/null 2>&1 && { echo "Mission Control: http://127.0.0.1:8095"; exit 0; }; \
 	  sleep 1; \
 	done; echo "Mission Control did not become ready"; $(MC_COMPOSE) logs --tail 50 mc-backend; exit 1
+
+mc-sim: dtctl ## Start simulation mode (local, sandbox key): a fake courier phone and a viewer on a new delivery; prints its order number and tracking link
+	DTCTL=$(DTCTL) $(MC_DIR)/scripts/mc-sim-key.sh
+	MC_SIMULATION=1 $(MC_COMPOSE) up -d --build --force-recreate mc-backend
+	@for i in $$(seq 1 60); do \
+	  curl -fsS http://127.0.0.1:8095/readyz >/dev/null 2>&1 && break; sleep 1; \
+	  [ $$i = 60 ] && { echo "Mission Control did not become ready"; $(MC_COMPOSE) logs --tail 50 mc-backend; exit 1; }; \
+	done
+	@curl -fsS --max-time 60 -X POST http://127.0.0.1:8095/api/sim/runs | jq -r '"order:    \(.order_ref)\ndelivery: \(.delivery_id)\ntracking: \(.tracking_url)\nMission Control: http://127.0.0.1:8095 (open the order, then break it: make mc-break SCENARIO=1..6)"'
+
+mc-break: ## Break a simulation scenario: make mc-break SCENARIO=1..6 (add HEAL=1 to heal it); 5 and 6 use Docker (project dt)
+	@test -n "$(SCENARIO)" || { echo "usage: make mc-break SCENARIO=1..6 [HEAL=1]"; exit 1; }
+	$(MC_DIR)/scripts/mc-break.sh $(SCENARIO) $(if $(HEAL),heal)
 
 mc-down: ## Stop Mission Control and delete its volume
 	$(MC_COMPOSE) down -v --remove-orphans

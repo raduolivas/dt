@@ -110,6 +110,8 @@ type Config struct {
 	NATSURL        string
 	NATSMonitorURL string
 	GatewayURL     string
+	// EdgeURL is the origin of the viewer API (simulation only); it defaults to GatewayURL.
+	EdgeURL string
 
 	Env        string
 	Simulation bool
@@ -136,6 +138,7 @@ func Load() (Config, error) {
 		NATSURL:        get("MC_NATS_URL", "nats://127.0.0.1:4222"),
 		NATSMonitorURL: get("MC_NATS_MONITOR_URL", "http://127.0.0.1:8222"),
 		GatewayURL:     get("MC_GATEWAY_URL", "http://127.0.0.1:8080"),
+		EdgeURL:        os.Getenv("MC_EDGE_URL"),
 		Env:            get("MC_ENV", "local"),
 		Simulation:     os.Getenv("MC_SIMULATION") == "1",
 		SandboxKey:     os.Getenv("MC_SANDBOX_KEY"),
@@ -145,6 +148,9 @@ func Load() (Config, error) {
 		Retention:      Retention,
 	}
 
+	if cfg.EdgeURL == "" {
+		cfg.EdgeURL = cfg.GatewayURL
+	}
 	switch cfg.MetricsSource {
 	case MetricsBuiltin, MetricsPrometheus, MetricsCloudWatch:
 	default:

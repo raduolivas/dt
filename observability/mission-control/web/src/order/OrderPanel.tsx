@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, type Client } from '../api/client';
+import { simApi, type SimClient, type SimRun } from '../api/sim';
 import type { McEvent, OrderResponse, StatusStep, SystemResponse } from '../api/types';
 import { store, useStore } from '../state/store';
 import { stepsAt, useActiveFindings } from './atTime';
@@ -48,7 +49,59 @@ function Finding({ f }: { f: McEvent }) {
   );
 }
 
-function OrderView({ id, client }: { id: string; client: Client }) {
+const BREAKS: { n: number; label: string }[] = [
+  { n: 1, label: 'Phone stops' },
+  { n: 2, label: 'Invalid token' },
+  { n: 3, label: 'Rate limit' },
+  { n: 4, label: 'Reassigned' },
+];
+
+/** Break buttons for a simulated order. Rendered only when /api/sim answers (simulation mode) and knows this delivery. */
+function SimBreaks({ deliveryId, sim }: { deliveryId: string; sim: SimClient }) {
+  const [run, setRun] = useState<SimRun | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = () => setTick((t) => t + 1);
+  useEffect(() => {
+    let alive = true;
+    void sim.status().then((runs) => {
+      if (alive) setRun(runs?.find((r) => r.delivery_id === deliveryId) ?? null);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [deliveryId, sim, tick]);
+  if (!run) return null;
+  const act = async (f: () => Promise<void>) => {
+    try {
+      await f();
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+    refresh();
+  };
+  return (
+    <section className="mc-sim" aria-label="Break this simulated order">
+      <h3 className="mc-h">Break it</h3>
+      <div className="mc-sim-buttons">
+        {BREAKS.map((b) => (
+          <button key={b.n} type="button" aria-pressed={run.scenario === b.n} disabled={b.n === 4 && run.picked_up} title={b.n === 4 && run.picked_up ? "DT reassigns only before pickup: use make mc-break SCENARIO=4" : undefined} onClick={() => act(() => sim.breakRun(deliveryId, b.n))}>
+            {b.n}. {b.label}
+          </button>
+        ))}
+        <button type="button" disabled={run.scenario === 0} onClick={() => act(() => sim.heal(deliveryId))}>Heal</button>
+      </div>
+      <p className="mc-muted">
+        5. Redis down: <code>make mc-break SCENARIO=5</code> (heal: add <code>HEAL=1</code>)<br />
+        6. OSRM stopped: <code>make mc-break SCENARIO=6</code> (heal: add <code>HEAL=1</code>)
+      </p>
+      {error ? <p role="alert">{error}</p> : null}
+    </section>
+  );
+}
+
+function OrderView({ id, client, sim }: { id: string; client: Client; sim: SimClient }) {
   const { data, error } = usePolled<OrderResponse>(() => client.order(id), id);
   useEffect(() => {
     store.setPanelFindings(data?.detectors ?? []);
@@ -93,6 +146,7 @@ function OrderView({ id, client }: { id: string; client: Client }) {
       </ol>
       <h3 className="mc-h">Detectors</h3>
       {detectors.length === 0 ? <p className="mc-muted">No findings for this order.</p> : <ul className="mc-findings">{detectors.map((f) => <Finding key={f.id} f={f} />)}</ul>}
+      {o.origin === 'simulated' && cursor === null ? <SimBreaks deliveryId={o.deliveryId} sim={sim} /> : null}
     </div>
   );
 }
@@ -148,7 +202,7 @@ function SystemView({ client }: { client: Client }) {
 }
 
 /** Left panel: the selected order (status steps, detectors), or the system view when none is selected. */
-export function LeftPanel({ client = api }: { client?: Client }) {
+export function LeftPanel({ client = api, sim = simApi }: { client?: Client; sim?: SimClient }) {
   const orderId = useStore((s) => s.orderId);
-  return orderId ? <OrderView id={orderId} client={client} /> : <SystemView client={client} />;
+  return orderId ? <OrderView id={orderId} client={client} sim={sim} /> : <SystemView client={client} />;
 }
