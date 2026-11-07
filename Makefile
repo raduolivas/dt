@@ -121,7 +121,7 @@ obs-check: ## Validate the OTel collector config and its redaction (needs Docker
 lint: lint-go lint-web lint-contracts obs-check ## Run every linter
 
 # ---- Mission Control --------------------------------------------------------
-.PHONY: mc mc-sim mc-break mc-down mc-test mc-test-go mc-test-web mc-lint mc-lint-go mc-lint-web mc-web-dev
+.PHONY: mc mc-sim mc-break mc-e2e mc-down mc-test mc-test-go mc-test-web mc-lint mc-lint-go mc-lint-web mc-web-dev
 
 MC_DIR := observability/mission-control
 # MC_COMPOSE_OVERRIDE optionally names an extra Compose file (for example build.network: host on hosts whose build containers have no network).
@@ -149,6 +149,9 @@ mc-sim: dtctl ## Start simulation mode (local, sandbox key): a fake courier phon
 mc-break: ## Break a simulation scenario: make mc-break SCENARIO=1..6 (add HEAL=1 to heal it); 5 and 6 use Docker (project dt)
 	@test -n "$(SCENARIO)" || { echo "usage: make mc-break SCENARIO=1..6 [HEAL=1]"; exit 1; }
 	$(MC_DIR)/scripts/mc-break.sh $(SCENARIO) $(if $(HEAL),heal)
+
+mc-e2e: ## Milestone test against the running stack (make dev, make mc, make mc-sim first); not part of make ci
+	cd $(MC_DIR)/e2e && go test -tags mce2e -count=1 -v -timeout 20m ./...
 
 mc-down: ## Stop Mission Control and delete its volume
 	$(MC_COMPOSE) down -v --remove-orphans
