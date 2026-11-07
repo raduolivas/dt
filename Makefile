@@ -110,8 +110,9 @@ test-go-short: ## Run Go unit tests only (no Docker)
 lint-go: ## Lint every Go module, including the onion-architecture rules
 	@$(call each-module,golangci-lint run --config $(CURDIR)/backend/.golangci.yml ./...)
 
-vuln: ## Scan Go modules for known vulnerabilities
+vuln: ## Scan Go modules for known vulnerabilities (DT's and Mission Control's backend; MC's e2e module has no dependencies)
 	@$(call each-module,govulncheck ./...)
+	@echo "==> $(MC_DIR)/backend"; cd $(MC_DIR)/backend && govulncheck ./...
 
 test: test-go test-web ## Run every test
 
