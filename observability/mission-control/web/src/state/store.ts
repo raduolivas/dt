@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { BundleData, GapData, McEvent } from '../api/types';
+import type { BundleData, GapData, McEvent, TimelineGap } from '../api/types';
 
 export type Mode = 'live' | 'paused' | 'replay';
 export type Selection = { kind: 'component' | 'wire' | 'event'; id: string } | null;
@@ -28,6 +28,10 @@ export interface McState {
   reducedMotion: boolean;
   /** Newest stream message id seen (events, bundles, gaps); the resume point for the next stream. */
   lastEventId: number | null;
+  /** Replay cursor (epoch ms) while mode is replay; null otherwise. */
+  replayAt: number | null;
+  /** Time gaps of the selected order's timeline (Mission Control down, no trace data). */
+  timelineGaps: TimelineGap[];
 }
 
 export interface McStore {
@@ -48,12 +52,14 @@ export interface McStore {
   setPanels(collapsed: boolean): void;
   setReducedMotion(v: boolean): void;
   noteStreamId(id: number): void;
+  setReplayAt(t: number | null): void;
+  setTimelineGaps(g: TimelineGap[]): void;
   reset(): void;
 }
 
 function initial(): McState {
   return {
-    mode: 'live', orderId: null, selection: null, events: [], gaps: [], bundles: [], findings: [],
+    mode: 'live', orderId: null, selection: null, events: [], gaps: [], bundles: [], findings: [], replayAt: null, timelineGaps: [],
     collapsed: { left: false, right: false, bottom: false }, lastEventId: null,
     reducedMotion:
       typeof window !== 'undefined' && typeof window.matchMedia === 'function'
@@ -163,12 +169,16 @@ export function createStore(frame: (cb: () => void) => void = nextFrame): McStor
       subs.add(fn);
       return () => subs.delete(fn);
     },
-    setMode: (mode) => set({ mode }),
+    // Leaving replay drops the cursor, so a live scene never inherits a stale one.
+    setMode: (mode) => set(mode === 'replay' ? { mode } : { mode, replayAt: null }),
+    setReplayAt: (replayAt) => set({ replayAt }),
+    setTimelineGaps: (timelineGaps) => set({ timelineGaps }),
     selectOrder(orderId) {
       ids = new Set();
       queued = [];
       queuedCount = 0;
-      set({ orderId, selection: null, events: [], gaps: [], bundles: [], findings: [] });
+      // a replay cursor belongs to one order's buffer: back to live with the new order
+      set({ orderId, selection: null, events: [], gaps: [], bundles: [], findings: [], timelineGaps: [], replayAt: null, mode: state.mode === 'replay' ? 'live' : state.mode });
     },
     select: (selection) => set({ selection }),
     addEvents(evs) {
