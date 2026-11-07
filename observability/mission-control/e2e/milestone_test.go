@@ -221,6 +221,7 @@ func TestMilestone(t *testing.T) {
 				return !still
 			})
 			start := time.Now()
+			defer e.do("POST", "/api/sim/runs/"+r.DeliveryID+"/heal", nil, nil) // never leave the run broken
 			e.do("POST", "/api/sim/runs/"+r.DeliveryID+"/break", map[string]int{"scenario": 1}, nil)
 			took, ok := until(detectBudget, func() bool {
 				_, ok := find(e.orderFindings(r.DeliveryID), start, "courier_stale", "no_accepted_fix", "courier")
@@ -253,6 +254,7 @@ func TestMilestone(t *testing.T) {
 				return !still
 			})
 			start := time.Now()
+			defer e.do("POST", "/api/sim/runs/"+r.DeliveryID+"/heal", nil, nil)
 			e.do("POST", "/api/sim/runs/"+r.DeliveryID+"/break", map[string]int{"scenario": c.n}, nil)
 			took, ok := until(detectBudget, func() bool {
 				_, ok := find(e.systemWarnings(), start, "rejected_at_gateway", c.reason, "gateway.courier_api")
@@ -277,13 +279,9 @@ func TestMilestone(t *testing.T) {
 				_, still := find(e.systemWarnings(), time.Time{}, "fixes_dropped", scenario4Reason, "tracking.ingest")
 				return !still
 			})
-			t.Log(e.script("4")) // returns once the break is applied; the 40 s are counted from here
-			start := time.Now()
-			var s struct {
-				Runs []run `json:"runs"`
-			}
-			e.do("GET", "/api/sim/status", nil, &s)
-			held := s.Runs[len(s.Runs)-1]
+			start := time.Now() // counted from before the script: it makes the held run, waits 6 s, then reassigns
+			defer e.script("4", "heal")
+			t.Log(e.script("4"))
 			took, ok := until(detectBudget, func() bool {
 				_, ok := find(e.systemWarnings(), start, "fixes_dropped", scenario4Reason, "tracking.ingest")
 				return ok
@@ -292,14 +290,6 @@ func TestMilestone(t *testing.T) {
 			if !ok {
 				t.Errorf("no fixes_dropped/%s warning at tracking.ingest within %s", scenario4Reason, detectBudget)
 			}
-			// R36 also expects courier_stale on the order. A held run keeps status "confirmed" in DT (no pickup yet), and
-			// courier_stale only looks at assigned/picked-up statuses, so none can appear: logged, not asserted (see the
-			// README and docs/mc2-followups.md).
-			took, ok = until(detectBudget, func() bool {
-				_, ok := find(e.orderFindings(held.DeliveryID), start, "courier_stale", "no_accepted_fix", "courier")
-				return ok
-			})
-			t.Logf("scenario 4: courier_stale on the held order: seen=%v after %s (NOT asserted)", ok, took.Round(time.Second))
 			t.Log(e.script("4", "heal"))
 			cleared(t, func() bool {
 				_, still := find(e.systemWarnings(), start, "fixes_dropped", scenario4Reason, "tracking.ingest")

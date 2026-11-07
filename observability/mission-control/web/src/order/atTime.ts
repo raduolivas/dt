@@ -10,6 +10,8 @@ const RESTORED = 'tracking.courier_signal_restored';
 const ms = (iso: string | null) => (iso ? Date.parse(iso) : NaN);
 /** A stored finding names its rule in attrs.rule (the backend's LatestFinding); source is the fallback. */
 const ruleOf = (f: McEvent) => (typeof f.attrs?.rule === 'string' && f.attrs.rule ? f.attrs.rule : f.source);
+/** The identity the backend clears by: rule, hop, delivery and reason. */
+const identOf = (f: McEvent) => `${ruleOf(f)}|${f.target}|${f.deliveryId}|${f.reason}`;
 const eventType = (e: McEvent) => (typeof e.attrs?.event_type === 'string' ? e.attrs.event_type : '');
 
 /**
@@ -82,8 +84,8 @@ export function stepsAt(steps: StatusStep[], events: readonly McEvent[], finding
 
 /**
  * The findings that are active: occurred at or before t (when a replay cursor
- * is given), and not cleared, meaning no later "cleared" finding from the same
- * detector at or before t. "cleared" entries themselves are not shown.
+ * is given), and not cleared, meaning no later "cleared" finding with the same
+ * identity (rule, hop, delivery, reason) at or before t. "cleared" entries themselves are not shown.
  */
 export function activeFindings(findings: readonly McEvent[], t: number | null): McEvent[] {
   const seen = t === null ? [...findings] : findings.filter((f) => ms(f.occurredAt) <= t);
@@ -91,9 +93,9 @@ export function activeFindings(findings: readonly McEvent[], t: number | null): 
   for (const f of seen) {
     if (f.outcome !== 'cleared') continue;
     const at = ms(f.occurredAt);
-    if (at > (clearedAt.get(ruleOf(f)) ?? -Infinity)) clearedAt.set(ruleOf(f), at);
+    if (at > (clearedAt.get(identOf(f)) ?? -Infinity)) clearedAt.set(identOf(f), at);
   }
-  return seen.filter((f) => f.outcome !== 'cleared' && !(ms(f.occurredAt) <= (clearedAt.get(ruleOf(f)) ?? -Infinity)));
+  return seen.filter((f) => f.outcome !== 'cleared' && !(ms(f.occurredAt) <= (clearedAt.get(identOf(f)) ?? -Infinity)));
 }
 
 /** What the left panel and the top-bar count both show: loaded plus streamed findings, as of the replay cursor in replay. */

@@ -175,3 +175,27 @@ describe('replay', () => {
     expect(buf).toHaveLength(3); // input untouched
   });
 });
+
+describe('finding rows', () => {
+  const find = (id: number, over: Partial<ReturnType<typeof mkEvent>>) =>
+    mkEvent(id, { kind: 'detector', source: 'mc', outcome: 'warning', attrs: { rule: 'fixes_dropped' }, ...over });
+  it('shows the hop, rule, reason, severity and the order; system-wide when there is none', async () => {
+    const client = fake({
+      system: vi.fn(async () => ({
+        traffic: [], recentOrders: [],
+        warnings: [
+          find(1, { target: 'tracking.ingest', reason: 'no_active_delivery' }),
+          find(2, { target: 'courier', reason: 'no_accepted_fix', outcome: 'failure', deliveryId: 'del_01abcdef', orderRef: 'mc-sim-9', attrs: { rule: 'courier_stale' } }),
+        ],
+      })),
+    });
+    render(<LeftPanel client={client} />);
+    expect(await screen.findByText('tracking.ingest')).toBeInTheDocument();
+    expect(screen.getByText(/fixes_dropped · no_active_delivery/)).toBeInTheDocument();
+    expect(screen.getByText('system-wide')).toBeInTheDocument();
+    expect(screen.getByText('courier')).toBeInTheDocument();
+    expect(screen.getByText('failure')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'mc-sim-9' }));
+    expect(store.getState().orderId).toBe('del_01abcdef');
+  });
+});
