@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import { Search } from '../order/Search';
 import { store, useStore, type Mode, type PanelName } from '../state/store';
 
 export interface CockpitProps {
@@ -47,7 +48,6 @@ function TopBar() {
   const simulated = useStore((s) => s.events.some((e) => e.origin === 'simulated'));
   const allCollapsed = useStore((s) => s.collapsed.left && s.collapsed.right && s.collapsed.bottom);
   const reduced = useStore((s) => s.reducedMotion);
-  const [q, setQ] = useState('');
   return (
     <header className="mc-topbar">
       <strong className="mc-brand">Mission Control</strong>
@@ -64,14 +64,7 @@ function TopBar() {
           </button>
         ))}
       </div>
-      <input
-        className="mc-search"
-        type="search"
-        placeholder="Order number or delivery id"
-        aria-label="Search orders"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-      />
+      <Search />
       {simulated ? <span className="mc-badge mc-badge-sim">SIMULATED</span> : null}
       <span className={`mc-badge${warnings > 0 ? ' mc-badge-warn' : ''}`}>
         {warnings} {warnings === 1 ? 'warning' : 'warnings'}

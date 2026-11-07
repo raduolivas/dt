@@ -8,6 +8,7 @@ import { store, useStore } from '../state/store';
 import { theme } from '../theme';
 import { CAMERA_DISTANCE, MAX_ZOOM, MIN_ZOOM, fitZoom, isoPosition, tween, type CameraPose, type Vec3 } from './camera';
 import { ComponentCube } from './ComponentCube';
+import { eventsAt } from '../order/replay';
 import { PulseEngine } from './engine';
 import { layoutScene, wireArc, type Layout } from './layout';
 import { buildModel, derive, type Derived, type SceneModel } from './model';
@@ -55,8 +56,11 @@ function useDerived(model: SceneModel): { derived: Derived; now: number } {
     const id = setInterval(() => setTick({ now: Date.now(), events: store.getState().events }), DERIVE_EVERY_MS);
     return () => clearInterval(id);
   }, []);
-  const derived = useMemo(() => derive(model, tick.events), [model, tick.events]);
-  return { derived, now: tick.now };
+  // Replay: only what had happened by the cursor, and "now" is the cursor.
+  const cursor = useStore((s) => (s.mode === 'replay' ? s.replayAt : null));
+  const events = useMemo(() => (cursor === null ? tick.events : eventsAt(tick.events, cursor)), [tick.events, cursor]);
+  const derived = useMemo(() => derive(model, events), [model, events]);
+  return { derived, now: cursor ?? tick.now };
 }
 
 function structureKey(t: TopologyResponse): string {

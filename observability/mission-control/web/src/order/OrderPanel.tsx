@@ -1,0 +1,144 @@
+import { useEffect, useMemo, useState } from 'react';
+import { api, type Client } from '../api/client';
+import type { McEvent, OrderResponse, StatusStep, SystemResponse } from '../api/types';
+import { store, useStore } from '../state/store';
+import { hitLabel, openOrder } from './Search';
+
+const POLL_MS = 5000;
+const MARK: Record<StatusStep['state'], string> = { done: '✓', warning: '▲', pending: '○' };
+
+/** Loads once, then again every POLL_MS while the stream is live. */
+function usePolled<T>(load: () => Promise<T>, key: string): { data: T | null; error: string | null } {
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const live = useStore((s) => s.mode === 'live');
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const run = async () => {
+      try {
+        const d = await load();
+        if (alive) {
+          setData(d);
+          setError(null);
+        }
+      } catch (e) {
+        if (alive) setError(e instanceof Error ? e.message : String(e));
+      }
+      if (alive && live) timer = setTimeout(run, POLL_MS);
+    };
+    void run();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, live]);
+  return { data, error };
+}
+
+function Finding({ f }: { f: McEvent }) {
+  return (
+    <li className="mc-finding">
+      <strong>{f.source}</strong> <span className="mc-muted">{f.outcome}</span>
+      {f.reason ? <div>{f.reason}</div> : null}
+      <time className="mc-muted">{f.occurredAt}</time>
+    </li>
+  );
+}
+
+function OrderView({ id, client }: { id: string; client: Client }) {
+  const { data, error } = usePolled<OrderResponse>(() => client.order(id), id);
+  const streamed = useStore((s) => s.findings);
+  const detectors = useMemo(() => {
+    const m = new Map<number, McEvent>();
+    for (const f of [...(data?.detectors ?? []), ...streamed]) m.set(f.id, f);
+    return [...m.values()].sort((a, b) => a.id - b.id);
+  }, [data, streamed]);
+
+  if (!data) {
+    return (
+      <p className="mc-placeholder" role="status">
+        {error ? `Order unavailable: ${error}` : 'Loading order…'}
+      </p>
+    );
+  }
+  const o = data.order;
+  return (
+    <div className="mc-order">
+      <button type="button" onClick={() => store.selectOrder(null)}>← System view</button>
+      <h2 className="mc-h">
+        {o.orderRef || o.deliveryId}
+        {o.origin === 'simulated' ? <span className="mc-badge mc-badge-sim">SIMULATED</span> : null}
+      </h2>
+      <dl className="mc-kv">
+        <dt>tenant</dt><dd>{o.tenantId}</dd>
+        <dt>environment</dt><dd>{o.environment}</dd>
+        <dt>delivery</dt><dd>{o.deliveryId}</dd>
+      </dl>
+      <h3 className="mc-h">Status</h3>
+      <ol className="mc-steps">
+        {data.statusSteps.map((s) => (
+          <li key={s.status} className={`mc-step is-${s.state}`}>
+            {MARK[s.state] ?? '○'} {s.status}
+            {s.at ? <time className="mc-muted"> {s.at}</time> : null}
+          </li>
+        ))}
+      </ol>
+      <h3 className="mc-h">Detectors</h3>
+      {detectors.length === 0 ? <p className="mc-muted">No findings for this order.</p> : <ul className="mc-findings">{detectors.map((f) => <Finding key={f.id} f={f} />)}</ul>}
+    </div>
+  );
+}
+
+function SystemView({ client }: { client: Client }) {
+  const { data, error } = usePolled<SystemResponse>(() => client.system(), 'system');
+  if (!data) {
+    return (
+      <p className="mc-placeholder" role="status">
+        {error ? `System view unavailable: ${error}` : 'Loading…'}
+      </p>
+    );
+  }
+  return (
+    <div className="mc-system">
+      <h2 className="mc-h">System</h2>
+      <h3 className="mc-h">Traffic</h3>
+      {data.traffic.length === 0 ? (
+        <p className="mc-muted">No traffic observed yet.</p>
+      ) : (
+        <table className="mc-traffic">
+          <thead><tr><th>wire</th><th>count</th><th>failed</th><th>p95</th></tr></thead>
+          <tbody>
+            {data.traffic.map((t) => (
+              <tr key={t.wire}>
+                <td>{t.wire}</td><td>{t.count}</td><td>{t.failed}</td><td>{Math.round(t.p95Ms)} ms</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <h3 className="mc-h">Recent orders</h3>
+      {data.recentOrders.length === 0 ? <p className="mc-muted">None yet.</p> : (
+        <ul className="mc-recent">
+          {data.recentOrders.map((h) => (
+            <li key={`${h.tenantId}|${h.environment}|${h.deliveryId}`}>
+              <button type="button" onClick={() => openOrder(h.deliveryId)}>
+                {h.orderRef || h.deliveryId} <span className="mc-muted">{hitLabel(h)}</span>
+                {h.origin === 'simulated' ? <span className="mc-badge mc-badge-sim">SIMULATED</span> : null}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <h3 className="mc-h">Active warnings</h3>
+      {data.warnings.length === 0 ? <p className="mc-muted">No active warnings.</p> : <ul className="mc-findings">{data.warnings.map((f) => <Finding key={f.id} f={f} />)}</ul>}
+    </div>
+  );
+}
+
+/** Left panel: the selected order (status steps, detectors), or the system view when none is selected. */
+export function LeftPanel({ client = api }: { client?: Client }) {
+  const orderId = useStore((s) => s.orderId);
+  return orderId ? <OrderView id={orderId} client={client} /> : <SystemView client={client} />;
+}
