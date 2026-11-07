@@ -9,6 +9,9 @@ import { theme } from '../theme';
 import { CAMERA_DISTANCE, MAX_ZOOM, MIN_ZOOM, fitZoom, isoPosition, tween, type CameraPose, type Vec3 } from './camera';
 import { ComponentCube } from './ComponentCube';
 import { eventsAt } from '../order/replay';
+import { Breadcrumb } from './Expanded';
+import { buildExpanded, EXPAND_ORIGIN } from './expand';
+import { highlightWire } from './linking';
 import { PulseEngine } from './engine';
 import { layoutScene, wireArc, type Layout } from './layout';
 import { buildModel, derive, type Derived, type SceneModel } from './model';
@@ -96,7 +99,12 @@ function applyPose(get: () => RootState, p: CameraPose) {
   }
 }
 
-function CameraRig({ layout, reduced, rigRef }: { layout: Layout; reduced: boolean; rigRef: RefObject<RigApi | null> }) {
+export interface Focus {
+  center: Vec3;
+  bounds: Layout['bounds'];
+}
+
+function CameraRig({ layout, focus, reduced, rigRef }: { layout: Layout; focus: Focus | null; reduced: boolean; rigRef: RefObject<RigApi | null> }) {
   const get = useThree((s) => s.get);
   const width = useThree((s) => s.size.width);
   const height = useThree((s) => s.size.height);
@@ -108,10 +116,33 @@ function CameraRig({ layout, reduced, rigRef }: { layout: Layout; reduced: boole
     [layout, width, height],
   );
 
+  // Where the camera belongs: home, or the expanded component's platform.
+  const goal = useCallback(
+    (): CameraPose =>
+      focus ? { position: isoPosition(focus.center, CAMERA_DISTANCE), target: focus.center, zoom: fitZoom(focus.bounds, width, height) } : home(),
+    [focus, home, width, height],
+  );
+  const goalRef = useRef(goal);
+  useEffect(() => {
+    goalRef.current = goal;
+  });
+
   // Follow the viewport until the user moves the camera.
   useEffect(() => {
-    if (!movedRef.current) applyPose(get, home());
+    if (!movedRef.current) applyPose(get, goalRef.current());
   }, [get, home]);
+
+  // Expanding or going back tweens to the new goal (no tween under reduced motion: useFrame jumps).
+  const prevFocus = useRef<Focus | null>(null);
+  useEffect(() => {
+    if (prevFocus.current === focus) return;
+    prevFocus.current = focus;
+    movedRef.current = false;
+    const { camera } = get();
+    const c = asControls(get().controls);
+    const target = (c ? c.target.toArray() : [0, 0, 0]) as Vec3;
+    animRef.current = { from: { position: camera.position.toArray() as Vec3, target, zoom: camera.zoom }, to: goalRef.current(), t0: performance.now() };
+  }, [focus, get]);
 
   useEffect(() => {
     rigRef.current = {
@@ -162,9 +193,11 @@ interface WorldProps {
   states: Map<string, ComponentWithState>;
   reduced: boolean;
   overlayRef: RefObject<HTMLDivElement | null>;
+  /** Parts of this component can be opened (main view only). */
+  canExpand?: (id: string) => boolean;
 }
 
-function World({ model, layout, states, reduced, overlayRef }: WorldProps) {
+function World({ model, layout, states, reduced, overlayRef, canExpand }: WorldProps) {
   const orderId = useStore((s) => s.orderId);
   const selection = useStore((s) => s.selection);
   const { derived, now } = useDerived(model);
@@ -190,7 +223,19 @@ function World({ model, layout, states, reduced, overlayRef }: WorldProps) {
   // With an order searched, what it did not touch dims to 35 %.
   const touched = derived.touched;
   const isDim = useCallback((id: string) => orderId !== null && !touched.has(id), [orderId, touched]);
-  const selectComponent = useCallback((id: string) => store.select({ kind: 'component', id }), []);
+  const selectComponent = useCallback(
+    (id: string) => {
+      store.select({ kind: 'component', id });
+      if (canExpand?.(id)) store.expand(id);
+    },
+    [canExpand],
+  );
+  // The selected event's wire is highlighted (logs <-> pulses, spec 6.4).
+  const selectedEvent = useStore((s) => (s.selection?.kind === 'event' ? (s.events.find((e) => String(e.id) === s.selection?.id) ?? null) : null));
+  const hlWire = useMemo(
+    () => highlightWire(model, selectedEvent ? [selectedEvent] : [], selectedEvent ? { kind: 'event', id: String(selectedEvent.id) } : null),
+    [model, selectedEvent],
+  );
   const selectWire = useCallback((id: string) => store.select({ kind: 'wire', id }), []);
 
   return (
@@ -207,7 +252,7 @@ function World({ model, layout, states, reduced, overlayRef }: WorldProps) {
             curve={c}
             look={wireStyle(w, derived.evidence)}
             dim={isDim(w.id)}
-            selected={selection?.kind === 'wire' && selection.id === w.id}
+            selected={(selection?.kind === 'wire' && selection.id === w.id) || hlWire === w.id}
             onSelect={selectWire}
           />
         ) : null;
@@ -232,7 +277,7 @@ function World({ model, layout, states, reduced, overlayRef }: WorldProps) {
           />
         );
       })}
-      <Pulses engine={engine} curves={curves} reduced={reduced} isDim={isDim} overlayRef={overlayRef} />
+      <Pulses engine={engine} model={model} curves={curves} reduced={reduced} isDim={isDim} overlayRef={overlayRef} />
     </>
   );
 }
@@ -287,6 +332,8 @@ export function Scene() {
   const rig = useRef<RigApi | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const overlay = useRef<HTMLDivElement>(null);
+  const overlay2 = useRef<HTMLDivElement>(null);
+  const expandedId = useStore((s) => s.expanded);
   // Follow the OS setting when it changes; the top-bar toggle still overrides it.
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return;
@@ -310,6 +357,12 @@ export function Scene() {
   const model = useMemo(() => (topo ? buildModel(topo) : null), [key]);
   const layout = useMemo(() => (model ? layoutScene(model.cubes) : null), [model]);
   const states = useMemo(() => new Map((topo?.components ?? []).map((c) => [c.id, c])), [topo]);
+  const parents = useMemo(() => new Set((topo?.components ?? []).map((c) => c.parent).filter(Boolean)), [topo]);
+  const canExpand = useCallback((id: string) => parents.has(id), [parents]);
+  // The expanded component's working parts, rebuilt only when the structure changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const view = useMemo(() => (topo && expandedId ? buildExpanded(topo, expandedId) : null), [key, expandedId]);
+  const focus = useMemo<Focus | null>(() => (view ? { center: EXPAND_ORIGIN, bounds: view.layout.bounds } : null), [view]);
 
   return (
     <div className="mc-scene" ref={root}>
@@ -328,8 +381,9 @@ export function Scene() {
             <hemisphereLight args={['#9be7f5', '#05080c', 0.35]} />
             <directionalLight position={[12, 26, 16]} intensity={1.1} />
             <gridHelper args={[160, 80, '#122030', '#0e1822']} position={[0, -0.47, 0]} />
-            <CameraRig layout={layout} reduced={reduced} rigRef={rig} />
-            <World model={model} layout={layout} states={states} reduced={reduced} overlayRef={overlay} />
+            <CameraRig layout={layout} focus={focus} reduced={reduced} rigRef={rig} />
+            <World model={model} layout={layout} states={states} reduced={reduced} overlayRef={overlay} canExpand={canExpand} />
+            {view ? <World key={view.component.id} model={view.model} layout={view.layout} states={states} reduced={reduced} overlayRef={overlay2} /> : null}
           </Canvas>
         </SceneBoundary>
       ) : (
@@ -338,13 +392,22 @@ export function Scene() {
         </p>
       )}
       <div className="mc-pulse-labels" ref={overlay} aria-hidden="true" />
+      <div className="mc-pulse-labels" ref={overlay2} aria-hidden="true" />
+      <Breadcrumb label={(id) => states.get(id)?.label ?? id} />
       {model && error ? (
         <p className="mc-scene-banner" role="status">
           Topology refresh failed: {error}. States may be out of date.
         </p>
       ) : null}
       <div className="mc-scene-hud">
-        <button type="button" onClick={() => rig.current?.reset()} aria-label="Reset view">
+        <button
+          type="button"
+          onClick={() => {
+            store.expand(null);
+            rig.current?.reset();
+          }}
+          aria-label="Reset view"
+        >
           Reset view
         </button>
       </div>

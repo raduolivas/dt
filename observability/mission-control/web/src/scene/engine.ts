@@ -25,6 +25,7 @@ interface Active {
   simulated: boolean;
   count: number;
   bundle: boolean;
+  eventId?: number;
   start: number;
   duration: number;
 }
@@ -41,6 +42,8 @@ export interface FrameItem {
   bundle: boolean;
   /** Reduced motion: a marker that does not travel. */
   static: boolean;
+  /** The event a click selects: the pulse's own, or the newest of a bundle. Absent for server bundles (they carry no ids). */
+  eventId?: number;
 }
 
 
@@ -52,6 +55,7 @@ interface MarkerSrc {
   color: PulseColor;
   simulated: boolean;
   count: number;
+  eventId?: number;
 }
 
 /** One static marker per wire and colour, side by side (ok | unknown | warn | fail) so markers on one wire never overlap. */
@@ -63,8 +67,9 @@ function markerItems(list: readonly MarkerSrc[]): FrameItem[] {
     if (m) {
       m.count += a.count;
       m.simulated ||= a.simulated;
+      if (a.eventId !== undefined && (m.eventId === undefined || a.eventId > m.eventId)) m.eventId = a.eventId;
     } else {
-      markers.set(key, { key, wire: a.wire, t: 0.32 + 0.12 * RANK[a.color], color: a.color, simulated: a.simulated, count: a.count, bundle: true, static: true });
+      markers.set(key, { key, wire: a.wire, t: 0.32 + 0.12 * RANK[a.color], color: a.color, simulated: a.simulated, count: a.count, bundle: true, static: true, eventId: a.eventId });
     }
   }
   return [...markers.values()].sort((x, y) => RANK[x.color] - RANK[y.color]);
@@ -129,7 +134,7 @@ export class PulseEngine {
       if (!place) continue;
       this.push({
         key: p.id, wire: place.wire, forward: place.forward, color: p.color, simulated: p.simulated,
-        count: p.count ?? 1, bundle: p.count !== undefined, start: now + (p.at - first) * scale,
+        count: p.count ?? 1, bundle: p.count !== undefined, eventId: p.eventId, start: now + (p.at - first) * scale,
         duration: this.duration(place.wire),
       });
       n++;
@@ -218,7 +223,7 @@ export class PulseEngine {
         const u = (now - a.start) / a.duration;
         fn({
           key: a.key, wire: a.wire, t: a.forward ? u : 1 - u, color: a.color, simulated: a.simulated, count: a.count,
-          bundle: a.bundle, static: false,
+          bundle: a.bundle, static: false, eventId: a.eventId,
         });
       }
       return;
@@ -250,7 +255,7 @@ export class PulseEngine {
     for (const p of this.pulsesFor(inWindow)) {
       const [source, target] = p.wire.split('>');
       const place = this.model.place(source, target ?? '', true);
-      if (place) placed.push({ wire: place.wire, color: p.color, simulated: p.simulated, count: p.count ?? 1 });
+      if (place) placed.push({ wire: place.wire, color: p.color, simulated: p.simulated, count: p.count ?? 1, eventId: p.eventId });
     }
     return markerItems(placed);
   }

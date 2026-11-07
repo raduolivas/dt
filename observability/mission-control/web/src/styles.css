@@ -127,3 +127,27 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--mc-accent);
 .mc-gap.is-mc_down { border-color: var(--mc-warn); }
 .mc-cursor { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--mc-accent); pointer-events: none; }
 .mc-replay-banner button { color: #0b0f14; background: transparent; border-color: #0b0f14; }
+
+/* ---- inspector and breadcrumb (spec 6.4) ---- */
+.mc-breadcrumb { position: absolute; top: 8px; left: 8px; padding: 3px 8px; background: rgba(17, 24, 33, 0.85); border: 1px solid var(--mc-panel-edge); border-radius: 3px; }
+.mc-breadcrumb button { background: transparent; border: 0; color: var(--mc-accent); cursor: pointer; padding: 0; font: inherit; }
+.mc-tabs { display: flex; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; }
+.mc-tabs button.is-on { border-color: var(--mc-accent); color: var(--mc-accent); }
+.mc-health { margin: 0; display: grid; gap: 6px; }
+.mc-health-line { display: grid; grid-template-columns: 90px 1fr; gap: 8px; border-left: 2px solid var(--mc-panel-edge); padding-left: 6px; }
+.mc-health-line dt { color: var(--mc-muted); } .mc-health-line dd { margin: 0; overflow-wrap: anywhere; }
+.mc-health-line.is-ok { border-color: var(--mc-ok, #4ade80); }
+.mc-health-line.is-warn { border-color: var(--mc-warn); }
+.mc-health-line.is-fail { border-color: #f87171; }
+.mc-health-line.is-neutral { border-color: var(--mc-muted); color: var(--mc-muted); }
+.mc-dep { display: block; } .mc-dep.is-fail { color: #f87171; } .mc-dep.is-neutral { color: var(--mc-muted); }
+.mc-openin { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+.mc-openin a { color: var(--mc-accent); }
+.mc-logs-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; }
+.mc-logs-bar button[aria-pressed='true'] { border-color: var(--mc-accent); color: var(--mc-accent); }
+.mc-logs-list { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow: auto; display: grid; gap: 2px; }
+.mc-logline { width: 100%; text-align: left; overflow-wrap: anywhere; background: transparent; border: 0; border-left: 2px solid transparent; padding: 1px 4px; font: inherit; color: inherit; cursor: pointer; }
+.mc-logs-list li > span.mc-logline, li.mc-logline { cursor: default; }
+.mc-logline.is-selected { border-left-color: var(--mc-accent); background: rgba(34, 211, 238, 0.1); }
+.mc-logline.sev-warn .mc-sev, .mc-logline.sev-warning .mc-sev { color: var(--mc-warn); }
+.mc-logline.sev-error .mc-sev, .mc-logline.sev-fatal .mc-sev { color: #f87171; }

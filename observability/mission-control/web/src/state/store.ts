@@ -19,6 +19,8 @@ export interface McState {
   /** Selected order (delivery id); null = whole-system view. */
   orderId: string | null;
   selection: Selection;
+  /** The component opened into its working parts (click to expand); null = the whole-system view. */
+  expanded: string | null;
   /** Ascending by id, capped at MAX_EVENTS. */
   events: McEvent[];
   gaps: GapData[];
@@ -42,6 +44,7 @@ export interface McStore {
   setMode(m: Mode): void;
   selectOrder(id: string | null): void;
   select(s: Selection): void;
+  expand(id: string | null): void;
   addEvents(evs: McEvent[]): void;
   /** Like addEvents, but coalesced into one update per animation frame (the stream path). */
   queueEvents(evs: McEvent[]): void;
@@ -62,7 +65,7 @@ export interface McStore {
 
 function initial(): McState {
   return {
-    mode: 'live', orderId: null, selection: null, events: [], gaps: [], bundles: [], findings: [], replayAt: null, timelineGaps: [], panelFindings: [],
+    mode: 'live', orderId: null, selection: null, expanded: null, events: [], gaps: [], bundles: [], findings: [], replayAt: null, timelineGaps: [], panelFindings: [],
     collapsed: { left: false, right: false, bottom: false }, lastEventId: null,
     reducedMotion:
       typeof window !== 'undefined' && typeof window.matchMedia === 'function'
@@ -185,6 +188,7 @@ export function createStore(frame: (cb: () => void) => void = nextFrame): McStor
       set({ orderId, selection: null, events: [], gaps: [], bundles: [], findings: [], timelineGaps: [], panelFindings: [], replayAt: null, mode: state.mode === 'replay' ? 'live' : state.mode });
     },
     select: (selection) => set({ selection }),
+    expand: (expanded) => set({ expanded }),
     addEvents(evs) {
       const merged = merge(evs);
       if (merged) set({ events: merged });
