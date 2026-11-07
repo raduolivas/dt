@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { openStream } from './api/stream';
+import { Inspector } from './inspector/Inspector';
 import { Cockpit } from './layout/Cockpit';
 import { LeftPanel } from './order/OrderPanel';
 import { Timeline, useOrderTimeline } from './order/Timeline';
@@ -35,10 +36,6 @@ export function useLiveStream(): void {
   }, [orderId, live]);
 }
 
-function Placeholder({ children }: { children: string }) {
-  return <p className="mc-placeholder">{children}</p>;
-}
-
 export function App() {
   useLiveStream();
   useOrderTimeline();
@@ -46,7 +43,7 @@ export function App() {
     <Cockpit
       left={<LeftPanel />}
       center={<Scene />}
-      right={<Placeholder>Inspector</Placeholder>}
+      right={<Inspector />}
       bottom={<Timeline />}
     />
   );

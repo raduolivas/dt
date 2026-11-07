@@ -11,6 +11,7 @@ export interface Pulse {
   simulated: boolean;
   /** Present only on a bundle pulse: how many observed events it stands for. */
   count?: number;
+  /** A single pulse: its event. A bundle pulse: the newest event it bundles (the one a click selects). */
   eventId?: number;
 }
 
@@ -54,14 +55,16 @@ export function toPulses(events: McEvent[], now: number): Pulse[] {
     if (list.length > BUNDLE_THRESHOLD) {
       let worst: PulseColor = 'ok';
       let latest = 0;
+      let newest = -Infinity;
       let sim = false;
       for (const { e, at } of list) {
         const c = colorOf(e.outcome);
         if (RANK[c] > RANK[worst]) worst = c;
         latest = Math.max(latest, at);
+        newest = Math.max(newest, e.id);
         sim ||= e.origin === 'simulated';
       }
-      out.push({ id: `bundle:${wire}:${latest}`, wire, color: worst, at: latest, simulated: sim, count: list.length });
+      out.push({ id: `bundle:${wire}:${latest}`, wire, color: worst, at: latest, simulated: sim, count: list.length, eventId: newest });
       continue;
     }
     for (const { e, at } of list) {
