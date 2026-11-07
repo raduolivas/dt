@@ -32,7 +32,7 @@ func eventually(t *testing.T, cond func() bool, msg string) {
 
 func TestSimRoutesAbsentWhenDisabled(t *testing.T) {
 	// MC_SIMULATION off: FromConfig makes no manager and Mount adds no route, so the paths are plain 404s.
-	m, err := FromConfig(config.Config{Simulation: false, SandboxKey: testKey}, nil)
+	m, err := FromConfig(config.Config{Simulation: false, SandboxKey: testKey}, nil, nil)
 	require.NoError(t, err)
 	assert.Nil(t, m)
 	mux := http.NewServeMux()
@@ -181,7 +181,7 @@ func TestSimOnlyUsesTestKey(t *testing.T) {
 			assert.NotContains(t, err.Error(), key[8:], "the error never echoes the key")
 		}
 	}
-	_, err := FromConfig(config.Config{Simulation: true, Env: "local", SandboxKey: "dt_sk_live_" + strings.Repeat("b", 55)}, nil)
+	_, err := FromConfig(config.Config{Simulation: true, Env: "local", SandboxKey: "dt_sk_live_" + strings.Repeat("b", 55)}, nil, nil)
 	require.Error(t, err)
 
 	// the key goes to partner calls only; the courier and the viewer use their own tokens

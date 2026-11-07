@@ -47,6 +47,9 @@ func (n *Normalizer) simulated(deliveryID string) bool {
 	return n.SimRegistry != nil && deliveryID != "" && n.SimRegistry.IsSimulated(deliveryID)
 }
 
+// SimOrderRefPrefix is the order ref prefix of simulated deliveries (ruling R38).
+const SimOrderRefPrefix = "mc-sim-"
+
 const pkgPrefix = "dt.events.v1."
 
 // Allowed maps a payload's full message name to the only fields copied into

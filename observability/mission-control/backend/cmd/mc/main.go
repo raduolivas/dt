@@ -78,7 +78,7 @@ func run(ctx context.Context, stop context.CancelFunc) error {
 	mux.Handle("/api/", api.New(api.Options{Store: st, Topology: topology.Default(), Broadcaster: bc, Log: log,
 		Traffic: metrics.Traffic(src), Links: metrics.Links(cfg.Links)}))
 	// Simulation mode (MC_SIMULATION=1, MC_ENV=local, dt_sk_test_ key): the only place Mission Control writes to DT.
-	simMgr, err := sim.FromConfig(cfg, log)
+	simMgr, err := sim.FromConfig(cfg, log, st.OrderOrigin)
 	if err != nil {
 		return err
 	}
@@ -100,8 +100,11 @@ func run(ctx context.Context, stop context.CancelFunc) error {
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: api.CSP(mux), ReadHeaderTimeout: 5 * time.Second}
 
 	norm := &normalize.Normalizer{Topology: topology.Default(), Thresholds: cfg.Thresholds, OnRedacted: self.Redacted}
+	// Simulated deliveries stay simulated: the registry knows this process's runs and falls back to the stored
+	// order origin (R38), also when simulation is off (events of an earlier simulated run).
+	norm.SimRegistry = sim.NewRegistry(st.OrderOrigin)
 	if simMgr != nil {
-		norm.SimRegistry = simMgr.Registry() // a nil *Registry in the interface would still answer false, but stay explicit
+		norm.SimRegistry = simMgr.Registry()
 	}
 	idx := index.New(st)
 	// After an insert: update the order index, then feed the live stream

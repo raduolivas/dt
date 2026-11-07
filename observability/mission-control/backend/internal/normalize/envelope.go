@@ -72,6 +72,10 @@ func (n *Normalizer) FromEnvelope(subject string, env *eventsv1.Envelope, observ
 			ev.OrderRef = "" // the redactor dropped it
 		}
 	}
+	// Simulation mode names its orders with this prefix, so the marker needs no registry and survives restarts (R38).
+	if strings.HasPrefix(ev.OrderRef, SimOrderRefPrefix) {
+		ev.Origin = "simulated"
+	}
 	b, err := json.Marshal(clean)
 	if err != nil {
 		return store.Event{}, fmt.Errorf("normalize: marshal attrs: %w", err)
