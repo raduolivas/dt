@@ -506,13 +506,25 @@ func TestCSPHeader(t *testing.T) {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+p, nil)
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
-		require.Equal(t, "default-src 'self'", resp.Header.Get("Content-Security-Policy"), p)
+		require.Equal(t, "default-src 'self'; frame-ancestors 'none'", resp.Header.Get("Content-Security-Policy"), p)
+		require.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"), p)
 		_ = resp.Body.Close()
 		cancel()
 	}
 	rec := httptest.NewRecorder()
 	api.CSP(api.AuthSeam(http.NotFoundHandler())).ServeHTTP(rec, httptest.NewRequest("GET", "/livez", nil))
-	require.Equal(t, "default-src 'self'", rec.Header().Get("Content-Security-Policy"))
+	require.Equal(t, "default-src 'self'; frame-ancestors 'none'", rec.Header().Get("Content-Security-Policy"))
+	require.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+	// A request refused by the host allow-list carries the headers too.
+	refuse, err := api.AllowHosts("127.0.0.1:8095", nil, http.NotFoundHandler())
+	require.NoError(t, err)
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/self", nil)
+	req.Host = "evil.example:8095"
+	api.CSP(refuse).ServeHTTP(rec, req)
+	require.Equal(t, http.StatusMisdirectedRequest, rec.Code)
+	require.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+	require.Contains(t, rec.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'")
 }
 
 func TestComponentHealthNotProbed(t *testing.T) {
