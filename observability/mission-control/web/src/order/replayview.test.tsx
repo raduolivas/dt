@@ -13,7 +13,7 @@ const iso = (ms: number) => new Date(ms).toISOString();
 const hit: OrderHit = { tenantId: 'acme', environment: 'prod', orderRef: 'A-1', deliveryId: 'd-1', origin: 'live', createdAt: iso(T0) };
 const fake = (over: Partial<Client>): Client => over as Client;
 const finding = (id: number, ms: number, over: Partial<McEvent> = {}) =>
-  mkEvent(id, { kind: 'detector', source: 'courier_stale', outcome: 'warning', reason: 'no signal', occurredAt: iso(ms), observedAt: iso(ms), ...over });
+  mkEvent(id, { kind: 'detector', source: 'mc', target: 'courier', attrs: { rule: 'courier_stale' }, outcome: 'warning', reason: 'no signal', occurredAt: iso(ms), observedAt: iso(ms), ...over });
 const lifecycle = (id: number, ms: number, type: string, over: Partial<McEvent> = {}) =>
   mkEvent(id, { kind: 'message_consumed', occurredAt: iso(ms), observedAt: iso(ms), attrs: { event_type: type }, ...over });
 
@@ -71,6 +71,16 @@ describe('activeFindings', () => {
   });
 });
 
+describe('activeFindings identity', () => {
+  it('a clear for one delivery does not hide another delivery\'s open finding', () => {
+    const base = { attrs: { rule: 'courier_stale' }, target: 'courier', reason: 'no_accepted_fix' };
+    const a = finding(1, T0 + 1000, { ...base, deliveryId: 'd-1' });
+    const b = finding(2, T0 + 2000, { ...base, deliveryId: 'd-2' });
+    const clearA = finding(3, T0 + 3000, { ...base, deliveryId: 'd-1', outcome: 'cleared' });
+    expect(activeFindings([a, b, clearA], null)).toEqual([b]);
+  });
+});
+
 describe('LeftPanel in replay', () => {
   const client = (): Client =>
     fake({
@@ -85,12 +95,12 @@ describe('LeftPanel in replay', () => {
     const items = await screen.findAllByRole('listitem');
     expect(items[0]).toHaveTextContent('✓ confirmed');
     expect(items[1]).toHaveTextContent('○ courier_assigned');
-    expect(screen.queryByText('courier_stale')).toBeNull();
+    expect(screen.queryByText('courier')).toBeNull();
     unmount();
 
     store.setReplayAt(T0 + 90_000);
     render(<LeftPanel client={client()} />);
-    await screen.findByText('courier_stale');
+    await screen.findByText('courier');
     expect(screen.getAllByRole('listitem')[1]).toHaveTextContent('▲ courier_assigned');
   });
 });
@@ -103,14 +113,14 @@ describe('top bar agrees with the panel', () => {
 
   it('warning count follows the cursor in replay and matches live', async () => {
     ui();
-    await screen.findByText('courier_stale');
+    await screen.findByText('courier');
     expect(screen.getByText('1 warning')).toBeInTheDocument();
     act(() => {
       store.setMode('replay');
       store.setReplayAt(T0 + 70_000);
     });
     await waitFor(() => expect(screen.getByText('0 warnings')).toBeInTheDocument());
-    expect(screen.queryByText('courier_stale')).toBeNull();
+    expect(screen.queryByText('courier')).toBeNull();
     act(() => store.setReplayAt(T0 + 90_000));
     expect(screen.getByText('1 warning')).toBeInTheDocument();
   });

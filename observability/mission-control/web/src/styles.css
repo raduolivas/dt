@@ -111,6 +111,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--mc-accent);
 .mc-step.is-done { color: var(--mc-ok, #4ade80); }
 .mc-step.is-warning { color: var(--mc-warn); }
 .mc-step.is-pending { color: var(--mc-muted); }
+.mc-chip { padding: 0 6px; border: 1px solid var(--mc-panel-edge); border-radius: 8px; color: var(--mc-muted); }
+.mc-chip-warning { color: var(--mc-warn); border-color: var(--mc-warn); }
+.mc-chip-failure { color: #f87171; border-color: #f87171; }
 .mc-finding { overflow-wrap: anywhere; border-left: 2px solid var(--mc-warn); padding-left: 6px; }
 .mc-recent button { width: 100%; text-align: left; overflow-wrap: anywhere; }
 .mc-traffic { width: 100%; border-collapse: collapse; }

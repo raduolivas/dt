@@ -2,7 +2,7 @@
 
 Written at the end of MC-PR2 (Mission Control app, branch `mission-control`) so the controller's rulings and the deferred minors outlive the scratch workspace (`.superpowers/sdd/`, gitignored). Source: the SDD progress log. Each ruling keeps the text it was recorded with, including its cost if wrong. Review the minors before the staging milestone.
 
-## Rulings R1-R39
+## Rulings R1-R39 (41 lines: R14 and R36 each have an amendment)
 
 Rulings bind the code as built. A ruling with `(amended)` replaces the earlier text of the same number.
 
@@ -43,6 +43,7 @@ Rulings bind the code as built. A ruling with `(amended)` replaces the earlier t
 - **R34**: in replay, the left panel's status steps and detector findings show only what is known at the cursor (steps reached at or before t, findings with occurred_at <= t and not cleared by t), and the scene shows static markers with counts for pulse events in the 5 s before the cursor (reduced-motion style, no travel, no invented pulses) — why: spec 4/6.3 replay replays visuals from stored events; spec 6.1 timeline synced with panels — cost if wrong: replay looks quieter than live
 - **R35**: never-seen working parts keep "stale - no data" (spec 6.3 one look for stale/no data; idle would claim liveness we lack); parts that can never emit their own spans get instrumented:false in topology instead — cost if wrong: hatched parts on a quiet system
 - **R36**: Task 14 scenario 4 expectation becomes fixes_dropped reason no_active_delivery at hop tracking.ingest (system-level finding, no delivery id) plus courier_stale on the order; detectors unchanged; the README states DT's behaviour (reassigned courier's fixes have no active delivery) — why: Mission Control must report what DT emits; the plan's delivery_reassigned assumption was wrong about DT — cost if wrong: none (would need a DT change, out of scope)
+- **R36 (amended)**: scenario 4 expectation is fixes_dropped reason no_active_delivery at hop tracking.ingest (system warning) only — the "plus courier_stale on the order" clause is dropped: the pickup=hold run keeps the delivery out of the statuses courier_stale watches, so it can never fire; README and docs/mc2-followups.md must say so — cost if wrong: none (controller error in the original R36)
 - **R37**: the milestone asserts scenarios 2, 3 and 4 through /api/system active warnings (no delivery id on those signals) and scenarios 1, 5, 6 where they surface (1 on the order; 5, 6 system); the order panel is not expected to show 2-4 — cost if wrong: none
 - **R38**: simulated origin must be durable and race-free — normalize marks DeliveryCreated with external_id prefix "mc-sim-" as simulated (the sim's order refs use that prefix), and the SimRegistry falls back to mc_order.origin for the delivery so later events and restarts keep origin=simulated — why: spec 9 "everything it creates is shown as SIMULATED"; in-memory registry filled after the delivery POST could race and is lost on restart — cost if wrong: a partner order ref starting "mc-sim-" in a real tenant would be marked simulated (sandbox-only prefix, documented)
 - **R39**: Task 14 implementer does Steps 1-4 and docs but NOT push/PR — the controller pushes and opens the PR after the final whole-branch review; PR #27 still open, so the branch stays stacked on mc-groundwork — cost if wrong: none
@@ -128,5 +129,4 @@ Items the reviews found and the controller chose not to fix in MC-PR2.
 - Task 6: `MC_HTTP_ADDR` override is not validated to loopback (compose publishes 127.0.0.1 only). Decide at the final review; matters before any staging deployment.
 - Task 6 (carry to Task 8): the courier_stale warning clause on a status step compares with the last restore, while R14 says last accepted fix; a stale finding with no later loss keeps the step amber until the order ends.
 - Resolved in Task 14: Task 4 check (NATS rows on TRACKING and GATEWAY: the live system view shows `nats.TRACKING` and `nats.GATEWAY` wires), Task 8 scenario 4 (R36), Task 1 collector DNS.
-- Task 14: R36 expects `courier_stale` on the order in scenario 4. The held run keeps DT status `confirmed` (pickup not yet confirmed), which the detector does not treat as active, so the finding never appears; the milestone test logs it without asserting. Needs a ruling: either include `confirmed`-with-courier in courier_stale, or drop the clause from R36.
 - Task 14: `make mc-e2e` needs a fresh `make mc-sim` (run cap 8); the sim has no "end run" API.

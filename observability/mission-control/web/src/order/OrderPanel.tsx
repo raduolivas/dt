@@ -3,6 +3,7 @@ import { api, type Client } from '../api/client';
 import { simApi, type SimClient, type SimRun } from '../api/sim';
 import type { McEvent, OrderResponse, StatusStep, SystemResponse } from '../api/types';
 import { store, useStore } from '../state/store';
+import { age } from '../scene/visualState';
 import { stepsAt, useActiveFindings } from './atTime';
 import { hitLabel, openOrder } from './Search';
 
@@ -39,12 +40,25 @@ function usePolled<T>(load: () => Promise<T>, key: string): { data: T | null; er
   return { data, error };
 }
 
+/** One finding: the hop (the finding's target), rule and reason, severity chip, the order, and its age. */
 function Finding({ f }: { f: McEvent }) {
+  const rule = typeof f.attrs?.rule === 'string' ? f.attrs.rule : '';
+  const what = [rule, f.reason].filter(Boolean).join(' · ');
+  const order = f.orderRef || (f.deliveryId ? `${f.deliveryId.slice(0, 12)}…` : '');
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), POLL_MS);
+    return () => clearInterval(t);
+  }, []);
+  const ageMs = now - Date.parse(f.occurredAt);
   return (
     <li className="mc-finding">
-      <strong>{f.source}</strong> <span className="mc-muted">{f.outcome}</span>
-      {f.reason ? <div>{f.reason}</div> : null}
-      <time className="mc-muted">{f.occurredAt}</time>
+      <strong>{f.target || f.source}</strong> <span className={`mc-chip mc-chip-${f.outcome}`}>{f.outcome}</span>
+      {what ? <div>{what}</div> : null}
+      <div>
+        {f.deliveryId ? <button type="button" onClick={() => openOrder(f.deliveryId)}>{order}</button> : <span className="mc-muted">system-wide</span>}{' '}
+        <time className="mc-muted" dateTime={f.occurredAt} title={f.occurredAt}>{Number.isFinite(ageMs) ? `${age(ageMs)} ago` : f.occurredAt}</time>
+      </div>
     </li>
   );
 }
