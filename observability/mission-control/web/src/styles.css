@@ -44,3 +44,52 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--mc-accent);
 @media (max-width: 820px) {
   .mc-left, .mc-right { width: 200px; }
 }
+
+/* ---- 3D scene (spec 6.2, 6.3, 6.5); colour tokens are set on .mc-scene from visualState.ts ---- */
+.mc-scene { position: absolute; inset: 0; background: var(--mc-bg); }
+.mc-scene canvas { display: block; }
+.mc-scene-msg { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: var(--mc-muted); }
+.mc-scene-banner { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); margin: 0; padding: 3px 10px; border: 1px solid var(--mc-warn); border-radius: 4px; color: var(--mc-warn); background: rgba(11, 15, 20, 0.85); }
+.mc-scene-hud { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; }
+.mc-scene-hud button { background: rgba(17, 24, 33, 0.85); }
+
+.mc-legend { position: absolute; left: 8px; bottom: 8px; display: grid; gap: 4px; padding: 6px 8px; font-size: 11px; color: var(--mc-muted); background: rgba(11, 15, 20, 0.78); border: 1px solid var(--mc-panel-edge); border-radius: 4px; pointer-events: none; }
+.mc-legend-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.mc-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.mc-dot.is-ok { background: var(--mc-pulse-ok); box-shadow: 0 0 6px var(--mc-pulse-ok); }
+.mc-dot.is-warn { background: var(--mc-pulse-warn); box-shadow: 0 0 6px var(--mc-pulse-warn); }
+.mc-dot.is-fail { background: var(--mc-pulse-fail); box-shadow: 0 0 6px var(--mc-pulse-fail); }
+.mc-dot.is-sim { width: 10px; height: 10px; border: 2px solid var(--mc-sim); }
+.mc-line { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--mc-wire-measured); }
+.mc-line.is-inferred { border-top-style: dotted; border-top-color: var(--mc-wire-inferred); }
+.mc-line.is-quiet { border-top-color: var(--mc-wire-quiet); }
+
+.mc-scene .is-active { --st: var(--mc-st-active); }
+.mc-scene .is-idle { --st: var(--mc-st-idle); }
+.mc-scene .is-not_instrumented { --st: var(--mc-st-not_instrumented); }
+.mc-scene .is-stale { --st: var(--mc-st-stale); }
+.mc-scene .is-warning { --st: var(--mc-st-warning); }
+.mc-scene .is-unhealthy { --st: var(--mc-st-unhealthy); }
+.mc-scene .is-not_built { --st: var(--mc-st-not_built); }
+.mc-swatch { padding: 0 5px; border: 1px solid var(--st, var(--mc-panel-edge)); border-radius: 2px; color: var(--st, var(--mc-muted)); }
+.mc-swatch.is-dashed { border-style: dashed; }
+.mc-swatch.is-dotted { border-style: dotted; color: #6b7685; }
+.mc-swatch.is-hatched { background: repeating-linear-gradient(135deg, transparent 0 3px, rgba(154, 167, 180, 0.18) 3px 5px); }
+
+.mc-label { display: grid; justify-items: center; gap: 1px; padding: 2px 6px; white-space: nowrap; line-height: 1.2; pointer-events: none; user-select: none; background: rgba(9, 13, 18, 0.72); border: 1px solid rgba(31, 42, 55, 0.9); border-left: 2px solid var(--st); border-radius: 3px; transition: opacity 0.2s; }
+.mc-label-name { color: var(--mc-text); font-size: 11px; letter-spacing: 0.02em; }
+.mc-label-state { color: var(--st); font-size: 9.5px; }
+.mc-label-state + .mc-label-state { color: var(--mc-muted); }
+.mc-label.is-not_built .mc-label-name, .mc-label.is-stale .mc-label-name { color: var(--mc-muted); }
+.mc-label.is-not_built { border-left-style: dotted; }
+.mc-label.is-not_instrumented { border-left-style: dashed; }
+.mc-label.is-selected { border-color: var(--mc-accent); }
+.mc-label.is-dim, .mc-count.is-dim { opacity: 0.35; }
+.mc-zone-label { color: #4d6275; font-size: 11px; letter-spacing: 0.3em; white-space: nowrap; pointer-events: none; user-select: none; }
+.mc-pulse-labels { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.mc-pulse-labels .mc-count { position: absolute; top: 0; left: 0; }
+.mc-count { display: inline-block; padding: 0 4px; font-size: 10px; font-weight: bold; color: var(--mc-bg); border-radius: 6px; pointer-events: none; }
+.mc-count.is-ok { background: var(--mc-pulse-ok); }
+.mc-count.is-warn { background: var(--mc-pulse-warn); }
+.mc-count.is-fail { background: var(--mc-pulse-fail); }
+@media (prefers-reduced-motion: reduce) { .mc-label { transition: none; } }

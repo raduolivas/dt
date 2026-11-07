@@ -11,6 +11,9 @@ const MAX_BUNDLES = 500;
 const MAX_GAPS = 500;
 const MAX_FINDINGS = 500;
 
+/** A server bundle as kept: seq orders bundles locally; streamId is the SSE id it came with (the high-water mark). */
+export type StoredBundle = BundleData & { seq: number; streamId?: number };
+
 export interface McState {
   mode: Mode;
   /** Selected order (delivery id); null = whole-system view. */
@@ -19,7 +22,7 @@ export interface McState {
   /** Ascending by id, capped at MAX_EVENTS. */
   events: McEvent[];
   gaps: GapData[];
-  bundles: BundleData[];
+  bundles: StoredBundle[];
   findings: McEvent[];
   collapsed: Record<PanelName, boolean>;
   reducedMotion: boolean;
@@ -34,8 +37,10 @@ export interface McStore {
   selectOrder(id: string | null): void;
   select(s: Selection): void;
   addEvents(evs: McEvent[]): void;
+  /** Like addEvents, but coalesced into one update per animation frame (the stream path). */
+  queueEvents(evs: McEvent[]): void;
   addGap(g: GapData): void;
-  addBundle(b: BundleData): void;
+  addBundle(b: BundleData, streamId?: number): void;
   addFinding(f: McEvent): void;
   togglePanel(p: PanelName): void;
   setPanels(collapsed: boolean): void;
@@ -55,9 +60,22 @@ function initial(): McState {
   };
 }
 
-export function createStore(): McStore {
+const nextFrame = (cb: () => void) => {
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(cb);
+  else setTimeout(cb, 16);
+};
+
+/**
+ * frame schedules a queueEvents flush (default: the next animation frame).
+ * Batching matters: addEvents copies the buffer and notifies every subscriber,
+ * so one update per frame instead of one per stream message.
+ */
+export function createStore(frame: (cb: () => void) => void = nextFrame): McStore {
   let state = initial();
   let ids = new Set<number>();
+  let queued: McEvent[] = [];
+  let scheduled = false;
+  let bundleSeq = 0;
   const subs = new Set<() => void>();
   const set = (patch: Partial<McState>) => {
     state = { ...state, ...patch };
@@ -65,7 +83,7 @@ export function createStore(): McStore {
   };
   const tail = <T,>(a: T[], max: number) => (a.length > max ? a.slice(a.length - max) : a);
 
-  return {
+  const api: McStore = {
     getState: () => state,
     subscribe(fn) {
       subs.add(fn);
@@ -74,6 +92,7 @@ export function createStore(): McStore {
     setMode: (mode) => set({ mode }),
     selectOrder(orderId) {
       ids = new Set();
+      queued = [];
       set({ orderId, selection: null, events: [], gaps: [], bundles: [], findings: [] });
     },
     select: (selection) => set({ selection }),
@@ -94,8 +113,20 @@ export function createStore(): McStore {
       }
       set({ events: merged });
     },
+    queueEvents(evs) {
+      queued.push(...evs);
+      if (scheduled) return;
+      scheduled = true;
+      frame(() => {
+        scheduled = false;
+        const batch = queued;
+        queued = [];
+        api.addEvents(batch);
+      });
+    },
     addGap: (g) => set({ gaps: tail([...state.gaps, g], MAX_GAPS) }),
-    addBundle: (b) => set({ bundles: tail([...state.bundles, b], MAX_BUNDLES) }),
+    addBundle: (b, streamId) =>
+      set({ bundles: tail([...state.bundles, { ...b, seq: ++bundleSeq, streamId }], MAX_BUNDLES) }),
     addFinding(f) {
       if (state.findings.some((x) => x.id === f.id)) return;
       set({ findings: tail([...state.findings, f], MAX_FINDINGS) });
@@ -108,9 +139,11 @@ export function createStore(): McStore {
     },
     reset() {
       ids = new Set();
+      queued = [];
       set(initial());
     },
   };
+  return api;
 }
 
 export const store = createStore();

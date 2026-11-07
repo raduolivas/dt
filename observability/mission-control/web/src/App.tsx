@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { openStream } from './api/stream';
 import { Cockpit } from './layout/Cockpit';
+import { Scene } from './scene/Scene';
 import { store, useStore } from './state/store';
 
 /** Routes stream messages into the store. Events and bundles are not accepted while paused. */
@@ -15,7 +16,7 @@ export function useLiveStream(): void {
       store.noteStreamId(m.id);
       switch (m.type) {
         case 'event':
-          store.addEvents([m.data]);
+          store.queueEvents([m.data]);
           break;
         case 'detector':
           store.addFinding(m.data);
@@ -24,7 +25,7 @@ export function useLiveStream(): void {
           store.addGap(m.data);
           break;
         case 'bundle':
-          store.addBundle(m.data);
+          store.addBundle(m.data, m.id);
           break;
       }
     }, { lastEventId });
@@ -41,7 +42,7 @@ export function App() {
   return (
     <Cockpit
       left={<Placeholder>Orders and warnings</Placeholder>}
-      center={<Placeholder>3D scene</Placeholder>}
+      center={<Scene />}
       right={<Placeholder>Inspector</Placeholder>}
       bottom={<Placeholder>Timeline</Placeholder>}
     />

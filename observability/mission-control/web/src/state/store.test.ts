@@ -61,4 +61,33 @@ describe('store', () => {
     expect(s.getState().events).toHaveLength(0);
     expect(s.getState().selection).toBeNull();
   });
+
+  it('bundles keep a local sequence and their stream id', () => {
+    const s = createStore();
+    s.addBundle({ wire: 'a>b', count: 3, outcome: 'ok' }, 10);
+    s.addBundle({ wire: 'a>b', count: 4, outcome: 'ok' }, 10);
+    const [x, y] = s.getState().bundles;
+    expect(x).toMatchObject({ wire: 'a>b', count: 3, streamId: 10 });
+    expect(y.seq).toBeGreaterThan(x.seq);
+  });
+
+  it('queueEvents batches stream events into one update per frame', () => {
+    const frames: (() => void)[] = [];
+    const s = createStore((cb) => frames.push(cb));
+    let n = 0;
+    s.subscribe(() => n++);
+    s.queueEvents([mkEvent(1)]);
+    s.queueEvents([mkEvent(2)]);
+    s.queueEvents([mkEvent(3)]);
+    expect(s.getState().events).toHaveLength(0);
+    expect(frames).toHaveLength(1);
+    frames[0]();
+    expect(s.getState().events.map((e) => e.id)).toEqual([1, 2, 3]);
+    expect(n).toBe(1);
+    // an order switch drops what was queued for the old order
+    s.queueEvents([mkEvent(4)]);
+    s.selectOrder('del_1');
+    frames[1]();
+    expect(s.getState().events).toHaveLength(0);
+  });
 });
