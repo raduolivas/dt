@@ -10,4 +10,5 @@ use (
 	./services/webhooks
 	./tools/dtctl
 	./tools/latency
+	../observability/mission-control/backend
 )
