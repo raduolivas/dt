@@ -31,6 +31,7 @@ import (
 	"github.com/raduolivas/dt/backend/pkg/courierjwt"
 	"github.com/raduolivas/dt/backend/pkg/httpx"
 	"github.com/raduolivas/dt/backend/pkg/nightly"
+	"github.com/raduolivas/dt/backend/pkg/otelx"
 	"github.com/raduolivas/dt/backend/pkg/outbox"
 	"github.com/raduolivas/dt/backend/pkg/rpcauth"
 	"github.com/raduolivas/dt/backend/pkg/sealbox"
@@ -259,7 +260,7 @@ func rpcClient(name, baseURL, token string, tlsCfg *tls.Config, timeout time.Dur
 		hc.Transport = &http.Transport{TLSClientConfig: tlsCfg, ForceAttemptHTTP2: true,
 			MaxIdleConnsPerHost: 16, IdleConnTimeout: 90 * time.Second}
 	}
-	return connect.NewClient(connecthttp.NewTransport(hc, baseURL), auth), nil
+	return connect.NewClient(connecthttp.NewTransport(hc, baseURL), otelx.ConnectClientInterceptor(), auth), nil
 }
 
 // parseTrackingURLBase checks TRACKING_URL_BASE (see parseURLBase).

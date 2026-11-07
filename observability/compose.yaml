@@ -1,0 +1,25 @@
+# Minimal OTel collector for Mission Control (spec §4.1). Merged into the dev
+# stack by the Makefile unless OBS=0. Relative paths resolve against the first
+# Compose file (infra/compose/), not this one. No ports are published: DT
+# services and Mission Control reach it on the compose network.
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.164.0@sha256:340c9ca6a36617084c6661bdc4f0fe92b7cda5a805d61673ec8db375fddc522b
+    # Third config is a no-op (base again) unless OTELCOL_DEBUG=1 (see Makefile).
+    command:
+      - --config=/etc/otelcol/base.yaml
+      - --config=/etc/otelcol/exporters.local.yaml
+      - --config=${OTELCOL_EXTRA_CONFIG:-/etc/otelcol/base.yaml}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    environment:
+      MC_OTLP_ENDPOINT: ${MC_OTLP_ENDPOINT:-http://mc-backend:4318}
+    volumes:
+      - ../../observability/collector/base.yaml:/etc/otelcol/base.yaml:ro
+      - ../../observability/collector/redact-keys.yaml:/etc/otelcol/redact-keys.yaml:ro
+      - ../../observability/collector/exporters.local.yaml:/etc/otelcol/exporters.local.yaml:ro
+      - ../../observability/collector/exporters.debug.yaml:/etc/otelcol/exporters.debug.yaml:ro
+    # No healthcheck: the image is distroless (no shell, curl or wget), so Compose
+    # cannot probe the health_check extension (13133) from inside it.

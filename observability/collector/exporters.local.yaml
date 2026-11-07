@@ -1,0 +1,9 @@
+# Where the collector sends telemetry in the local stack. Mission Control may be
+# absent: export errors are dropped, never retried, and never reach DT.
+exporters:
+  otlphttp/mission-control:
+    endpoint: ${env:MC_OTLP_ENDPOINT:-http://mc-backend:4318}
+    retry_on_failure:
+      enabled: false
+    sending_queue:
+      queue_size: 1000

@@ -115,16 +115,30 @@ vuln: ## Scan Go modules for known vulnerabilities
 
 test: test-go test-web ## Run every test
 
-lint: lint-go lint-web lint-contracts ## Run every linter
+obs-check: ## Validate the OTel collector config and its redaction (needs Docker)
+	@scripts/obs-check.sh
+
+lint: lint-go lint-web lint-contracts obs-check ## Run every linter
 
 # ---- local stack ------------------------------------------------------------
-.PHONY: dev down logs dtctl seed smoke latency osrm-data lan-https courier-link
+.PHONY: obs-check dev down logs dtctl seed smoke latency osrm-data lan-https courier-link
 
 # COMPOSE_OVERRIDE optionally names an extra Compose file (for example one that sets
 # build.network: host on machines whose Docker build containers have no network). Empty by default.
 # After make lan-https, build/lan/lan.env (the LAN address, COURIER_URL_BASE and the lan profile) applies to every run.
 LAN_ENV := $(CURDIR)/build/lan/lan.env
-COMPOSE := docker compose $$([ -f $(LAN_ENV) ] && echo --env-file $(LAN_ENV)) -f infra/compose/compose.yaml $(if $(COMPOSE_OVERRIDE),-f $(COMPOSE_OVERRIDE))
+# The minimal OTel collector for Mission Control runs by default; OBS=0 leaves it
+# out and turns the services' OTLP export off (empty endpoint). OTELCOL_DEBUG=1
+# adds the collector's debug exporter (see `docker compose logs otel-collector`).
+ifeq ($(OBS),0)
+export DT_OTLP_ENDPOINT :=
+else
+OBS_COMPOSE := -f observability/compose.yaml
+ifeq ($(OTELCOL_DEBUG),1)
+export OTELCOL_EXTRA_CONFIG := /etc/otelcol/exporters.debug.yaml
+endif
+endif
+COMPOSE := docker compose $$([ -f $(LAN_ENV) ] && echo --env-file $(LAN_ENV)) -f infra/compose/compose.yaml $(OBS_COMPOSE) $(if $(COMPOSE_OVERRIDE),-f $(COMPOSE_OVERRIDE))
 
 # dtctl talks to the local accounts service with the dev-only token from
 # infra/compose/compose.yaml.
@@ -149,7 +163,7 @@ dev: osrm-data ## Build and start the local stack, then wait until every service
 	scripts/wait-ready.sh
 
 down: ## Stop the local stack and delete its volumes
-	$(COMPOSE) down -v
+	$(COMPOSE) down -v --remove-orphans
 
 logs: ## Follow the local stack logs
 	$(COMPOSE) logs -f

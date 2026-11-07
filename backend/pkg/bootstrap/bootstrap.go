@@ -7,6 +7,7 @@ package bootstrap
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -20,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/errgroup"
 
@@ -121,6 +123,16 @@ func RedisOptions(url string) (*redis.Options, error) {
 	return o, nil
 }
 
+// newRedisClient builds the shared Redis client with command spans. Spans
+// carry no statement: commands hold ids and payloads that must not reach
+// the trace backend.
+func newRedisClient(o *redis.Options) *redis.Client {
+	c := redis.NewClient(o)
+	// InstrumentTracing only fails on a bad option; there is none here.
+	_ = redisotel.InstrumentTracing(c, redisotel.WithDBStatement(false))
+	return c
+}
+
 // nonFatal runs check within nonFatalCheckTimeout and reports success
 // whatever happens, logging a warn (without the error, which may hold the
 // URL) when it fails.
@@ -151,12 +163,19 @@ func Run(ctx context.Context, opts Options) (err error) {
 	if err != nil {
 		return fmt.Errorf("%s: config: %w", opts.Name, err)
 	}
-	log := logx.New(os.Stdout, level, opts.Name)
-
+	// otelx.Init runs first so logx.New can tee into the global LoggerProvider
+	// it installs. The logger does not exist yet if Init fails, so that error
+	// goes to stderr as one JSON line before it is returned.
 	shutdownTracing, err := otelx.Init(ctx, opts.Name)
 	if err != nil {
+		line, _ := json.Marshal(map[string]string{
+			"time": time.Now().UTC().Format(time.RFC3339Nano), "level": "ERROR",
+			"service": opts.Name, "msg": "telemetry init failed", "error": err.Error(),
+		})
+		fmt.Fprintln(os.Stderr, string(line))
 		return fmt.Errorf("%s: tracing: %w", opts.Name, err)
 	}
+	log := logx.New(os.Stdout, level, opts.Name)
 	defer func() {
 		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
@@ -201,7 +220,7 @@ func Run(ctx context.Context, opts Options) (err error) {
 			return fmt.Errorf("%s: redis: invalid REDIS_URL", opts.Name)
 		}
 		// go-redis connects lazily, so an unreachable Redis shows in /readyz.
-		deps.Redis = redis.NewClient(ropts)
+		deps.Redis = newRedisClient(ropts)
 		defer func() { _ = deps.Redis.Close() }()
 		ping := func(ctx context.Context) error { return deps.Redis.Ping(ctx).Err() }
 		if opts.Needs.RedisNonFatal {
