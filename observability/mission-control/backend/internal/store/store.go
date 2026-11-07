@@ -42,7 +42,10 @@ type Event struct {
 const insertLockKey int64 = 0x4d43455645 // "MCEVE"
 
 // Store wraps the connection pool.
-type Store struct{ pool *pgxpool.Pool }
+type Store struct {
+	pool     *pgxpool.Pool
+	onCapped func(n int) // SetOnCapped
+}
 
 // Open applies the migrations, then connects. Errors never include the URL.
 func Open(ctx context.Context, url string) (*Store, error) {
@@ -83,6 +86,15 @@ const insertEvent = `INSERT INTO mc_event
 func (s *Store) InsertEvents(ctx context.Context, events []Event) error {
 	if len(events) == 0 {
 		return nil
+	}
+	// Caps first, in place, so the caller (order index, live stream) sees the
+	// stored values and one oversize field never fails the batch (M3).
+	capped := 0
+	for i := range events {
+		capped += CapEvent(&events[i])
+	}
+	if capped > 0 && s.onCapped != nil {
+		s.onCapped(capped)
 	}
 	b := &pgx.Batch{}
 	for _, e := range events {

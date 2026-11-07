@@ -69,6 +69,8 @@ func run(ctx context.Context, stop context.CancelFunc) error {
 	mux.Handle("GET /readyz", httpx.Readyz(map[string]httpx.Check{"postgres": st.Ping}, readyTimeout))
 	bc := api.NewBroadcaster()
 	self := ingest.NewSelf(st, log)
+	// An oversize id field is dropped before insert (never fails a batch) and counted as redacted (M3).
+	st.SetOnCapped(self.Redacted)
 	// A failing prometheus/cloudwatch source degrades to builtin and flags self-health.
 	builtinSrc := metrics.New(config.Config{MetricsSource: config.MetricsBuiltin}, st, topology.Default())
 	src := builtinSrc
