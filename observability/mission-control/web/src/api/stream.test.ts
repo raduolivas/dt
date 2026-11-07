@@ -29,6 +29,24 @@ function until(cond: () => boolean): Promise<void> {
 }
 
 describe('openStream', () => {
+  it('passes a reset frame on and resumes from its (lower) id', async () => {
+    const calls: (string | null)[] = [];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      calls.push(new Headers(init?.headers).get('Last-Event-ID'));
+      if (calls.length === 1) {
+        return new Response(body([`id: 900\nevent: event\ndata: ${ev(900)}\n\n`, 'id: 3\nevent: reset\ndata: {"max":3}\n\n']), { status: 200 });
+      }
+      return new Response(body([], true), { status: 200 });
+    }) as unknown as typeof fetch;
+    const got: StreamMessage[] = [];
+    const h = openStream(undefined, (m) => got.push(m), { fetchImpl, sleep: async () => {} });
+    await until(() => calls.length === 2);
+    h.close();
+    expect(got.map((m) => [m.type, m.id])).toEqual([['event', 900], ['reset', 3]]);
+    expect(got[1].data).toEqual({ max: 3 });
+    expect(calls[1]).toBe('3');
+  });
+
   it('streamResumesWithLastEventId', async () => {
     const calls: { url: string; lastId: string | null }[] = [];
     const fetchImpl = (async (url: string, init?: RequestInit) => {

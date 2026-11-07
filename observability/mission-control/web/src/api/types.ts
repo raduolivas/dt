@@ -172,4 +172,5 @@ export type StreamMessage =
   | { type: 'event'; id: number; data: McEvent }
   | { type: 'detector'; id: number; data: McEvent }
   | { type: 'gap'; id: number; data: GapData }
-  | { type: 'bundle'; id: number; data: BundleData };
+  | { type: 'bundle'; id: number; data: BundleData }
+  | { type: 'reset'; id: number; data: { max: number } };

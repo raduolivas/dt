@@ -16,6 +16,11 @@ export function useLiveStream(): void {
     // Resume from the newest id seen, so the server replays what was missed or marks a gap.
     const lastEventId = store.getState().lastEventId ?? undefined;
     const h = openStream(orderId ?? undefined, (m) => {
+      if (m.type === 'reset') {
+        // The server's database was recreated and its ids restarted below ours (I1).
+        store.resetStream(m.id);
+        return;
+      }
       store.noteStreamId(m.id);
       switch (m.type) {
         case 'event':

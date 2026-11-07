@@ -183,6 +183,36 @@ func TestSSEGapMarkerWhenResumeTooOld(t *testing.T) {
 	require.Equal(t, idStr(evs[4].ID), next(t, ch).ID)
 }
 
+// I1: after the MC database is recreated (make mc-down && make mc) ids restart
+// at 1, but an open tab resumes with an older, higher Last-Event-ID. The
+// stream says reset and carries on live instead of dropping every new id.
+func TestSSEResetWhenResumeIsAheadOfStore(t *testing.T) {
+	ctx := context.Background()
+	for _, scope := range []string{"", "?delivery_id=del_1"} {
+		st := openStore(t)
+		bc := api.NewBroadcaster()
+		srv := newServer(t, st, bc, nil)
+		now := time.Now().UTC()
+		evs := []store.Event{ev(now, "request", "gateway", "deliveries.rpc", "del_1"), ev(now, "request", "gateway", "deliveries.rpc", "del_1")}
+		require.NoError(t, st.InsertEvents(ctx, evs))
+
+		ch := openSSE(t, srv.URL+"/api/stream"+scope, idStr(evs[1].ID+1000))
+		m := next(t, ch)
+		require.Equal(t, "reset", m.Event, scope)
+		require.Equal(t, idStr(evs[1].ID), m.ID, "the reset carries the store's newest id")
+		var reset struct{ Max int64 }
+		require.NoError(t, json.Unmarshal([]byte(m.Data), &reset))
+		require.Equal(t, evs[1].ID, reset.Max)
+
+		more := []store.Event{ev(now, "request", "gateway", "deliveries.rpc", "del_1")}
+		require.NoError(t, st.InsertEvents(ctx, more))
+		require.NoError(t, bc.OnEvent(ctx, more[0]))
+		got := next(t, ch)
+		require.Equal(t, "event", got.Event, scope)
+		require.Equal(t, idStr(more[0].ID), got.ID, scope)
+	}
+}
+
 func TestSSEBundlesAboveRate(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t)

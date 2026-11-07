@@ -22,7 +22,8 @@ export const BACKOFF_MAX_MS = 10_000;
 export const IDLE_MS = 45_000;
 export const MAX_BUFFER = 1 << 20;
 
-const TYPES = new Set(['event', 'detector', 'gap', 'bundle']);
+// reset: the server's ids restarted (its database was recreated); its id is the new resume point.
+const TYPES = new Set(['event', 'detector', 'gap', 'bundle', 'reset']);
 
 /** One parsed SSE frame. Comment lines (": keep-alive") are dropped. */
 interface Frame {
