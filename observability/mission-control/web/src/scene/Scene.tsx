@@ -258,7 +258,8 @@ function Legend() {
     <div className="mc-legend" aria-label="Legend">
       <div className="mc-legend-row">
         <span className="mc-dot is-ok" /> ok <span className="mc-dot is-warn" /> slow · retried · dropped · rejected{' '}
-        <span className="mc-dot is-fail" /> failed <span className="mc-dot is-sim" /> simulated
+        <span className="mc-dot is-fail" /> failed <span className="mc-dot is-unknown" /> unknown{' '}
+        <span className="mc-dot is-sim" /> simulated
       </div>
       <div className="mc-legend-row">
         <span className="mc-line is-measured" /> traced <span className="mc-line is-inferred" /> linked by ids, not trace{' '}

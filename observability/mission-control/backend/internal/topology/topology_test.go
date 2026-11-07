@@ -88,6 +88,26 @@ func TestSimulator(t *testing.T) {
 	}
 }
 
+// Partner, couriers, viewers, the Postgres databases and OSRM are not traced by
+// DT, so their cubes are not instrumented (they light only when seen in other spans).
+func TestUninstrumentedComponents(t *testing.T) {
+	want := map[string]bool{"partner": false, "courier": false, "viewer": false, "osrm": false,
+		"pg.deliveries": false, "pg.tracking": false, "pg.accounts": false, "pg.gateway": false,
+		"gateway": true, "deliveries": true, "tracking": true, "accounts": true, "nats": true, "redis": true}
+	seen := 0
+	for _, c := range Default().Components {
+		if w, ok := want[c.ID]; ok {
+			seen++
+			if c.Instrumented != w {
+				t.Errorf("%s: instrumented %v, want %v", c.ID, c.Instrumented, w)
+			}
+		}
+	}
+	if seen != len(want) {
+		t.Fatalf("found %d of %d components", seen, len(want))
+	}
+}
+
 func TestWebhooksNotBuilt(t *testing.T) {
 	for _, c := range Default().Components {
 		if c.ID == "webhooks" {

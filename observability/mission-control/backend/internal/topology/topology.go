@@ -70,7 +70,7 @@ func Default() Topology {
 		}
 	}
 
-	add("partner", "Partner", ZoneOutside, "", true, "")
+	add("partner", "Partner", ZoneOutside, "", false, "") // partner systems are not traced by DT
 	add("courier", "Courier", ZoneOutside, "", false, "")
 	add("viewer", "Viewer", ZoneOutside, "", false, "")
 
@@ -92,10 +92,11 @@ func Default() Topology {
 	}
 
 	add("redis", "Redis", ZoneData, "", true, "")
-	add("pg.deliveries", "Postgres deliveries", ZoneData, "", true, "")
-	add("pg.tracking", "Postgres tracking", ZoneData, "", true, "")
-	add("pg.accounts", "Postgres accounts", ZoneData, "", true, "")
-	add("pg.gateway", "Postgres gateway", ZoneData, "", true, "")
+	// DT does not trace pgx yet: the databases light only when a span names them.
+	add("pg.deliveries", "Postgres deliveries", ZoneData, "", false, "")
+	add("pg.tracking", "Postgres tracking", ZoneData, "", false, "")
+	add("pg.accounts", "Postgres accounts", ZoneData, "", false, "")
+	add("pg.gateway", "Postgres gateway", ZoneData, "", false, "")
 	add("osrm", "OSRM", ZoneData, "", false, "")
 
 	var ws []Wire

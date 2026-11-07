@@ -90,4 +90,32 @@ describe('store', () => {
     frames[1]();
     expect(s.getState().events).toHaveLength(0);
   });
+
+  it('queued bundles flush with the events, in stream order', () => {
+    const frames: (() => void)[] = [];
+    const s = createStore((cb) => frames.push(cb));
+    s.queueEvents([mkEvent(5)]);
+    s.queueBundle({ wire: 'a>b', count: 9, outcome: 'ok' }, 20);
+    s.queueEvents([mkEvent(21)]);
+    expect(s.getState().bundles).toHaveLength(0);
+    expect(frames).toHaveLength(1);
+    let snapshots = 0;
+    let sawBundleBeforeEvent = false;
+    s.subscribe(() => {
+      snapshots++;
+      const st = s.getState();
+      if (st.bundles.length > 0 && !st.events.some((e) => e.id === 5)) sawBundleBeforeEvent = true;
+    });
+    frames[0]();
+    expect(sawBundleBeforeEvent).toBe(false);
+    expect(snapshots).toBe(1);
+    expect(s.getState().events.map((e) => e.id)).toEqual([5, 21]);
+    expect(s.getState().bundles[0]).toMatchObject({ count: 9, streamId: 20 });
+  });
+
+  it('a queue that no frame drains (hidden tab) is flushed once it reaches the buffer size', () => {
+    const s = createStore(() => {}); // frames never run
+    s.queueEvents(Array.from({ length: MAX_EVENTS }, (_, i) => mkEvent(i + 1)));
+    expect(s.getState().events).toHaveLength(MAX_EVENTS);
+  });
 });

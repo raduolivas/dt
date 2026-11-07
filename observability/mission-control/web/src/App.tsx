@@ -25,7 +25,7 @@ export function useLiveStream(): void {
           store.addGap(m.data);
           break;
         case 'bundle':
-          store.addBundle(m.data, m.id);
+          store.queueBundle(m.data, m.id);
           break;
       }
     }, { lastEventId });

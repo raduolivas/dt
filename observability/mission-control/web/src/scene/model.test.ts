@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import type { McEvent } from '../api/types';
 import { mkEvent } from '../test-utils';
 import { topologyFixture } from './fixture';
 import { buildModel, derive } from './model';
+import { wireStyle } from './visualState';
 
 const m = buildModel(topologyFixture());
 
@@ -50,10 +52,44 @@ describe('scene model', () => {
     expect(m.place('tracking.ingest', 'tracking.ingest', true)).toBeNull();
   });
 
+  it('R30/R33: attribution is gated by what the event is', () => {
+    const at = (over: Partial<McEvent>) => mkEvent(1, { kind: 'request', ...over });
+    // R30: a request at a gateway API part
+    expect(m.placeEvent(at({ source: 'gateway.courier_api', target: 'gateway.courier_api' })))
+      .toEqual({ wire: 'courier>gateway', forward: true, attributed: true });
+    expect(m.placeEvent(at({ kind: 'message_consumed', source: 'gateway.courier_api', target: 'gateway.courier_api' }))).toBeNull();
+    // R33: only a viewer fanout with viewers > 0 goes out to the viewer
+    const hub = (attrs: Record<string, unknown>) => at({ source: 'tracking.hub', target: 'tracking.hub', attrs });
+    expect(m.placeEvent(hub({ span_name: 'tracking.viewer_fanout', 'tracking.viewers': 0 }))).toBeNull();
+    expect(m.placeEvent(hub({ span_name: 'tracking.viewer_fanout' }))).toBeNull();
+    expect(m.placeEvent(hub({ span_name: 'GET /v1/tracking/stream', 'tracking.viewers': 3 }))).toBeNull();
+    expect(m.placeEvent(hub({ span_name: 'tracking.viewer_fanout', 'tracking.viewers': 2 })))
+      .toEqual({ wire: 'viewer>tracking', forward: false, attributed: true });
+    // cross-cube events are placed as before
+    expect(m.placeEvent(at({ source: 'gateway.courier_api', target: 'tracking.ingest' })))
+      .toEqual({ wire: 'gateway>tracking', forward: true, attributed: false });
+  });
+
+  it('a wire is measured only when a traced span crossed it', () => {
+    const span = { span_name: 'publish tracking.location_updated', service: 'tracking' };
+    const d = derive(m, [
+      // envelope view of a publish: no span, linked by ids only
+      mkEvent(1, { kind: 'message_published', source: 'deliveries', target: 'nats.DELIVERIES', traceId: '' }),
+      // producer span of the outbox relay: a traced hop
+      mkEvent(2, { kind: 'request', source: 'tracking.outbox', target: 'nats.TRACKING', traceId: 'abc', attrs: span }),
+      mkEvent(3, { kind: 'message_published', source: 'tracking', target: 'nats.TRACKING', traceId: '' }),
+      // a trace id without a span (not produced by DT today) is not enough
+      mkEvent(4, { kind: 'request', source: 'accounts', target: 'nats.ACCOUNTS', traceId: 'abc', attrs: {} }),
+    ]);
+    expect(wireStyle({ id: 'deliveries>nats' }, d.evidence)).toBe('inferred');
+    expect(wireStyle({ id: 'tracking>nats' }, d.evidence)).toBe('measured');
+    expect(wireStyle({ id: 'accounts>nats' }, d.evidence)).toBe('inferred');
+  });
+
   it('derives activity, evidence and touched parts', () => {
     const t = (ms: number) => new Date(1_700_000_000_000 + ms).toISOString();
     const d = derive(m, [
-      mkEvent(1, { source: 'gateway.courier_api', target: 'tracking.ingest', traceId: 'abc', observedAt: t(10) }),
+      mkEvent(1, { source: 'gateway.courier_api', target: 'tracking.ingest', traceId: 'abc', observedAt: t(10), attrs: { span_name: 'x' } }),
       mkEvent(2, { kind: 'message_published', source: 'tracking', target: 'nats.TRACKING', traceId: '', observedAt: t(20) }),
       mkEvent(3, { source: 'gateway.courier_api', target: 'gateway.courier_api', traceId: 'abc', observedAt: t(30) }),
       mkEvent(4, { kind: 'detector', source: 'mc', target: 'redis', observedAt: t(40) }),
@@ -66,7 +102,7 @@ describe('scene model', () => {
     expect(d.activity.get('gateway')).toBe(1_700_000_000_030);
     expect(d.activity.get('deliveries')).toBe(1_700_000_000_050);
     expect(d.activity.has('redis')).toBe(false); // detector findings are not activity
-    expect(d.activity.get('courier')).toBe(1_700_000_000_030); // an arrival from outside is the caller's activity too
+    expect(d.activity.has('courier')).toBe(false); // attributed: the caller was not observed, it stays not instrumented
     expect([...d.touched].sort()).toEqual(
       ['courier', 'courier>gateway', 'deliveries', 'gateway', 'gateway>tracking', 'nats', 'tracking', 'tracking>nats'],
     );

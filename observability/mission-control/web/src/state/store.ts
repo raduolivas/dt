@@ -39,6 +39,8 @@ export interface McStore {
   addEvents(evs: McEvent[]): void;
   /** Like addEvents, but coalesced into one update per animation frame (the stream path). */
   queueEvents(evs: McEvent[]): void;
+  /** Like addBundle, through the same per-frame queue as queueEvents, in stream-id order. */
+  queueBundle(b: BundleData, streamId: number): void;
   addGap(g: GapData): void;
   addBundle(b: BundleData, streamId?: number): void;
   addFinding(f: McEvent): void;
@@ -60,20 +62,36 @@ function initial(): McState {
   };
 }
 
+/** Longest a queued stream message waits when no animation frame comes (a hidden tab pauses rAF). */
+const FLUSH_FALLBACK_MS = 250;
+
 const nextFrame = (cb: () => void) => {
-  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(cb);
-  else setTimeout(cb, 16);
+  let done = false;
+  const run = () => {
+    if (done) return;
+    done = true;
+    cb();
+  };
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+  setTimeout(run, FLUSH_FALLBACK_MS);
 };
 
+type Queued = { kind: 'events'; at: number; evs: McEvent[] } | { kind: 'bundle'; at: number; b: BundleData; streamId: number };
+
 /**
- * frame schedules a queueEvents flush (default: the next animation frame).
- * Batching matters: addEvents copies the buffer and notifies every subscriber,
- * so one update per frame instead of one per stream message.
+ * frame schedules the flush of queueEvents / queueBundle (default: the next
+ * animation frame, or FLUSH_FALLBACK_MS when frames are paused). Batching
+ * matters: addEvents copies the buffer and notifies every subscriber, so one
+ * update per frame instead of one per stream message. Events and bundles share
+ * the queue and are applied together in stream-id order, so a bundle never
+ * lands before the individual events the stream sent ahead of it. A queue that
+ * reaches MAX_EVENTS is flushed at once.
  */
 export function createStore(frame: (cb: () => void) => void = nextFrame): McStore {
   let state = initial();
   let ids = new Set<number>();
-  let queued: McEvent[] = [];
+  let queued: Queued[] = [];
+  let queuedCount = 0;
   let scheduled = false;
   let bundleSeq = 0;
   const subs = new Set<() => void>();
@@ -82,6 +100,62 @@ export function createStore(frame: (cb: () => void) => void = nextFrame): McStor
     subs.forEach((f) => f());
   };
   const tail = <T,>(a: T[], max: number) => (a.length > max ? a.slice(a.length - max) : a);
+
+  /** The buffer with evs merged in (deduplicated, ascending, capped), or null when nothing is new. */
+  const merge = (evs: McEvent[]): McEvent[] | null => {
+    const fresh: McEvent[] = [];
+    for (const e of evs) {
+      if (ids.has(e.id)) continue;
+      ids.add(e.id);
+      fresh.push(e);
+    }
+    if (fresh.length === 0) return null;
+    let merged = state.events;
+    const inOrder = fresh.every((e, i) => e.id > (i === 0 ? (merged[merged.length - 1]?.id ?? -1) : fresh[i - 1].id));
+    merged = inOrder ? merged.concat(fresh) : merged.concat(fresh).sort((a, b) => a.id - b.id);
+    if (merged.length > MAX_EVENTS) {
+      for (const e of merged.slice(0, merged.length - MAX_EVENTS)) ids.delete(e.id);
+      merged = merged.slice(merged.length - MAX_EVENTS);
+    }
+    return merged;
+  };
+  const withBundles = (bs: { b: BundleData; streamId: number | undefined }[]) =>
+    tail([...state.bundles, ...bs.map(({ b, streamId }) => ({ ...b, seq: ++bundleSeq, streamId }))], MAX_BUNDLES);
+
+  const flush = () => {
+    const items = queued;
+    queued = [];
+    queuedCount = 0;
+    if (items.length === 0) return;
+    // stream-id order; a bundle carries the high-water mark, so it sorts after events with that id
+    const rank = (q: Queued) => (q.kind === 'bundle' ? 1 : 0);
+    items.sort((x, y) => x.at - y.at || rank(x) - rank(y));
+    const evs: McEvent[] = [];
+    const bs: { b: BundleData; streamId: number }[] = [];
+    for (const q of items) {
+      if (q.kind === 'events') evs.push(...q.evs);
+      else bs.push({ b: q.b, streamId: q.streamId });
+    }
+    const patch: Partial<McState> = {};
+    const merged = merge(evs);
+    if (merged) patch.events = merged;
+    if (bs.length) patch.bundles = withBundles(bs);
+    if (patch.events || patch.bundles) set(patch);
+  };
+  const enqueue = (q: Queued, n: number) => {
+    queued.push(q);
+    queuedCount += n;
+    if (queuedCount >= MAX_EVENTS) {
+      flush();
+      return;
+    }
+    if (scheduled) return;
+    scheduled = true;
+    frame(() => {
+      scheduled = false;
+      flush();
+    });
+  };
 
   const api: McStore = {
     getState: () => state,
@@ -93,40 +167,23 @@ export function createStore(frame: (cb: () => void) => void = nextFrame): McStor
     selectOrder(orderId) {
       ids = new Set();
       queued = [];
+      queuedCount = 0;
       set({ orderId, selection: null, events: [], gaps: [], bundles: [], findings: [] });
     },
     select: (selection) => set({ selection }),
     addEvents(evs) {
-      const fresh: McEvent[] = [];
-      for (const e of evs) {
-        if (ids.has(e.id)) continue;
-        ids.add(e.id);
-        fresh.push(e);
-      }
-      if (fresh.length === 0) return;
-      let merged = state.events;
-      const inOrder = fresh.every((e, i) => e.id > (i === 0 ? (merged[merged.length - 1]?.id ?? -1) : fresh[i - 1].id));
-      merged = inOrder ? merged.concat(fresh) : merged.concat(fresh).sort((a, b) => a.id - b.id);
-      if (merged.length > MAX_EVENTS) {
-        for (const e of merged.slice(0, merged.length - MAX_EVENTS)) ids.delete(e.id);
-        merged = merged.slice(merged.length - MAX_EVENTS);
-      }
-      set({ events: merged });
+      const merged = merge(evs);
+      if (merged) set({ events: merged });
     },
     queueEvents(evs) {
-      queued.push(...evs);
-      if (scheduled) return;
-      scheduled = true;
-      frame(() => {
-        scheduled = false;
-        const batch = queued;
-        queued = [];
-        api.addEvents(batch);
-      });
+      if (evs.length === 0) return;
+      enqueue({ kind: 'events', at: evs[evs.length - 1].id, evs }, evs.length);
+    },
+    queueBundle(b, streamId) {
+      enqueue({ kind: 'bundle', at: streamId, b, streamId }, 1);
     },
     addGap: (g) => set({ gaps: tail([...state.gaps, g], MAX_GAPS) }),
-    addBundle: (b, streamId) =>
-      set({ bundles: tail([...state.bundles, { ...b, seq: ++bundleSeq, streamId }], MAX_BUNDLES) }),
+    addBundle: (b, streamId) => set({ bundles: withBundles([{ b, streamId }]) }),
     addFinding(f) {
       if (state.findings.some((x) => x.id === f.id)) return;
       set({ findings: tail([...state.findings, f], MAX_FINDINGS) });
@@ -140,6 +197,7 @@ export function createStore(frame: (cb: () => void) => void = nextFrame): McStor
     reset() {
       ids = new Set();
       queued = [];
+      queuedCount = 0;
       set(initial());
     },
   };

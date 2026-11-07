@@ -59,6 +59,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--mc-accent);
 .mc-dot.is-ok { background: var(--mc-pulse-ok); box-shadow: 0 0 6px var(--mc-pulse-ok); }
 .mc-dot.is-warn { background: var(--mc-pulse-warn); box-shadow: 0 0 6px var(--mc-pulse-warn); }
 .mc-dot.is-fail { background: var(--mc-pulse-fail); box-shadow: 0 0 6px var(--mc-pulse-fail); }
+.mc-dot.is-unknown { background: var(--mc-pulse-unknown); }
 .mc-dot.is-sim { width: 10px; height: 10px; border: 2px solid var(--mc-sim); }
 .mc-line { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--mc-wire-measured); }
 .mc-line.is-inferred { border-top-style: dotted; border-top-color: var(--mc-wire-inferred); }
@@ -92,4 +93,5 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--mc-accent);
 .mc-count.is-ok { background: var(--mc-pulse-ok); }
 .mc-count.is-warn { background: var(--mc-pulse-warn); }
 .mc-count.is-fail { background: var(--mc-pulse-fail); }
+.mc-count.is-unknown { background: var(--mc-pulse-unknown); }
 @media (prefers-reduced-motion: reduce) { .mc-label { transition: none; } }

@@ -53,11 +53,12 @@ export function owns(componentId: string, id: string): boolean {
 /** The state of a cube from the backend's state plus the newest activity (ms) the browser has seen. */
 export function stateFrom(c: ComponentWithState, lastActivity: number | null, now: number): VisualState {
   if (c.status === 'not_built' || c.state === 'not_built') return 'not_built';
-  if (!c.instrumented || c.state === 'not_instrumented') return 'not_instrumented';
   const notProbed = HEALTH_NOT_PROBED.has(c.id);
+  const last = lastSeenOf(c, lastActivity);
+  // Dashed grey only while nothing is seen there: once a span names it (say a pgx rollout), it lights.
+  if ((!c.instrumented || c.state === 'not_instrumented') && last === null) return 'not_instrumented';
   if (c.state === 'unreachable' && !notProbed) return 'unhealthy';
   if (c.state === 'warning') return 'warning';
-  const last = lastSeenOf(c, lastActivity);
   // R22: without a health probe, quiet is not stale: lit by activity, else idle (the caption says how quiet).
   if (last === null) return notProbed ? 'idle' : 'stale';
   const age = now - last;
@@ -108,7 +109,11 @@ export function caption(c: ComponentWithState, s: VisualState, lastActivity: num
 
 // ---- wires -------------------------------------------------------------------
 
-/** measured: a shared trace joins the hops; inferred: joined by ids and timing only (dotted); quiet: no traffic seen. */
+/**
+ * measured: at least one pulse on the wire came from a span (a traced hop);
+ * inferred (dotted): its evidence is only NATS envelope events (joined by ids
+ * and timing) or attributed arrivals (R30, R33); quiet: no traffic seen.
+ */
 export type WireLook = 'measured' | 'inferred' | 'quiet';
 export interface Evidence { measured: number; inferred: number }
 
@@ -127,9 +132,9 @@ export function wireStyle(wire: Pick<Wire, 'id'>, evidence: ReadonlyMap<string, 
 
 // ---- pulses ------------------------------------------------------------------
 
-/** Traffic light: green ok; amber slow, retried, dropped or rejected; red failed. */
+/** Traffic light: green ok; amber slow, retried, dropped or rejected; red failed; grey unknown (R32). */
 export function pulseColor(outcome: string): PulseColor {
   return colorOf(outcome);
 }
 
-export const PULSE_HEX: Record<PulseColor, string> = { ok: theme.ok, warn: theme.warn, fail: theme.fail };
+export const PULSE_HEX: Record<PulseColor, string> = { ok: theme.ok, warn: theme.warn, fail: theme.fail, unknown: theme.unknown };

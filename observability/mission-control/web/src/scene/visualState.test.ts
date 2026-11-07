@@ -31,11 +31,14 @@ describe('visual states', () => {
 
   it('notInstrumentedIsNotIdle', () => {
     const courier = comp('courier', { state: 'not_instrumented' });
-    // Even with traffic seen on its wire, an uninstrumented part never looks idle or active.
-    const evs = [seen(NOW - 1000, { source: 'courier', target: 'gateway.courier_api' })];
-    expect(visualState(courier, evs, NOW)).toBe('not_instrumented');
     expect(visualState(courier, [], NOW)).toBe('not_instrumented');
     expect(STATE_LOOK.not_instrumented).not.toEqual(STATE_LOOK.idle);
+    // Not instrumented and quiet is dashed, never idle; nothing seen for a while is not idle either.
+    const pg = comp('pg.tracking', { state: 'not_instrumented' });
+    expect(visualState(pg, [], NOW)).toBe('not_instrumented');
+    // Once a span names it (a future pgx rollout), it lights like any cube.
+    expect(visualState(pg, [seen(NOW - 1000, { source: 'tracking.outbox', target: 'pg.tracking' })], NOW)).toBe('active');
+    expect(visualState(comp('pg.tracking', { state: 'active', lastSeen: iso(NOW - 120_000) }), [], NOW)).toBe('idle');
     // An instrumented part with nothing for 2 minutes is idle, not not_instrumented.
     const gw = comp('gateway', { state: 'idle' });
     expect(visualState(gw, [seen(NOW - 120_000, { source: 'gateway.partner_api', target: 'deliveries.rpc' })], NOW)).toBe('idle');
@@ -95,7 +98,11 @@ describe('pulses', () => {
     expect(pulseColor('ok')).toBe('ok');
     for (const o of ['slow', 'retried', 'dropped', 'rejected']) expect(pulseColor(o), o).toBe('warn');
     expect(pulseColor('failed')).toBe('fail');
-    expect(PULSE_HEX).toEqual({ ok: theme.ok, warn: theme.warn, fail: theme.fail });
+    // R32: unknown is neutral grey, never green (green means succeeded only)
+    expect(pulseColor('unknown')).toBe('unknown');
+    expect(pulseColor('')).toBe('unknown');
+    expect(PULSE_HEX).toEqual({ ok: theme.ok, warn: theme.warn, fail: theme.fail, unknown: theme.unknown });
+    expect(new Set(Object.values(PULSE_HEX)).size).toBe(4);
     expect(Object.values(PULSE_HEX)).not.toContain(theme.accent);
   });
 
