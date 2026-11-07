@@ -36,6 +36,8 @@ export interface McState {
   timelineGaps: TimelineGap[];
   /** Findings the left panel loaded from the API (order detectors or system warnings); the top-bar count reads them too. */
   panelFindings: McEvent[];
+  /** Bumped by resetStream: the store's ids restarted, so loaders refetch (I1). */
+  streamEpoch: number;
 }
 
 export interface McStore {
@@ -60,12 +62,18 @@ export interface McStore {
   setReplayAt(t: number | null): void;
   setTimelineGaps(g: TimelineGap[]): void;
   setPanelFindings(f: McEvent[]): void;
+  /**
+   * The server's ids restarted (its database was recreated): drop what the old
+   * ids keyed (events, bundles, gaps, findings, the selected event), resume from
+   * maxId and bump streamEpoch so the open order's timeline is fetched again.
+   */
+  resetStream(maxId: number): void;
   reset(): void;
 }
 
 function initial(): McState {
   return {
-    mode: 'live', orderId: null, selection: null, expanded: null, events: [], gaps: [], bundles: [], findings: [], replayAt: null, timelineGaps: [], panelFindings: [],
+    mode: 'live', orderId: null, selection: null, expanded: null, events: [], gaps: [], bundles: [], findings: [], replayAt: null, timelineGaps: [], panelFindings: [], streamEpoch: 0,
     collapsed: { left: false, right: false, bottom: false }, lastEventId: null,
     reducedMotion:
       typeof window !== 'undefined' && typeof window.matchMedia === 'function'
@@ -211,6 +219,17 @@ export function createStore(frame: (cb: () => void) => void = nextFrame): McStor
     setReducedMotion: (reducedMotion) => set({ reducedMotion }),
     noteStreamId(id) {
       if (Number.isFinite(id) && (state.lastEventId === null || id > state.lastEventId)) set({ lastEventId: id });
+    },
+    resetStream(maxId) {
+      ids = new Set();
+      queued = [];
+      queuedCount = 0;
+      set({
+        events: [], gaps: [], bundles: [], findings: [], timelineGaps: [], panelFindings: [],
+        selection: state.selection?.kind === 'event' ? null : state.selection,
+        lastEventId: Number.isFinite(maxId) ? maxId : null,
+        streamEpoch: state.streamEpoch + 1,
+      });
     },
     reset() {
       ids = new Set();

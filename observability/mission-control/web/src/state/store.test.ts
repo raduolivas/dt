@@ -4,6 +4,37 @@ import { mkEvent } from '../test-utils';
 import { MAX_EVENTS, createStore } from './store';
 
 describe('store', () => {
+  it('resetStream clears what the old database sent and lowers the resume id', () => {
+    const s = createStore();
+    s.selectOrder('del_1');
+    s.addEvents([mkEvent(800), mkEvent(801)]);
+    s.addFinding(mkEvent(802, { kind: 'detector' }));
+    s.addBundle({ wire: 'a>b', count: 3, outcome: 'ok' }, 801);
+    s.addGap({ from: 1, to: 2 });
+    s.setTimelineGaps([{ kind: 'mc_down', from: '2026-01-01T00:00:00Z', to: '2026-01-01T00:01:00Z' }]);
+    s.setPanelFindings([mkEvent(803, { kind: 'detector' })]);
+    s.select({ kind: 'event', id: '801' });
+    s.noteStreamId(802);
+    const epoch = s.getState().streamEpoch;
+    s.resetStream(3);
+    const st = s.getState();
+    expect(st.orderId).toBe('del_1');
+    expect(st.events).toEqual([]);
+    expect(st.findings).toEqual([]);
+    expect(st.bundles).toEqual([]);
+    expect(st.gaps).toEqual([]);
+    expect(st.timelineGaps).toEqual([]);
+    expect(st.panelFindings).toEqual([]);
+    expect(st.selection).toBeNull();
+    expect(st.lastEventId).toBe(3);
+    expect(st.streamEpoch).toBe(epoch + 1);
+    // ids restarted: an id the old buffer held is new again
+    s.addEvents([mkEvent(1), mkEvent(801)]);
+    expect(s.getState().events.map((e) => e.id)).toEqual([1, 801]);
+    s.addFinding(mkEvent(802, { kind: 'detector' }));
+    expect(s.getState().findings).toHaveLength(1);
+  });
+
   it('storeCapsBuffer', () => {
     const s = createStore();
     const evs: McEvent[] = [];

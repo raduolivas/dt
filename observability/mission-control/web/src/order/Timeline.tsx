@@ -9,16 +9,20 @@ export const GAP_LABEL: Record<TimelineGap['kind'], string> = {
   no_trace: 'no trace data',
 };
 
-/** Fetches the selected order's whole timeline (from after=0, every page) into the store. */
+/**
+ * Fetches the selected order's whole timeline (from after=0, every page) into
+ * the store; again after a stream reset (streamEpoch), which emptied the buffer.
+ */
 export function useOrderTimeline(client: Client = api): void {
   const orderId = useStore((s) => s.orderId);
+  const epoch = useStore((s) => s.streamEpoch);
   useEffect(() => {
     if (!orderId) return;
     let alive = true;
     client
       .allTimeline(orderId)
       .then((t) => {
-        if (!alive || store.getState().orderId !== orderId) return;
+        if (!alive || store.getState().orderId !== orderId || store.getState().streamEpoch !== epoch) return;
         store.addEvents(t.events);
         store.setTimelineGaps(t.gaps);
       })
@@ -28,7 +32,7 @@ export function useOrderTimeline(client: Client = api): void {
     return () => {
       alive = false;
     };
-  }, [orderId, client]);
+  }, [orderId, client, epoch]);
 }
 
 const at = (e: McEvent) => Date.parse(e.occurredAt);

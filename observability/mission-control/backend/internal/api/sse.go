@@ -194,11 +194,25 @@ func (c *client) catchUp(ctx context.Context, live bool) error {
 	}
 }
 
-// resume handles Last-Event-ID: a gap marker when the id is older than what
-// is stored, then the replay.
+// resume handles Last-Event-ID: a reset when the id is ahead of everything
+// stored (the database was recreated and ids restarted, I1), a gap marker
+// when it is older than what is stored, then the replay.
 func (c *client) resume(ctx context.Context, last int64) error {
 	c.last = last
 	if c.st == nil {
+		return nil
+	}
+	max, err := c.st.MaxEventID(ctx)
+	if err != nil {
+		return err
+	}
+	if last > max {
+		// Without this every new id (<= last) would be dropped silently. The
+		// client clears what it holds and refetches; the stream goes on live.
+		if err := c.write(max, "reset", map[string]int64{"max": max}); err != nil {
+			return err
+		}
+		c.last = max
 		return nil
 	}
 	min, err := c.st.MinEventID(ctx)
