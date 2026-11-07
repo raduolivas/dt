@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +61,8 @@ type Config struct {
 	// Pickup and Dropoff default to Amsterdam; Fixes is the route length in fixes (default 600).
 	Pickup, Dropoff LatLng
 	Fixes           int
+	// Origins looks up a delivery's stored origin (mc_order); optional.
+	Origins OriginLookup
 }
 
 // Run describes a started simulated delivery.
@@ -79,20 +82,21 @@ type RunStatus struct {
 
 // Manager owns the runs.
 type Manager struct {
-	cfg     Config
-	log     *slog.Logger
-	p       *partner
-	gwc     gw
-	edge    gw
-	stream  *http.Client
-	reg     *Registry
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	mu      sync.Mutex
-	runs    map[string]*run
-	order   []string
-	counter int
+	cfg    Config
+	log    *slog.Logger
+	p      *partner
+	gwc    gw
+	edge   gw
+	stream *http.Client
+	reg    *Registry
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	mu     sync.Mutex
+	runs   map[string]*run
+	order  []string // live runs, oldest first
+	// reserved counts live runs plus starts in flight (the cap is on this).
+	reserved int
 }
 
 // New validates the config; the key must be a test secret key. The error never contains the key.
@@ -133,16 +137,16 @@ func New(cfg Config) (*Manager, error) {
 	return &Manager{
 		cfg: cfg, log: log, gwc: g, p: &partner{g: gw{base: g.base, hc: g.hc, idempotent: true}, key: cfg.Key},
 		edge: gw{base: strings.TrimRight(cfg.EdgeURL, "/"), hc: cfg.HTTP}, stream: &sc,
-		reg: NewRegistry(), ctx: ctx, cancel: cancel, runs: map[string]*run{},
+		reg: NewRegistry(cfg.Origins), ctx: ctx, cancel: cancel, runs: map[string]*run{},
 	}, nil
 }
 
 // FromConfig returns nil (no simulation) unless cfg.Simulation is set.
-func FromConfig(c config.Config, log *slog.Logger) (*Manager, error) {
+func FromConfig(c config.Config, log *slog.Logger, origins OriginLookup) (*Manager, error) {
 	if !c.Simulation {
 		return nil, nil //nolint:nilnil // nil means simulation is off
 	}
-	return New(Config{GatewayURL: c.GatewayURL, EdgeURL: c.EdgeURL, Key: c.SandboxKey, Log: log})
+	return New(Config{GatewayURL: c.GatewayURL, EdgeURL: c.EdgeURL, Key: c.SandboxKey, Log: log, Origins: origins})
 }
 
 // Registry is the set of simulated delivery ids (normalize.SimRegistry).
@@ -159,16 +163,26 @@ func randHex(n int) string {
 func (m *Manager) Start(ctx context.Context) (Run, error) { return m.start(ctx, false) }
 
 func (m *Manager) start(ctx context.Context, hold bool) (Run, error) {
+	// Reserve the slot before the DT calls, so concurrent starts cannot exceed the cap; the run (or a failure) frees it.
 	m.mu.Lock()
-	if len(m.runs) >= maxRuns {
+	if m.reserved >= maxRuns {
 		m.mu.Unlock()
 		return Run{}, ErrTooManyRuns
 	}
-	m.counter++
+	m.reserved++
 	m.mu.Unlock()
+	run, err := m.create(ctx, hold)
+	if err != nil {
+		m.mu.Lock()
+		m.reserved--
+		m.mu.Unlock()
+	}
+	return run, err
+}
 
+func (m *Manager) create(ctx context.Context, hold bool) (Run, error) {
 	tag := randHex(3)
-	ref := fmt.Sprintf("mc-sim-%s-%s", time.Now().UTC().Format("20060102-150405"), tag)
+	ref := fmt.Sprintf("%s%s-%s", OrderRefPrefix, time.Now().UTC().Format("20060102-150405"), tag)
 	courierID, err := m.p.upsertCourier(ctx, "mc-sim-"+tag+"-a")
 	if err != nil {
 		return Run{}, err
@@ -207,6 +221,8 @@ func (m *Manager) start(ctx context.Context, hold bool) (Run, error) {
 		r.loop(rctx)
 		m.mu.Lock()
 		delete(m.runs, deliveryID)
+		m.order = slices.DeleteFunc(m.order, func(id string) bool { return id == deliveryID })
+		m.reserved--
 		m.mu.Unlock()
 	}()
 	return Run{DeliveryID: deliveryID, OrderRef: ref, TrackingURL: trackingURL}, nil

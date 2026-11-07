@@ -2,9 +2,12 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -44,6 +47,19 @@ func (s *Store) UpsertOrder(ctx context.Context, o OrderHit) error {
 		return fmt.Errorf("store: upsert order: %w", err)
 	}
 	return nil
+}
+
+// OrderOrigin returns the stored origin of a delivery's order row ("" when there is none).
+func (s *Store) OrderOrigin(ctx context.Context, deliveryID string) (string, error) {
+	var origin string
+	err := s.pool.QueryRow(ctx, `SELECT origin FROM mc_order WHERE delivery_id = $1 ORDER BY created_at DESC LIMIT 1`, deliveryID).Scan(&origin)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("store: order origin: %w", err)
+	}
+	return origin, nil
 }
 
 // SearchOrder finds orders by exact order_ref, or by delivery_id when q starts

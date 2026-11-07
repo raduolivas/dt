@@ -141,7 +141,10 @@ mc-sim: dtctl ## Start simulation mode (local, sandbox key): a fake courier phon
 	  curl -fsS http://127.0.0.1:8095/readyz >/dev/null 2>&1 && break; sleep 1; \
 	  [ $$i = 60 ] && { echo "Mission Control did not become ready"; $(MC_COMPOSE) logs --tail 50 mc-backend; exit 1; }; \
 	done
-	@curl -fsS --max-time 60 -X POST http://127.0.0.1:8095/api/sim/runs | jq -r '"order:    \(.order_ref)\ndelivery: \(.delivery_id)\ntracking: \(.tracking_url)\nMission Control: http://127.0.0.1:8095 (open the order, then break it: make mc-break SCENARIO=1..6)"'
+	@body=$$(mktemp); trap 'command rm -f "$$body"' EXIT; \
+	code=$$(curl -sS -o "$$body" -w '%{http_code}' --max-time 60 -X POST http://127.0.0.1:8095/api/sim/runs) || { echo "mc-sim: Mission Control did not answer"; exit 1; }; \
+	[ "$$code" = 201 ] || { echo "mc-sim: creating the run failed (status $$code): $$(cat "$$body")"; exit 1; }; \
+	jq -r '"order:    \(.order_ref)\ndelivery: \(.delivery_id)\ntracking: \(.tracking_url)\nMission Control: http://127.0.0.1:8095 (open the order, then break it: make mc-break SCENARIO=1..6)"' <"$$body"
 
 mc-break: ## Break a simulation scenario: make mc-break SCENARIO=1..6 (add HEAL=1 to heal it); 5 and 6 use Docker (project dt)
 	@test -n "$(SCENARIO)" || { echo "usage: make mc-break SCENARIO=1..6 [HEAL=1]"; exit 1; }

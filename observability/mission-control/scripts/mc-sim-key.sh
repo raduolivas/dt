@@ -14,8 +14,12 @@ ENVFILE="$(dirname "$0")/../.env"
 fail() { echo "mc-sim: $*" >&2; exit 1; }
 
 accepted() { # key -> 0 when the gateway knows it
-  [[ "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 -H "Authorization: Bearer $1" "${GATEWAY}/v1/me" || true)" == 200 ]]
+  # the header goes in on stdin (-H @-), so the key is never on curl's command line
+  [[ "$(printf 'Authorization: Bearer %s\n' "$1" | curl -sS -o /dev/null -w '%{http_code}' --max-time 3 -H @- "${GATEWAY}/v1/me" || true)" == 200 ]]
 }
+err=""
+tmp=""
+trap 'command rm -f "$err" "$tmp"' EXIT
 
 key=""
 if [[ -f "$ENVFILE" ]]; then
@@ -29,7 +33,6 @@ fi
 echo "==> creating a sandbox tenant and a test key" >&2
 run_id="$(date -u +%Y%m%dT%H%M%S)-$$"
 err="$(mktemp)"
-trap 'rm -f "$err"' EXIT
 tenant="$("$DTCTL" tenant create --name "Mission Control Sim ${run_id}" 2>"$err")" || fail "dtctl tenant create: $(cat "$err")"
 key="$("$DTCTL" key create --tenant "$tenant" --env test --name mission-control-sim 2>"$err")" || fail "dtctl key create: $(cat "$err")"
 "$DTCTL" tenant settings --tenant "$tenant" --models direct,end_to_end --default direct --pickup any >/dev/null 2>"$err" ||
@@ -49,5 +52,4 @@ tmp="$(mktemp)"
 grep -v '^MC_SANDBOX_KEY=' "$ENVFILE" >"$tmp" || true
 printf 'MC_SANDBOX_KEY=%s\n' "$key" >>"$tmp"
 cat "$tmp" >"$ENVFILE"
-rm -f "$tmp"
 echo "==> wrote MC_SANDBOX_KEY to ${ENVFILE}" >&2
