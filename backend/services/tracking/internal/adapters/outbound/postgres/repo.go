@@ -331,6 +331,11 @@ func loadState(ctx context.Context, q *db.Queries, id string) (domain.State, err
 		}
 	}
 	app.ApplyRecord(&st, rec, courier)
+	// Wait for an in-flight settings change, so its prep time is read (see
+	// LockTenantPrepShared in queries.sql).
+	if err := q.LockTenantPrepShared(ctx, rec.TenantID); err != nil {
+		return domain.State{}, fmt.Errorf("lock tenant prep: %w", err)
+	}
 	prep, err := q.GetTenantPrep(ctx, rec.TenantID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return domain.State{}, fmt.Errorf("tenant prep: %w", err)
@@ -468,7 +473,14 @@ func (s *Settings) SetTenantPrep(ctx context.Context, tenantID string, prep *int
 		v := int32(min(max(*prep, 0), 1<<20))
 		p = &v
 	}
-	n, err := db.New(s.tx).SetTenantPrep(ctx, db.SetTenantPrepParams{TenantID: tenantID, DefaultPrepMinutes: p, UpdatedAt: at})
+	q := db.New(s.tx)
+	// Wait for in-flight state loads of the tenant's deliveries, so the
+	// active deliveries read after this include them (see
+	// LockTenantPrepShared in queries.sql).
+	if err := q.LockTenantPrep(ctx, tenantID); err != nil {
+		return false, fmt.Errorf("lock tenant prep: %w", err)
+	}
+	n, err := q.SetTenantPrep(ctx, db.SetTenantPrepParams{TenantID: tenantID, DefaultPrepMinutes: p, UpdatedAt: at})
 	if err != nil {
 		return false, fmt.Errorf("set tenant prep: %w", err)
 	}

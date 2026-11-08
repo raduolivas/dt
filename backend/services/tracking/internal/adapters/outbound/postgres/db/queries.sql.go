@@ -455,6 +455,32 @@ func (q *Queries) LockDelivery(ctx context.Context, id string) (LockDeliveryRow,
 	return i, err
 }
 
+const lockTenantPrep = `-- name: LockTenantPrep :exec
+SELECT pg_advisory_xact_lock(hashtextextended('tracking.tenant_prep:' || $1::text, 0))
+`
+
+// Taken by a settings change; see LockTenantPrepShared.
+func (q *Queries) LockTenantPrep(ctx context.Context, tenantID string) error {
+	_, err := q.db.Exec(ctx, lockTenantPrep, tenantID)
+	return err
+}
+
+const lockTenantPrepShared = `-- name: LockTenantPrepShared :exec
+SELECT pg_advisory_xact_lock_shared(hashtextextended('tracking.tenant_prep:' || $1::text, 0))
+`
+
+// The tenant prep lock orders a settings change against the state loads of
+// the tenant's deliveries, until each transaction ends. Without it, a
+// delivery created while a settings change is in flight is missed by both:
+// its load reads the old prep time, and the settings change does not see the
+// uncommitted delivery among the active ones. Loads share the lock, so they
+// do not wait for each other. An advisory lock, because the tenant_settings
+// row may not exist yet.
+func (q *Queries) LockTenantPrepShared(ctx context.Context, tenantID string) error {
+	_, err := q.db.Exec(ctx, lockTenantPrepShared, tenantID)
+	return err
+}
+
 const retentionScopes = `-- name: RetentionScopes :many
 SELECT tenant_id, environment FROM retention_scopes ORDER BY tenant_id, environment
 `
