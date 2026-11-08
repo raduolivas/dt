@@ -1,0 +1,4 @@
+# Own project: deliberately not part of DT's web/ workspace.
+packages: []
+allowBuilds:
+  esbuild: true

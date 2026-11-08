@@ -1,0 +1,230 @@
+// Command mc runs Mission Control: it ingests DT telemetry read-only and
+// serves the troubleshooting API and UI on loopback. It never writes to DT
+// outside simulation mode. This skeleton serves /livez and /readyz.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/raduolivas/dt/backend/pkg/httpx"
+	"github.com/raduolivas/dt/backend/pkg/logx"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/api"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/config"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/detect"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/index"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/ingest"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/metrics"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/normalize"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/retention"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/sim"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/store"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/topology"
+	"github.com/raduolivas/dt/observability/mission-control/backend/internal/webui"
+)
+
+const (
+	// defaultWebDir is where the image keeps the built UI; MC_WEB_DIR overrides it.
+	defaultWebDir = "/web"
+	readyTimeout  = 2 * time.Second
+	pruneInterval = time.Hour
+	storeOpenWait = 60 * time.Second
+	// detectInterval is how often the detectors run; a scenario shows within
+	// 40 s (plan Task 14), so a few seconds is plenty.
+	detectInterval = 5 * time.Second
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx, stop); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context, stop context.CancelFunc) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	log := logx.New(os.Stdout, slog.LevelInfo, "mission-control")
+
+	st, err := openStore(ctx, cfg.DatabaseURL, log)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	mux := http.NewServeMux()
+	mux.Handle("GET /livez", httpx.Livez())
+	// Ready means our own Postgres answers; NATS and DT health are reported elsewhere (ruling R5).
+	mux.Handle("GET /readyz", httpx.Readyz(map[string]httpx.Check{"postgres": st.Ping}, readyTimeout))
+	bc := api.NewBroadcaster()
+	self := ingest.NewSelf(st, log)
+	// An oversize id field is dropped before insert (never fails a batch) and counted as redacted (M3).
+	st.SetOnCapped(self.Redacted)
+	// A failing prometheus/cloudwatch source degrades to builtin and flags self-health.
+	builtinSrc := metrics.New(config.Config{MetricsSource: config.MetricsBuiltin}, st, topology.Default())
+	src := builtinSrc
+	if cfg.MetricsSource != config.MetricsBuiltin {
+		src = metrics.WithFallback(metrics.New(cfg, st, topology.Default()), builtinSrc, self)
+	}
+	mux.Handle("/api/", api.New(api.Options{Store: st, Topology: topology.Default(), Broadcaster: bc, Log: log,
+		Traffic: metrics.Traffic(src), Links: metrics.Links(cfg.Links)}))
+	// Simulation mode (MC_SIMULATION=1, MC_ENV=local, dt_sk_test_ key): the only place Mission Control writes to DT.
+	simMgr, err := sim.FromConfig(cfg, log, st.OrderOrigin)
+	if err != nil {
+		return err
+	}
+	if simMgr != nil {
+		defer simMgr.Close()
+		sim.Mount(mux, simMgr) // more specific than /api/, so these win
+		log.Info("simulation mode on", "env", cfg.Env)
+	}
+	// The built UI (web/dist) at "/"; /api, /livez and /readyz keep their own routes (ruling R3).
+	webDir := os.Getenv("MC_WEB_DIR")
+	if webDir == "" {
+		webDir = defaultWebDir
+	}
+	if h, ok := webui.Handler(webDir); ok {
+		mux.Handle("/", h)
+	} else {
+		log.Info("no built UI found; serving the API only", "dir", webDir)
+	}
+	// Host allow-list before any handler (DNS rebinding, I2): only loopback names with our port.
+	httpHandler, err := api.AllowHosts(cfg.HTTPAddr, nil, mux)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: api.CSP(httpHandler), ReadHeaderTimeout: 5 * time.Second}
+
+	norm := &normalize.Normalizer{Topology: topology.Default(), Thresholds: cfg.Thresholds, OnRedacted: self.Redacted}
+	// Simulated deliveries stay simulated: the registry knows this process's runs and falls back to the stored
+	// order origin (R38), also when simulation is off (events of an earlier simulated run).
+	norm.SimRegistry = sim.NewRegistry(st.OrderOrigin)
+	if simMgr != nil {
+		norm.SimRegistry = simMgr.Registry()
+	}
+	idx := index.New(st)
+	// After an insert: update the order index, then feed the live stream
+	// (non-blocking; slow clients catch up from the store).
+	onInserted := func(ctx context.Context, e store.Event) error {
+		err := idx.OnEvent(ctx, e)
+		_ = bc.OnEvent(ctx, e)
+		return err
+	}
+	writer := ingest.NewWriter(st, self, ingest.DefaultBuffer)
+	writer.OnInserted = onInserted
+	// The collector addresses the OTLP listener as mc-backend:4318 (its compose alias); loopback names work too.
+	otlpHandler, err := api.AllowHosts(cfg.OTLPAddr, []string{"mc-backend"}, ingest.OTLPHandler(writer, norm, self, log))
+	if err != nil {
+		return err
+	}
+	otlpSrv := &http.Server{Addr: cfg.OTLPAddr, Handler: otlpHandler, ReadHeaderTimeout: 5 * time.Second}
+
+	// Shutdown order: stop the servers (no new OTLP), stop pollers and consumers
+	// (ctx), let the writer drain and flush (wctx), then flush self-health
+	// (sctx), then close the store.
+	var wg, wwg, swg sync.WaitGroup
+	wctx, wcancel := context.WithCancel(context.Background())
+	defer wcancel()
+	sctx, scancel := context.WithCancel(context.Background())
+	defer scancel()
+	spawn := func(g *sync.WaitGroup, f func()) {
+		g.Add(1)
+		go func() { defer g.Done(); f() }()
+	}
+	spawn(&swg, func() {
+		if err := self.Run(sctx); err != nil {
+			log.Error("self-health stopped", "error", err.Error())
+		}
+	})
+	spawn(&wwg, func() { writer.Run(wctx) })
+	spawn(&wg, func() { retention.Run(ctx, st, pruneInterval, cfg.Retention, log) })
+	spawn(&wg, func() { ingest.PollHealth(ctx, healthTargets(cfg), ingest.PollInterval, writer.Sink("health")) })
+	spawn(&wg, func() {
+		ingest.PollConsumers(ctx, cfg.NATSMonitorURL, ingest.PollInterval, writer.Sink("nats.monitor"))
+	})
+	// Detectors store their findings as kind=detector events and feed the live stream.
+	spawn(&wg, func() {
+		detect.Run(ctx, st, detectInterval, func(f detect.Finding) {
+			log.Info("detector finding", "detector", f.Detector, "hop", f.Hop, "delivery_id", f.DeliveryID,
+				"reason", f.Reason, "severity", f.Severity)
+		}, detect.Options{Thresholds: cfg.Thresholds, OnInserted: onInserted, Log: log})
+	})
+	spawn(&wg, func() {
+		emit := func(outcome, reason string) {
+			now := time.Now().UTC()
+			writer.Add("nats", store.Event{ObservedAt: now, OccurredAt: now, Kind: "health", Source: "nats", Target: "mission-control",
+				Outcome: outcome, Reason: reason, Origin: "live"})
+		}
+		ingest.RunNATSLoop(ctx, cfg.NATSURL, st, norm,
+			ingest.NATSOptions{Self: self, Log: log, Retention: cfg.Retention, OnInserted: onInserted}, emit)
+	})
+
+	errc := make(chan error, 2)
+	go func() { errc <- srv.ListenAndServe() }()
+	go func() { errc <- otlpSrv.ListenAndServe() }()
+	log.Info("mission control listening", "addr", cfg.HTTPAddr, "env", cfg.Env, "simulation", cfg.Simulation)
+	var runErr error
+	select {
+	case runErr = <-errc:
+	case <-ctx.Done():
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = otlpSrv.Shutdown(shutdownCtx)
+	if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) && runErr == nil {
+		runErr = err
+	}
+	stop()     // pollers, consumers, prune
+	wg.Wait()  // no more producers
+	wcancel()  // writer drains and flushes what it accepted
+	wwg.Wait() //
+	scancel()  // final self-health flush includes the writer's drops
+	swg.Wait()
+	if errors.Is(runErr, http.ErrServerClosed) {
+		runErr = nil
+	}
+	return runErr
+}
+
+// openStore retries while Postgres starts, so compose start order is not a race.
+func openStore(ctx context.Context, url string, log *slog.Logger) (*store.Store, error) {
+	deadline := time.Now().Add(storeOpenWait)
+	for {
+		st, err := store.Open(ctx, url)
+		if err == nil {
+			return st, nil
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			return nil, err
+		}
+		log.Warn("store not ready, retrying", "error", err.Error())
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+// healthTargets are the DT services Mission Control probes (/livez, /readyz).
+// deliveries and accounts serve their health only over mTLS; Mission Control
+// holds no DT client certificate, so they are not probed (their signals come
+// from spans and consumer state instead).
+func healthTargets(cfg config.Config) map[string]string {
+	return map[string]string{
+		"gateway":  cfg.GatewayURL,
+		"tracking": "http://tracking:8082",
+		"webhooks": "http://webhooks:8083",
+	}
+}

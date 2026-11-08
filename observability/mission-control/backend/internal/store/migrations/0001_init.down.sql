@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS mc_downtime;
+DROP TABLE IF EXISTS mc_self;
+DROP TABLE IF EXISTS mc_order;
+DROP TABLE IF EXISTS mc_event;
