@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"reflect"
+	"sort"
 	"strings"
 
 	"go.opentelemetry.io/otel/trace"
@@ -26,7 +27,33 @@ var sensitiveSegments = map[string]struct{}{
 
 // sensitiveKeys are whole keys whose segments alone are harmless.
 var sensitiveKeys = map[string]struct{}{
-	"database_url": {},
+	"database_url": {}, "api_key": {},
+}
+
+// SensitiveKeys returns the sorted union of sensitive key segments and whole
+// keys, so other components (the collector's redact list) can be checked
+// against it.
+func SensitiveKeys() []string {
+	out := make([]string, 0, len(sensitiveSegments)+len(sensitiveKeys))
+	for k := range sensitiveSegments {
+		out = append(out, k)
+	}
+	for k := range sensitiveKeys {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SensitiveSegments returns the sorted key segments logx matches anywhere in a
+// key, so the collector's segment regex can be checked against it.
+func SensitiveSegments() []string {
+	out := make([]string, 0, len(sensitiveSegments))
+	for k := range sensitiveSegments {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func isSensitive(key string) bool {

@@ -5,8 +5,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -132,5 +135,75 @@ func TestHTTPSpansNeverCarryCredentialPaths(t *testing.T) {
 	}
 	if spans[0].Name() != "GET /t/{token}" {
 		t.Fatalf("span name = %q", spans[0].Name())
+	}
+}
+
+func TestInitWithoutEndpointInstallsNoExporter(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	shutdown, err := otelx.Init(context.Background(), "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otelx.Enabled() {
+		t.Fatal("Enabled() = true with no endpoint")
+	}
+	lp := otel.GetLoggerProvider()
+	if lp == nil {
+		t.Fatal("no global logger provider")
+	}
+	otelslog.NewLogger("t", otelslog.WithLoggerProvider(lp)).Info("dropped")
+	if err := shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInitWithEndpointExportsLogs(t *testing.T) {
+	var n atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/logs" {
+			n.Add(1)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", srv.URL)
+
+	shutdown, err := otelx.Init(context.Background(), "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !otelx.Enabled() {
+		t.Fatal("Enabled() = false with endpoint set")
+	}
+	otelslog.NewLogger("t").Info("hello")
+	if err := shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n.Load() < 1 {
+		t.Fatalf("log export requests = %d, want >= 1", n.Load())
+	}
+}
+
+func TestShutdownIsBounded(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		case <-time.After(30 * time.Second):
+		}
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", srv.URL)
+
+	shutdown, err := otelx.Init(context.Background(), "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otelslog.NewLogger("t").Info("stuck")
+	start := time.Now()
+	_ = shutdown(context.Background())
+	if d := time.Since(start); d > 6*time.Second {
+		t.Fatalf("shutdown took %s, want <= 6s", d)
 	}
 }

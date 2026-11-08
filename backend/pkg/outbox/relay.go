@@ -11,6 +11,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Relay defaults and retention.
@@ -111,17 +116,37 @@ func (r *Relay) publishBatch(ctx context.Context, batch int) error {
 		return nil
 	}
 
+	tracer := otel.Tracer(tracerName)
 	published := make([]string, 0, len(pending))
 	var pubErr error
 	for _, p := range pending {
+		// The publish span continues the trace stored with the row; the
+		// headers on the NATS message are re-injected from it, so the
+		// consumer's span becomes its child.
+		pctx := otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier(p.Headers))
+		pctx, span := tracer.Start(pctx, "publish "+p.Subject,
+			trace.WithSpanKind(trace.SpanKindProducer),
+			trace.WithAttributes(
+				attribute.String("messaging.system", "nats"),
+				attribute.String("messaging.destination.name", p.Subject),
+				attribute.String("messaging.message.id", p.EventID),
+				attribute.String("dt.event_id", p.EventID),
+			))
 		msg := nats.NewMsg(p.Subject)
 		msg.Data = p.Payload
 		for k, v := range p.Headers {
 			msg.Header.Set(k, v)
 		}
+		otel.GetTextMapPropagator().Inject(pctx, headerCarrier(msg.Header))
 		// PublishMsg waits for the stream's ack. Nats-Msg-Id makes a
 		// re-publish after a lost ack or a failed commit a no-op.
-		if _, err := r.JS.PublishMsg(ctx, msg, jetstream.WithMsgID(p.EventID)); err != nil {
+		_, err := r.JS.PublishMsg(pctx, msg, jetstream.WithMsgID(p.EventID))
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "publish failed")
+		}
+		span.End()
+		if err != nil {
 			pubErr = fmt.Errorf("publish %s on %s: %w", p.EventID, p.Subject, err)
 			break
 		}
