@@ -19,8 +19,8 @@
     "@types/three": "^0.187.0",
     "happy-dom": "21.0.4",
     "three": "^0.187.0",
-    "vite": "^8.3.5",
-    "vitest": "5.0.5"
+    "vite": "^8.3.6",
+    "vitest": "5.1.0"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",
