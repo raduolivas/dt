@@ -36,7 +36,18 @@ It creates a fresh test tenant, a courier `dev-courier`, a direct delivery near 
 - `courier:` the link for the phone. It works **once** and for **15 minutes**; opening it uses it up. Send it to the phone (AirDrop, Messages, or type it). Run `make courier-link` again for a new one.
 - `tracking:` open it on the laptop (it uses `localhost`, so it must be the laptop that runs the stack).
 
-The map tiles are the Amsterdam fixture. To see the courier on the map elsewhere, set the pickup near you: `DT_PICKUP=<lat>,<lng> make courier-link`.
+The routing data and the map tiles cover Amsterdam only. To walk somewhere else in the Netherlands, switch the local
+stack to your province once (it downloads the province's roads and uses the Netherlands map tiles from
+`make tiles-nl`), with your start point as the default pickup:
+
+```bash
+make tiles-nl                                          # once, if build/tiles/nl.pmtiles is missing (about 500 MB)
+make region REGION=overijssel PICKUP=52.35649,6.66629  # any Dutch province; REGION=amsterdam goes back
+make courier-link
+```
+
+The choice is kept in `build/region.env` and survives `make dev`. A single run can still override the pickup:
+`DT_PICKUP=<lat>,<lng> make courier-link`.
 
 ## 4. Walk
 
