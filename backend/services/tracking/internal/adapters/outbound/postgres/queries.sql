@@ -7,6 +7,20 @@
 -- name: GetTenantPrep :one
 SELECT default_prep_minutes FROM tenant_settings WHERE tenant_id = $1;
 
+-- name: LockTenantPrepShared :exec
+-- The tenant prep lock orders a settings change against the state loads of
+-- the tenant's deliveries, until each transaction ends. Without it, a
+-- delivery created while a settings change is in flight is missed by both:
+-- its load reads the old prep time, and the settings change does not see the
+-- uncommitted delivery among the active ones. Loads share the lock, so they
+-- do not wait for each other. An advisory lock, because the tenant_settings
+-- row may not exist yet.
+SELECT pg_advisory_xact_lock_shared(hashtextextended('tracking.tenant_prep:' || @tenant_id::text, 0));
+
+-- name: LockTenantPrep :exec
+-- Taken by a settings change; see LockTenantPrepShared.
+SELECT pg_advisory_xact_lock(hashtextextended('tracking.tenant_prep:' || @tenant_id::text, 0));
+
 -- name: SetTenantPrep :execrows
 -- Settings older than the stored ones are ignored.
 INSERT INTO tenant_settings (tenant_id, default_prep_minutes, updated_at)

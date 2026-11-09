@@ -305,3 +305,164 @@ func TestPartitionFunctionIsLockedDown(t *testing.T) {
 		t.Fatalf("30-day cutoff: dropped %d, %v", n, err)
 	}
 }
+
+// newDelivery is an unassigned delivery in s, as delivery.created stores it.
+func newDelivery(s app.Scope, id string, at time.Time) app.DeliveryRecord {
+	return app.DeliveryRecord{
+		ID: id, TenantID: s.TenantID, Env: s.Env, Model: domain.ModelEndToEnd, Status: domain.StatusConfirmed,
+		Pickup: domain.LatLng{Lat: 52.36, Lng: 4.9}, PickupName: "Hub", Dropoff: domain.LatLng{Lat: 52.37, Lng: 4.89},
+		CreatedAt: at, Timeline: []domain.TimelineEntry{{Status: domain.StatusConfirmed, At: at}},
+		UpdatedAt: at, EventVersion: 1,
+	}
+}
+
+// overlap is how long a test keeps one transaction open while the other runs;
+// without the tenant lock the other finishes well within it.
+const overlap = 300 * time.Millisecond
+
+// A delivery created while a settings change is in flight gets the new prep
+// time: the state load waits for the settings transaction instead of reading
+// the value from before it.
+func TestLoadStateWaitsForInFlightTenantSettings(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	settingsTx, err := e.svc.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = settingsTx.Rollback(ctx) }()
+	prep := 20
+	if stored, err := e.repo.Settings(settingsTx).SetTenantPrep(ctx, scopeA.TenantID, &prep, now); err != nil || !stored {
+		t.Fatalf("set prep: %v %v", stored, err)
+	}
+
+	deliveryTx, err := e.svc.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = deliveryTx.Rollback(ctx) }()
+	p, err := e.repo.Bind(ctx, deliveryTx, scopeA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.PutDelivery(ctx, newDelivery(scopeA, "del_race", now)); err != nil {
+		t.Fatal(err)
+	}
+	type loaded struct {
+		st  domain.State
+		err error
+	}
+	done := make(chan loaded, 1)
+	go func() {
+		st, err := p.LoadState(ctx, scopeA, "del_race")
+		done <- loaded{st, err}
+	}()
+
+	time.Sleep(overlap)
+	if err := settingsTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := <-done
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	if got.st.DefaultPrepMinutes == nil || *got.st.DefaultPrepMinutes != 20 {
+		t.Fatalf("prep = %v, want 20", got.st.DefaultPrepMinutes)
+	}
+	if err := deliveryTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A settings change made while a delivery's state is being built waits for
+// that transaction, so it finds the delivery among the active ones and
+// updates it.
+func TestTenantSettingsWaitForInFlightStateLoad(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	deliveryTx, err := e.svc.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = deliveryTx.Rollback(ctx) }()
+	p, err := e.repo.Bind(ctx, deliveryTx, scopeA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.PutDelivery(ctx, newDelivery(scopeA, "del_race", now)); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := p.LoadState(ctx, scopeA, "del_race"); err != nil || st.DefaultPrepMinutes != nil {
+		t.Fatalf("load before settings: %v %v", st.DefaultPrepMinutes, err)
+	}
+
+	type active struct {
+		ids []string
+		err error
+	}
+	done := make(chan active, 1)
+	go func() {
+		var ids []string
+		err := pgx.BeginFunc(ctx, e.svc, func(tx pgx.Tx) error {
+			prep := 20
+			sp := e.repo.Settings(tx)
+			if _, err := sp.SetTenantPrep(ctx, scopeA.TenantID, &prep, now); err != nil {
+				return err
+			}
+			var err error
+			ids, err = sp.ActiveDeliveries(ctx, scopeA)
+			return err
+		})
+		done <- active{ids, err}
+	}()
+
+	time.Sleep(overlap)
+	if err := deliveryTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := <-done
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	if len(got.ids) != 1 || got.ids[0] != "del_race" {
+		t.Fatalf("active deliveries seen by the settings change = %v, want [del_race]", got.ids)
+	}
+}
+
+// The settings change rebuilds the state of an active delivery that is not
+// cached, inside its own transaction: the shared lock taken by the load is
+// granted to the transaction that already holds the exclusive one.
+func TestTenantSettingsCanRebuildStateInTheirOwnTransaction(t *testing.T) {
+	e := setup(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	seed(t, e, scopeA, "cou_a", "del_a", now)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := pgx.BeginFunc(ctx, e.svc, func(tx pgx.Tx) error {
+		prep := 20
+		sp := e.repo.Settings(tx)
+		if _, err := sp.SetTenantPrep(ctx, scopeA.TenantID, &prep, now); err != nil {
+			return err
+		}
+		p, err := sp.Bind(ctx, scopeA)
+		if err != nil {
+			return err
+		}
+		st, err := p.LoadState(ctx, scopeA, "del_a")
+		if err != nil {
+			return err
+		}
+		if st.DefaultPrepMinutes == nil || *st.DefaultPrepMinutes != 20 {
+			t.Errorf("prep = %v, want 20", st.DefaultPrepMinutes)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
