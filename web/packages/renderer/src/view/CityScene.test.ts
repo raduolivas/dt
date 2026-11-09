@@ -178,6 +178,27 @@ describe('CityScene insets', () => {
     city.dispose();
   });
 
+  it('frames the 2D view the same whether 2D was chosen before or after the first frame', () => {
+    // before: 2D is on when the scene first frames (the e2e look test when the click beats the tiles)
+    const early = installFakeDom();
+    const a = new CityScene(early.container as unknown as HTMLElement, { webgl: () => mockWebGL(), reducedMotion: true });
+    a.setMode('2d');
+    a.onSnapshot(snap);
+    a.frame(1 / 60);
+    // after: the scene framed in 3D first, then the customer switched to 2D
+    const { dom: late, city: b } = setup();
+    b.setMode('2d');
+    b.frame(1 / 60);
+    for (const c of ['store', 'home'] as const) {
+      const pa = labelAt(early, c);
+      const pb = labelAt(late, c);
+      expect(Math.abs(pb.x - pa.x), `${c} x`).toBeLessThan(1);
+      expect(Math.abs(pb.y - pa.y), `${c} y`).toBeLessThan(1);
+    }
+    a.dispose();
+    b.dispose();
+  });
+
   it('ignores changes of a few pixels', () => {
     const { city, reframes } = setup();
     city.setInsets({ top: 0, right: 0, bottom: 200, left: 0 });
