@@ -5,6 +5,8 @@ updates:
       - /backend/pkg
       - /backend/gen
       - /backend/services/*
+      # Uses backend/pkg through a replace, so it must move with it in the same PR.
+      - /observability/mission-control/backend
     schedule:
       interval: weekly
     groups:
