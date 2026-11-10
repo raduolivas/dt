@@ -21,6 +21,13 @@ const (
 	tracerName = meterName
 )
 
+// OSRM services, as named in the request path and the operation label.
+const (
+	opRoute   = "route"
+	opMatch   = "match"
+	opNearest = "nearest"
+)
+
 // Outcomes, the only values of the outcome label.
 const (
 	outcomeOK      = "ok"
@@ -87,7 +94,7 @@ func observe(ctx context.Context, operation, profile string) (context.Context, f
 			span.SetStatus(codes.Error, outcome)
 		}
 		span.End()
-		if operation != "route" && operation != "match" {
+		if operation != opRoute && operation != opMatch {
 			return
 		}
 		ins := instruments()

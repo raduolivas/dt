@@ -2,6 +2,7 @@ package osrm
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -156,5 +157,47 @@ func TestRoutingSpansCarryNoCoordinates(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestTransportErrorsCarryNoURL(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader), sdkmetric.WithView(otelx.Views()...))
+	t.Cleanup(setMeterForTest(mp.Meter("test")))
+
+	a, b := domain.LatLng{Lat: 52.373111, Lng: 4.893481}, domain.LatLng{Lat: 52.378172, Lng: 4.900272}
+	check := func(name string, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatalf("%s: no error", name)
+		}
+		for _, bad := range []string{"52.37", "4.89", "4.90", "http://", "?"} {
+			if strings.Contains(err.Error(), bad) {
+				t.Errorf("%s: %q contains %q", name, err, bad)
+			}
+		}
+	}
+
+	release := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		select {
+		case <-release:
+		case <-time.After(2 * time.Second):
+		}
+	}))
+	defer slow.Close()
+	defer close(release)
+	_, _, err := New(map[string]string{"car": slow.URL}, 50*time.Millisecond).Route(context.Background(), "car", a, b)
+	check("timeout", err)
+	if !errors.Is(err, context.DeadlineExceeded) || outcomeOf(err) != outcomeTimeout {
+		t.Errorf("timeout lost its classification: %v", err)
+	}
+
+	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	dead.Close()
+	_, _, err = New(map[string]string{"car": dead.URL}, time.Second).Route(context.Background(), "car", a, b)
+	check("closed server", err)
+	if outcomeOf(err) != outcomeError {
+		t.Errorf("outcome = %s", outcomeOf(err))
 	}
 }
