@@ -1,5 +1,7 @@
 # Minimal collector for Mission Control (spec §4.1, §4.6, §8): OTLP in, redact,
-# then out to the exporters named in exporters.local.yaml. Traces and logs only.
+# then out to the exporters defined in exporters.local.yaml. Traces, logs and
+# metrics. The pipeline exporter lists live here (not only in exporters.local.yaml)
+# because the compose file merges this file a second time, and merging replaces lists.
 extensions:
   health_check:
     endpoint: 0.0.0.0:13133
@@ -11,6 +13,15 @@ receivers:
         endpoint: 0.0.0.0:4318
       grpc:
         endpoint: 0.0.0.0:4317
+  # Readiness of every DT service, every 15 s (alert ServiceNotReady).
+  httpcheck:
+    collection_interval: 15s
+    targets:
+      - endpoint: http://gateway:8080/readyz
+      - endpoint: http://deliveries:8081/readyz
+      - endpoint: http://tracking:8082/readyz
+      - endpoint: http://webhooks:8083/readyz
+      - endpoint: http://accounts:8084/readyz
 
 processors:
   memory_limiter:
@@ -34,11 +45,21 @@ processors:
           - keep_matching_keys(cache, "^(messaging|server|client|network|db|rpc|http|url|service)\\.")
           - delete_matching_keys(attributes, "(?i)(^|[_.-])(lat|lng|lon|latitude|longitude|location|position|coordinates|name|notes|email|phone|address|token|authorization|apikey|key|password|secret|cookie|jwt|bearer|dsn)([_.-]|$)")
           - merge_maps(attributes, cache, "upsert")
-          - replace_all_patterns(attributes, "value", "^(dt_sk_|dt_pk_).*", "[REDACTED]")
+          # Namespaced keys restored above that must still go (F1). Exact keys.
+          - delete_key(attributes, "http.request.header.authorization")
+          - delete_key(attributes, "http.request.header.cookie")
+          - delete_key(attributes, "url.query")
+          - delete_key(attributes, "url.full")
+          - delete_key(attributes, "db.query.parameters")
+          # API keys, link tokens (dt_lnk_) and courier/viewer tokens (JWTs: eyJ).
+          - replace_all_patterns(attributes, "value", "^(dt_sk_|dt_pk_|dt_lnk_|eyJ).*", "[REDACTED]")
       - context: spanevent
         statements: *redact_statements
     log_statements:
       - context: log
+        statements: *redact_statements
+    metric_statements:
+      - context: datapoint
         statements: *redact_statements
   resource:
     attributes:
@@ -49,12 +70,28 @@ processors:
 
 service:
   extensions: [health_check]
+  # The collector's own metrics go over OTLP to itself, so they take the
+  # metrics pipeline to Prometheus (alert TelemetryExportFailing).
+  telemetry:
+    metrics:
+      level: normal
+      readers:
+        - periodic:
+            interval: 15000
+            exporter:
+              otlp:
+                protocol: http/protobuf
+                endpoint: http://localhost:4318
   pipelines:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, attributes/redact, transform/redact, resource, batch]
-      exporters: [otlphttp/mission-control]
+      exporters: [otlphttp/mission-control, otlphttp/tempo]
     logs:
       receivers: [otlp]
       processors: [memory_limiter, attributes/redact, transform/redact, resource, batch]
-      exporters: [otlphttp/mission-control]
+      exporters: [otlphttp/mission-control, otlphttp/loki]
+    metrics:
+      receivers: [otlp, httpcheck]
+      processors: [memory_limiter, attributes/redact, transform/redact, resource, batch]
+      exporters: [otlphttp/prometheus]

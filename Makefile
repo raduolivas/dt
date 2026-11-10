@@ -178,7 +178,7 @@ mc-test: mc-test-go mc-test-web ## Run every Mission Control test
 mc-lint: mc-lint-go mc-lint-web ## Run every Mission Control linter
 
 # ---- local stack ------------------------------------------------------------
-.PHONY: obs-check dev down logs dtctl seed smoke latency osrm-data region lan-https courier-link
+.PHONY: obs-check obs dev down logs dtctl seed smoke latency osrm-data region lan-https courier-link
 
 # COMPOSE_OVERRIDE optionally names an extra Compose file (for example one that sets
 # build.network: host on machines whose Docker build containers have no network). Empty by default.
@@ -235,6 +235,11 @@ dev: osrm-data ## Build and start the local stack, then wait until every service
 
 down: ## Stop the local stack and delete its volumes
 	$(COMPOSE) down -v --remove-orphans
+
+obs: ## Start the stack if needed and print Grafana's URL
+	@[ "$(OBS)" != 0 ] || { echo "make obs: OBS=0 turns the OBS stack off" >&2; exit 2; }
+	@[ -n "$$($(COMPOSE) ps -q --status running grafana)" ] || $(MAKE) dev
+	@echo "Grafana: http://127.0.0.1:3000 (anonymous Viewer; admin password: $${GF_SECURITY_ADMIN_PASSWORD:-dt-local-admin})"
 
 logs: ## Follow the local stack logs
 	$(COMPOSE) logs -f

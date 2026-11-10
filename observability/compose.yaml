@@ -1,3 +1,4 @@
+# OTel collector plus the local Prometheus, Tempo, Loki and Grafana (spec §4, §6).
 # Minimal OTel collector for Mission Control (spec §4.1). Merged into the dev
 # stack by the Makefile unless OBS=0. Relative paths resolve against the first
 # Compose file (infra/compose/), not this one. No ports are published: DT
@@ -23,3 +24,78 @@ services:
       - ../../observability/collector/exporters.debug.yaml:/etc/otelcol/exporters.debug.yaml:ro
     # No healthcheck: the image is distroless (no shell, curl or wget), so Compose
     # cannot probe the health_check extension (13133) from inside it.
+
+  # ---- Local backends (spec §6). Memory limits total 1 GiB. Only Grafana
+  # publishes a port. If one is down the collector drops its exports.
+  prometheus:
+    image: prom/prometheus:v3.7.3@sha256:49214755b6153f90a597adcbff0252cc61069f8ab69ce8411285cd4a560e8038
+    command:
+      - --config.file=/etc/prometheus/prometheus.yaml
+      - --web.enable-otlp-receiver
+      - --enable-feature=exemplar-storage
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    mem_limit: 320m
+    volumes:
+      - obs-prom:/prometheus
+      - ../../observability/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - ../../observability/prometheus/rules:/etc/prometheus/rules:ro
+
+  tempo:
+    image: grafana/tempo:2.9.0@sha256:65a5789759435f1ef696f1953258b9bbdb18eb571d5ce711ff812d2e128288a4
+    command: [-config.file=/etc/tempo/tempo.yaml]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    mem_limit: 256m
+    tmpfs: [/tmp]
+    volumes:
+      - obs-tempo:/var/tempo
+      - ../../observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+
+  loki:
+    image: grafana/loki:3.6.0@sha256:6a705de65df88aa0d90a44779606b0042722c86637335a73858f65f9fe9f9557
+    command: [-config.file=/etc/loki/loki.yaml]
+    # The image owns /loki as root (no shell to chown a new volume), so Loki
+    # runs as root here; with every capability dropped it can only write what
+    # it owns.
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    mem_limit: 256m
+    tmpfs: [/tmp]
+    volumes:
+      - obs-loki:/loki
+      - ../../observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+
+  grafana:
+    image: grafana/grafana:12.2.1@sha256:35c41e0fd0295f5d0ee5db7e780cf33506abfaf47686196f825364889dee878b
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    mem_limit: 192m
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-dt-local-admin}
+      GF_PATHS_CONFIG: /etc/grafana/grafana.ini
+    # State (sqlite, plugins) is disposable: provisioning re-creates it.
+    tmpfs:
+      - /var/lib/grafana:uid=472,gid=0,mode=0755
+      - /tmp
+    volumes:
+      - ../../observability/grafana/grafana.ini:/etc/grafana/grafana.ini:ro
+      - ../../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+
+volumes:
+  obs-prom:
+  obs-tempo:
+  obs-loki:
