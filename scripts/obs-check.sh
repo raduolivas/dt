@@ -64,7 +64,7 @@ docker run -d --name "$cname" -p 127.0.0.1::4318 "${mounts[@]}" \
   "$image" "${args[@]}" --config /etc/otelcol/file.yaml >/dev/null
 port="$(docker port "$cname" 4318/tcp | head -1 | sed 's/.*://')"
 
-span='{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"obs-check"}}]},"scopeSpans":[{"spans":[{"traceId":"5b8efff798038103d269b633813fc60c","spanId":"eee19b7ec3c1b174","name":"obs-check-span","kind":1,"startTimeUnixNano":"1700000000000000000","endTimeUnixNano":"1700000001000000000","attributes":[{"key":"lat","value":{"stringValue":"52.1"}},{"key":"phone","value":{"stringValue":"+31612345678"}},{"key":"note","value":{"stringValue":"dt_sk_test_x"}},{"key":"dropoff_lat","value":{"stringValue":"seg-lat-77"}},{"key":"x-api-key","value":{"stringValue":"seg-apikey-88"}},{"key":"dt.delivery_id","value":{"stringValue":"keep-me"}},{"key":"messaging.destination.name","value":{"stringValue":"keep-dest"}},{"key":"server.address","value":{"stringValue":"keep-server"}},{"key":"http.request.header.authorization","value":{"stringValue":"f1-auth-55"}},{"key":"url.full","value":{"stringValue":"f1-urlfull-66"}},{"key":"url.query","value":{"stringValue":"f1-urlquery-77"}}],"events":[{"name":"obs-check-event","timeUnixNano":"1700000000500000000","attributes":[{"key":"customer_phone","value":{"stringValue":"event-phone-99"}},{"key":"dt.event_id","value":{"stringValue":"keep-event"}}]}]}]}]}]}'
+span='{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"obs-check"}}]},"scopeSpans":[{"spans":[{"traceId":"5b8efff798038103d269b633813fc60c","spanId":"eee19b7ec3c1b174","name":"obs-check-span","kind":1,"startTimeUnixNano":"1700000000000000000","endTimeUnixNano":"1700000001000000000","attributes":[{"key":"lat","value":{"stringValue":"52.1"}},{"key":"phone","value":{"stringValue":"+31612345678"}},{"key":"note","value":{"stringValue":"dt_sk_test_x"}},{"key":"dropoff_lat","value":{"stringValue":"seg-lat-77"}},{"key":"x-api-key","value":{"stringValue":"seg-apikey-88"}},{"key":"dt.delivery_id","value":{"stringValue":"keep-me"}},{"key":"messaging.destination.name","value":{"stringValue":"keep-dest"}},{"key":"server.address","value":{"stringValue":"keep-server"}},{"key":"http.request.header.authorization","value":{"stringValue":"f1-auth-55"}},{"key":"url.full","value":{"stringValue":"f1-urlfull-66"}},{"key":"url.query","value":{"stringValue":"f1-urlquery-77"}},{"key":"http.request.header.cookie","value":{"stringValue":"f1-cookie-88"}},{"key":"dt.tok","value":{"stringValue":"dt_lnk_span-secret-91"}},{"key":"dt.jwt1","value":{"stringValue":"eyJhbGciOiJIUzI1NiJ9.span-secret-92.y"}}],"events":[{"name":"obs-check-event","timeUnixNano":"1700000000500000000","attributes":[{"key":"customer_phone","value":{"stringValue":"event-phone-99"}},{"key":"dt.event_id","value":{"stringValue":"keep-event"}}]}]}]}]}]}'
 for _ in $(seq 1 30); do
   if curl -fsS -o /dev/null -X POST -H 'Content-Type: application/json' -d "$span" "http://127.0.0.1:$port/v1/traces"; then sent=1; break; fi
   sleep 1
@@ -77,7 +77,7 @@ curl -fsS -o /dev/null -X POST -H 'Content-Type: application/json' -d "$logrec" 
   || { echo "obs-check: collector rejected the log record" >&2; exit 1; }
 
 # Same checks for a metric datapoint: coordinates deleted, DT key masked, F1 keys deleted.
-metric='{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"obs-check"}}]},"scopeMetrics":[{"metrics":[{"name":"obs_check_metric","gauge":{"dataPoints":[{"timeUnixNano":"1700000000000000000","asDouble":1,"attributes":[{"key":"lat","value":{"stringValue":"metric-lat-33"}},{"key":"metric_note","value":{"stringValue":"dt_sk_test_x"}},{"key":"url.query","value":{"stringValue":"metric-urlquery-44"}},{"key":"db.query.parameters","value":{"stringValue":"metric-dbparams-45"}},{"key":"dt.keep_metric","value":{"stringValue":"keep-metric"}},{"key":"messaging.destination.name","value":{"stringValue":"keep-metric-dest"}}]}]}}]}]}]}'
+metric='{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"obs-check"}}]},"scopeMetrics":[{"metrics":[{"name":"obs_check_metric","gauge":{"dataPoints":[{"timeUnixNano":"1700000000000000000","asDouble":1,"attributes":[{"key":"lat","value":{"stringValue":"metric-lat-33"}},{"key":"metric_note","value":{"stringValue":"dt_sk_test_x"}},{"key":"url.query","value":{"stringValue":"metric-urlquery-44"}},{"key":"db.query.parameters","value":{"stringValue":"metric-dbparams-45"}},{"key":"dt.tok","value":{"stringValue":"dt_lnk_metric-secret-93"}},{"key":"dt.jwt1","value":{"stringValue":"eyJhbGciOiJIUzI1NiJ9.metric-secret-94.y"}},{"key":"dt.keep_metric","value":{"stringValue":"keep-metric"}},{"key":"messaging.destination.name","value":{"stringValue":"keep-metric-dest"}}]}]}}]}]}]}'
 curl -fsS -o /dev/null -X POST -H 'Content-Type: application/json' -d "$metric" "http://127.0.0.1:$port/v1/metrics" \
   || { echo "obs-check: collector rejected the metric" >&2; exit 1; }
 
@@ -97,16 +97,21 @@ grep -q 'obs_check_metric' "$out" || { echo "FAIL: metric missing" >&2; fail=1; 
 for keep in keep-metric keep-metric-dest; do
   grep -qF -- "$keep" "$out" || { echo "FAIL: metric attribute value $keep was dropped" >&2; fail=1; }
 done
+# Masks must replace the value (keep the key), not delete the attribute.
+for key in '"dt.tok"' '"dt.jwt1"'; do
+  grep -qF -- "$key" "$out" || { echo "FAIL: masked attribute $key was deleted, not masked" >&2; fail=1; }
+done
+[ "$(grep -o '\[REDACTED\]' "$out" | wc -l)" -ge 6 ] || { echo "FAIL: expected [REDACTED] for dt_sk_, dt_lnk_ and eyJ values on span and metric" >&2; fail=1; }
 grep -q 'keep-log' "$out" || { echo "FAIL: dt.request_id on the log was dropped" >&2; fail=1; }
 grep -q 'keep-me' "$out" || { echo "FAIL: dt.delivery_id was dropped" >&2; fail=1; }
 # Standard OTel namespaces must survive the segment rule (name/address are sensitive segments).
 for keep in messaging.destination.name keep-dest server.address keep-server; do
   grep -qF -- "$keep" "$out" || { echo "FAIL: standard attribute $keep was stripped" >&2; fail=1; }
 done
-for needle in '52.1' '+31612345678' 'dt_sk_test_x' seg-lat-77 seg-apikey-88 event-phone-99 log-email-11 log-lng-22 metric-lat-33 metric-urlquery-44 metric-dbparams-45 f1-auth-55 f1-urlfull-66 f1-urlquery-77; do
+for needle in '52.1' '+31612345678' 'dt_sk_test_x' seg-lat-77 seg-apikey-88 event-phone-99 log-email-11 log-lng-22 metric-lat-33 metric-urlquery-44 metric-dbparams-45 f1-auth-55 f1-urlfull-66 f1-urlquery-77 f1-cookie-88 span-secret-91 span-secret-92 metric-secret-93 metric-secret-94; do
   if grep -qF -- "$needle" "$out"; then echo "FAIL: $needle survived redaction" >&2; fail=1; fi
 done
-for key in '"lat"' '"phone"' '"dropoff_lat"' '"x-api-key"' '"customer_phone"' '"email"' '"dropoff_lng"' '"http.request.header.authorization"' '"url.full"' '"url.query"' '"db.query.parameters"'; do
+for key in '"lat"' '"phone"' '"dropoff_lat"' '"x-api-key"' '"customer_phone"' '"email"' '"dropoff_lng"' '"http.request.header.authorization"' '"url.full"' '"url.query"' '"db.query.parameters"' '"http.request.header.cookie"'; do
   if grep -qF -- "$key" "$out"; then echo "FAIL: attribute $key survived redaction" >&2; fail=1; fi
 done
 [ "$fail" = 0 ] || exit 1

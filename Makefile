@@ -234,7 +234,8 @@ dev: osrm-data ## Build and start the local stack, then wait until every service
 	scripts/wait-ready.sh
 
 down: ## Stop the local stack and delete its volumes
-	$(COMPOSE) down -v --remove-orphans
+	@# observability/compose.yaml is always included so the obs-* volumes go even after OBS=0 make dev
+	$(COMPOSE) $(if $(OBS_COMPOSE),,-f observability/compose.yaml) down -v --remove-orphans
 
 obs: ## Start the stack if needed and print Grafana's URL
 	@[ "$(OBS)" != 0 ] || { echo "make obs: OBS=0 turns the OBS stack off" >&2; exit 2; }
