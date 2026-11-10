@@ -18,7 +18,8 @@ var HTTPBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.3, 0.5, 1, 2.5
 // 50 ms to 5 s.
 var FixToViewerBuckets = []float64{0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2.5, 5}
 
-// Views returns the metric views that apply the SLO bucket boundaries.
+// Views returns the metric views that apply the SLO bucket boundaries and
+// drop the unreviewed otelhttp body-size instruments.
 func Views() []sdkmetric.View {
 	hist := func(name string, bounds []float64) sdkmetric.View {
 		return sdkmetric.NewView(
@@ -26,7 +27,15 @@ func Views() []sdkmetric.View {
 			sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{Boundaries: bounds}},
 		)
 	}
+	// otelhttp also emits request/response body size histograms; they are not
+	// in the spec's metric set, so drop them rather than export unreviewed series.
+	drop := func(name string) sdkmetric.View {
+		return sdkmetric.NewView(sdkmetric.Instrument{Name: name},
+			sdkmetric.Stream{Aggregation: sdkmetric.AggregationDrop{}})
+	}
 	return []sdkmetric.View{
+		drop("http.server.request.body.size"),
+		drop("http.server.response.body.size"),
 		hist("http.server.request.duration", HTTPBuckets),
 		hist("rpc.server.duration", HTTPBuckets),
 		hist("rpc.client.duration", HTTPBuckets),

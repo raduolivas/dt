@@ -14,6 +14,7 @@ import (
 
 	deliveriesv1 "github.com/raduolivas/dt/backend/gen/dt/deliveries/v1"
 	"github.com/raduolivas/dt/backend/gen/dt/deliveries/v1/deliveriesv1connect"
+	"github.com/raduolivas/dt/backend/pkg/otelx"
 	"github.com/raduolivas/dt/backend/pkg/rpcauth"
 	"github.com/raduolivas/dt/backend/services/deliveries/internal/app"
 	"github.com/raduolivas/dt/backend/services/deliveries/internal/domain"
@@ -32,7 +33,7 @@ func Mount(mux *http.ServeMux, svc *app.Service, token string, log *slog.Logger)
 	if err != nil {
 		return err
 	}
-	srv := connect.NewServer(auth)
+	srv := connect.NewServer(otelx.ConnectHandlerInterceptor(), auth)
 	deliveriesv1connect.RegisterDeliveriesServiceHandler(srv, &Server{svc: svc, log: log})
 	connecthttp.Mount(mux, srv, connecthttp.WithReadMaxBytes(readMaxBytes))
 	return nil

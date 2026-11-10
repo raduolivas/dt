@@ -11,12 +11,15 @@ import (
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/raduolivas/dt/backend/pkg/otelx"
+	"github.com/raduolivas/dt/backend/pkg/otelx/otelxtest"
 )
 
 func TestHTTPSpanNameUsesPattern(t *testing.T) {
@@ -224,5 +227,77 @@ func TestInitNoEndpointNoExport(t *testing.T) {
 	}
 	if d := time.Since(start); d > time.Second {
 		t.Fatalf("shutdown took %v", d)
+	}
+}
+
+// installMetrics sets a manual-reader provider with the SLO views as the
+// global MeterProvider and restores the previous one on cleanup.
+func installMetrics(t *testing.T) *sdkmetric.ManualReader {
+	t.Helper()
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader), sdkmetric.WithView(otelx.Views()...))
+	prev := otel.GetMeterProvider()
+	otel.SetMeterProvider(mp)
+	t.Cleanup(func() { otel.SetMeterProvider(prev); _ = mp.Shutdown(context.Background()) })
+	return reader
+}
+
+func collectAttrs(t *testing.T, reader *sdkmetric.ManualReader, name string) (rm metricdata.ResourceMetrics, sets []attribute.Set) {
+	t.Helper()
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			h, ok := m.Data.(metricdata.Histogram[float64])
+			if !ok {
+				t.Fatalf("%s: not a float64 histogram", name)
+			}
+			for _, dp := range h.DataPoints {
+				sets = append(sets, dp.Attributes)
+			}
+		}
+	}
+	return rm, sets
+}
+
+func TestHTTPRouteLabelIsPattern(t *testing.T) {
+	reader := installMetrics(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/things/{id}", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	otelx.HTTP(mux, "test").ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/things/abc", nil))
+
+	rm, sets := collectAttrs(t, reader, "http.server.request.duration")
+	otelxtest.AssertAllowed(t, rm)
+	if len(sets) != 1 {
+		t.Fatalf("got %d points, want 1", len(sets))
+	}
+	route, ok := sets[0].Value("http.route")
+	if !ok || !strings.Contains(route.AsString(), "{id}") || strings.Contains(route.AsString(), "abc") {
+		t.Fatalf("http.route = %q (present=%v), want the pattern", route.AsString(), ok)
+	}
+}
+
+func TestHTTPRouteUnmatchedHasNoRawPath(t *testing.T) {
+	reader := installMetrics(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/things/{id}", func(w http.ResponseWriter, _ *http.Request) {})
+	otelx.HTTP(mux, "test").ServeHTTP(httptest.NewRecorder(),
+		httptest.NewRequest(http.MethodGet, "/v1/tracking/links/dt_lnk_secret", nil))
+
+	rm, sets := collectAttrs(t, reader, "http.server.request.duration")
+	otelxtest.AssertAllowed(t, rm)
+	if len(sets) == 0 {
+		t.Fatal("no points recorded")
+	}
+	for _, s := range sets {
+		for _, kv := range s.ToSlice() {
+			if strings.Contains(kv.Value.String(), "dt_lnk_") {
+				t.Errorf("attribute %s = %q leaks the path", kv.Key, kv.Value.String())
+			}
+		}
 	}
 }

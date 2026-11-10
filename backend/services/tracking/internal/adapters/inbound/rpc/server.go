@@ -22,6 +22,7 @@ import (
 	trackingv1 "github.com/raduolivas/dt/backend/gen/dt/tracking/v1"
 	"github.com/raduolivas/dt/backend/gen/dt/tracking/v1/trackingv1connect"
 	"github.com/raduolivas/dt/backend/pkg/ids"
+	"github.com/raduolivas/dt/backend/pkg/otelx"
 	"github.com/raduolivas/dt/backend/pkg/rpcauth"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/app"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/domain"
@@ -48,7 +49,7 @@ func Mount(mux *http.ServeMux, svc *app.Service, sim Simulator, token string, lo
 	if err != nil {
 		return err
 	}
-	srv := connect.NewServer(auth)
+	srv := connect.NewServer(otelx.ConnectHandlerInterceptor(), auth)
 	trackingv1connect.RegisterTrackingServiceHandler(srv, &Server{svc: svc, sim: sim, log: log})
 	connecthttp.Mount(mux, srv, connecthttp.WithReadMaxBytes(readMaxBytes))
 	return nil
