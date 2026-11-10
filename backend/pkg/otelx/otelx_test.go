@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
@@ -205,5 +206,23 @@ func TestShutdownIsBounded(t *testing.T) {
 	_ = shutdown(context.Background())
 	if d := time.Since(start); d > 6*time.Second {
 		t.Fatalf("shutdown took %s, want <= 6s", d)
+	}
+}
+
+func TestInitNoEndpointNoExport(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	shutdown, err := otelx.Init(context.Background(), "svc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := otel.GetMeterProvider().(*sdkmetric.MeterProvider); !ok {
+		t.Fatalf("meter provider is %T", otel.GetMeterProvider())
+	}
+	start := time.Now()
+	if err := shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("shutdown took %v", d)
 	}
 }
