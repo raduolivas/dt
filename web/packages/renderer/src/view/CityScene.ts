@@ -365,7 +365,12 @@ export class CityScene {
 
   /** 3D (isometric orbit) or 2D (straight down, no rotation, zoom kept): a smooth tilt, or at once under reduced motion. */
   setMode(m: CameraMode): void {
+    if (m === this.rig.mode) return;
     this.rig.setMode(m);
+    // A frame is built for one view: kept across the tilt, a 3D frame sits off-centre seen straight down (and the
+    // other way round). Reframe for the new view, unless the camera follows the courier or the customer moved it.
+    if (!this.snap || !this.hasPos || this.rig.following || this.rig.introPending || this.rig.userMoved) return;
+    this.frameAll(false, this.framedHomeOnly);
   }
 
   /** Pixel ratio cap and shadow map size (adaptive quality on slow phones). */
