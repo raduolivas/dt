@@ -1,5 +1,5 @@
-// Package otelx sets up OpenTelemetry for every service: the global tracer and
-// log providers, W3C propagation and an HTTP server wrapper.
+// Package otelx sets up OpenTelemetry for every service: the global tracer,
+// log and meter providers, W3C propagation and an HTTP server wrapper.
 package otelx
 
 import (
@@ -34,14 +34,14 @@ const (
 // testReader, when set by tests, is added as an extra metric reader.
 var testReader sdkmetric.Reader
 
-// Enabled reports whether an OTLP endpoint is configured, i.e. whether spans
-// and logs are exported at all.
+// Enabled reports whether an OTLP endpoint is configured, i.e. whether spans,
+// logs and metrics are exported at all.
 func Enabled() bool { return os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" }
 
 // Init installs the global tracer, logger and meter providers and a W3C
 // traceparent + baggage propagator. With OTEL_EXPORTER_OTLP_ENDPOINT set,
-// spans, log records and metrics (every 15 s) are exported over OTLP/HTTP in batches (bounded queues, dropping
-// when full); unset, nothing is exported but spans are still created so trace
+// spans, log records and metrics (every 15 s) are exported over OTLP/HTTP in
+// batches (bounded queues, dropping when full); unset, nothing is exported but spans are still created so trace
 // ids propagate and show up in logs. Sampling is parent-based with the ratio
 // from OTEL_TRACES_SAMPLER_ARG (default 1.0). The resource carries
 // service.name, service.version (DT_BUILD_COMMIT, default "dev") and

@@ -199,13 +199,18 @@ endif
 endif
 COMPOSE := docker compose $$([ -f $(LAN_ENV) ] && echo --env-file $(LAN_ENV)) $$([ -f $(REGION_ENV) ] && echo --env-file $(REGION_ENV)) -f infra/compose/compose.yaml $(OBS_COMPOSE) $(if $(COMPOSE_OVERRIDE),-f $(COMPOSE_OVERRIDE))
 
+# Build id stamped into service.version (compose passes it to each service).
+ifeq ($(origin DT_BUILD_COMMIT),undefined)
+DT_BUILD_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+endif
+export DT_BUILD_COMMIT
+
 # dtctl talks to the local accounts service with the dev-only token from
 # infra/compose/compose.yaml.
 DTCTL := backend/bin/dtctl
 # The internal RPC servers need a client certificate (mTLS): dtctl uses the
 # dev one that scripts/dev-certs.sh writes.
 CERTS := $(CURDIR)/infra/compose/certs
-export DT_BUILD_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 export DT_ACCOUNTS_URL ?= https://127.0.0.1:8084
 export DT_INTERNAL_RPC_TOKEN ?= dev-only-not-a-secret-internal-token-0000
 export DT_INTERNAL_RPC_TLS_CERT ?= $(CERTS)/dtctl.pem
