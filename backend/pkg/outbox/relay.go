@@ -38,6 +38,8 @@ type Relay struct {
 	Log      *slog.Logger
 	Interval time.Duration // time between batches; DefaultInterval if zero
 	Batch    int           // rows per batch; DefaultBatch if zero
+
+	metrics *relayMetrics
 }
 
 // Run publishes batches until ctx is cancelled, then returns nil. Database
@@ -54,6 +56,11 @@ func (r *Relay) Run(ctx context.Context) error {
 	log := r.Log
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
+	}
+	if m, err := newRelayMetrics(newMeter()); err != nil {
+		log.WarnContext(ctx, "outbox_metrics_failed", slog.Any("error", err))
+	} else {
+		r.metrics = m
 	}
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
@@ -113,8 +120,11 @@ func (r *Relay) publishBatch(ctx context.Context, batch int) error {
 		return fmt.Errorf("select: %w", err)
 	}
 	if len(pending) == 0 {
+		r.metrics.setPending(0)
 		return nil
 	}
+	start := time.Now()
+	defer func() { r.metrics.observePublish(ctx, time.Since(start)) }()
 
 	tracer := otel.Tracer(tracerName)
 	published := make([]string, 0, len(pending))
@@ -152,6 +162,10 @@ func (r *Relay) publishBatch(ctx context.Context, batch int) error {
 		}
 		published = append(published, p.EventID)
 	}
+	// The relay only reads one batch, so "pending" is what this batch left
+	// behind; a backlog deeper than the batch shows as a non-zero value only
+	// while publishing fails.
+	r.metrics.setPending(int64(len(pending) - len(published)))
 	if len(published) > 0 {
 		if _, err := tx.Exec(ctx, `UPDATE outbox SET published_at = now() WHERE event_id = ANY($1)`,
 			published); err != nil {

@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
-	"go.opentelemetry.io/otel"
 
 	"connectrpc.com/connect/v2"
 	"connectrpc.com/connect/v2/connecthttp"
@@ -197,20 +196,12 @@ func run(ctx context.Context, ready func(addr string)) error {
 				}
 				return outbox.Consume(ctx, d.JS, d.DB, d.Log, consumer.APIKeysStream, consumer.TenantsConfig, consumer.Tenants(settings))
 			}
-			lag, err := consumer.NewLagMonitor(otel.Meter("github.com/raduolivas/dt/backend/services/gateway"),
-				d.Log, consumer.APIKeysConfig.Durable)
-			if err != nil {
-				return nil, err
-			}
-			watchLag := func(ctx context.Context) error {
-				return lag.Run(ctx, d.JS, consumer.APIKeysStream)
-			}
 			sweeper := &app.IdempotencySweeper{Store: idem, Clock: clock, Log: d.Log}
 			retention := &app.AuditRetention{Store: audit, Clock: clock, Log: d.Log}
 			linkRetention := &nightly.Job{Name: "gateway_retention", Lease: nightly.NewPostgresLease(d.DB, "gateway_retention"),
 				Holder: holder, Do: links.RunRetention, Log: d.Log}
 			relay := &outbox.Relay{Pool: d.DB, JS: d.JS, Log: d.Log}
-			return []bootstrap.Worker{relay.Run, consume, consumeTenants, consumeDeliveries, watchLag, sweeper.Run, retention.Run, linkRetention.Run}, nil
+			return []bootstrap.Worker{relay.Run, consume, consumeTenants, consumeDeliveries, sweeper.Run, retention.Run, linkRetention.Run}, nil
 		},
 	})
 }
