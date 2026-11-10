@@ -220,6 +220,7 @@ func (h *Hub) join(ctx context.Context, s *stream) error {
 	add(h.byDelivery, c.DeliveryID, s)
 	s.joined = true
 	h.mu.Unlock()
+	countViewer(ctx, s.transport, 1)
 	if err := h.d.Feed.Subscribe(ctx, c.DeliveryID); err != nil {
 		return err
 	}
@@ -233,12 +234,16 @@ func (h *Hub) leave(s *stream) {
 	s.end(endGone) // no-op when already ended; later expiries arm nothing
 	s.stopTimers()
 	h.mu.Lock()
-	if s.joined {
+	wasJoined := s.joined
+	if wasJoined {
 		s.joined = false
 		remove(h.byLink, s.claims.LinkID, s)
 		remove(h.byDelivery, s.claims.DeliveryID, s)
 	}
 	h.mu.Unlock()
+	if wasJoined { // joined is cleared under the lock: one decrement per join
+		countViewer(context.Background(), s.transport, -1)
+	}
 	if s.subscribed {
 		s.subscribed = false
 		h.d.Feed.Unsubscribe(context.Background(), s.claims.DeliveryID)

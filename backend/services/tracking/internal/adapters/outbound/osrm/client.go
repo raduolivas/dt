@@ -141,7 +141,9 @@ func (c *Client) get(ctx context.Context, profile, service, coords string, q url
 	return c.getRaw(ctx, profile, service, coords, q.Encode(), out)
 }
 
-func (c *Client) getRaw(ctx context.Context, profile, service, coords, rawQuery string, out *response) error {
+func (c *Client) getRaw(ctx context.Context, profile, service, coords, rawQuery string, out *response) (err error) {
+	ctx, done := observe(ctx, service, profile)
+	defer func() { done(err) }()
 	base, ok := c.urls[profile]
 	if !ok || base == "" {
 		return fmt.Errorf("osrm: no server for profile %q", profile)

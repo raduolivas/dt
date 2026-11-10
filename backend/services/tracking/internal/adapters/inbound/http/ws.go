@@ -140,6 +140,7 @@ func (h *Hub) websocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := newStream(claims)
+	s.transport = "ws"
 	defer h.leave(s)
 	if err := h.join(ctx, s); err != nil {
 		switch {
