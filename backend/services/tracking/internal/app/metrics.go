@@ -24,7 +24,9 @@ const sourceOther = "other"
 
 var knownSources = map[string]bool{"relay": true, "sdk": true, "link": true, "simulator": true}
 
-func sourceLabel(source string) string {
+// SourceLabel is the bounded value of the source label: a known source, else
+// "other".
+func SourceLabel(source string) string {
 	if knownSources[source] {
 		return source
 	}
@@ -55,5 +57,5 @@ func countFixes(ctx context.Context, source, outcome string, n int) {
 	c := fixesCtr
 	metricsMu.Unlock()
 	c.Add(ctx, int64(n), metric.WithAttributes(
-		attribute.String("source", sourceLabel(source)), attribute.String("outcome", outcome)))
+		attribute.String("source", SourceLabel(source)), attribute.String("outcome", outcome)))
 }

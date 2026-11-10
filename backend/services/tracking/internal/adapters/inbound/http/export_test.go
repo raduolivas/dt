@@ -8,11 +8,11 @@ func SetMeterForTest(m metric.Meter) (restore func()) {
 	metricsMu.Lock()
 	prev := newMeter
 	newMeter = func() metric.Meter { return m }
-	cur = nil
+	cur, fixToViewer = nil, nil
 	metricsMu.Unlock()
 	return func() {
 		metricsMu.Lock()
-		newMeter, cur = prev, nil
+		newMeter, cur, fixToViewer = prev, nil, nil
 		metricsMu.Unlock()
 	}
 }

@@ -443,6 +443,7 @@ func (r *simRun) tick(ctx context.Context, mps float64) error {
 func (r *simRun) emit(ctx context.Context, mps float64) {
 	v, h := mps, r.heading
 	f := domain.Fix{T: r.s.Svc.Clock.Now(), Pos: r.pos, AccuracyM: simAccuracyM, SpeedMps: &v, HeadingDeg: &h}
+	ctx = WithFixReceived(ctx, f.T, "simulator")
 	if _, _, err := r.s.Svc.Ingest(ctx, r.sc, r.d.Courier.ID, []domain.Fix{f}, "simulator"); err != nil && !r.failed {
 		r.failed = true
 		r.s.log().WarnContext(ctx, "simulation_ingest_failed", "simulation_id", r.id, "error", err)

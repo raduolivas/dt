@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -120,6 +121,13 @@ func (s *Server) IngestLocations(ctx context.Context, req *trackingv1.IngestRequ
 		}
 		fixes = append(fixes, fx)
 	}
+	// The gateway stamped the request on arrival; 0 means unknown, and
+	// tracking's own clock stands in.
+	received := s.svc.Clock.Now()
+	if ms := req.GetReceivedAtUnixMs(); ms > 0 {
+		received = time.UnixMilli(ms)
+	}
+	ctx = app.WithFixReceived(ctx, received, req.GetSource())
 	acc, drop, err := s.svc.Ingest(ctx, sc, req.GetCourierId(), fixes, req.GetSource())
 	switch {
 	case errors.Is(err, app.ErrCourierNotFound):

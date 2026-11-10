@@ -303,6 +303,9 @@ func TestLocationsSourceFromToken(t *testing.T) {
 		req.GetFixes()[0].GetLat() != -23.5612 {
 		t.Fatalf("ingest = %v", req)
 	}
+	if want := (fixedClock{}).Now().UnixMilli(); req.GetReceivedAtUnixMs() != want {
+		t.Fatalf("received_at_unix_ms = %d, want the gateway clock %d", req.GetReceivedAtUnixMs(), want)
+	}
 	// Touch: the session was seen.
 	if s, err := e.svc.Get(context.Background(), partnerTest, sdkRes.Session.ID); err != nil || s.LastSeenAt == nil {
 		t.Fatalf("last_seen_at not set: %+v, %v", s, err)

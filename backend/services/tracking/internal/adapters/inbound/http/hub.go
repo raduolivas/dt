@@ -71,6 +71,8 @@ type Deps struct {
 	Feed      app.ViewerFeed
 	// Log receives failures; never a token. Nil discards.
 	Log *slog.Logger
+	// Clock is "now" for the fix-to-viewer latency; nil means time.Now.
+	Clock func() time.Time
 	// Zero values take the defaults above.
 	MaxPerLink, MaxStreams                               int
 	PingInterval, PongTimeout, AuthTimeout, SwapInterval time.Duration
@@ -111,6 +113,9 @@ func NewHub(d Deps) *Hub {
 	}
 	if d.SwapInterval <= 0 {
 		d.SwapInterval = DefaultSwapInterval
+	}
+	if d.Clock == nil {
+		d.Clock = time.Now
 	}
 	log := d.Log
 	if log == nil {
@@ -360,6 +365,10 @@ func (h *Hub) Snapshot(ctx context.Context, deliveryID string, data []byte) {
 	}
 	for _, s := range streams {
 		s.offer(m)
+	}
+	// One observation per published snapshot, not per viewer.
+	if at, src, ok := app.FixReceived(ctx); ok {
+		observeFixToViewer(ctx, src, h.d.Clock().Sub(at))
 	}
 }
 

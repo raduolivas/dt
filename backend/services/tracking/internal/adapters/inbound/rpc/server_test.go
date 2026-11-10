@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -59,6 +60,12 @@ func (b bearer) Do(r *http.Request) (*http.Response, error) {
 
 func serve(t *testing.T) (trackingv1connect.TrackingServiceClient, *pgxpool.Pool) {
 	t.Helper()
+	return serveWith(t, nil)
+}
+
+// serveWith is serve with the service's state store wrapped by wrap (nil: as is).
+func serveWith(t *testing.T, wrap func(app.StateStore) app.StateStore) (trackingv1connect.TrackingServiceClient, *pgxpool.Pool) {
+	t.Helper()
 	ctx := context.Background()
 	pg := testkit.StartPostgres(t)
 	if err := migratex.Up(ctx, pg.MigratorURL("tracking"), migrations.FS); err != nil {
@@ -82,7 +89,11 @@ func serve(t *testing.T) (trackingv1connect.TrackingServiceClient, *pgxpool.Pool
 	states := redis.NewStates(rdb, repo.CourierActiveDeliveries)
 	log := slog.New(slog.DiscardHandler)
 	trail := postgres.NewTrailWriter(pool, log)
-	svc := &app.Service{States: states, Reads: repo, Trail: trail,
+	var store app.StateStore = states
+	if wrap != nil {
+		store = wrap(store)
+	}
+	svc := &app.Service{States: store, Reads: repo, Trail: trail,
 		Partner: repo, Pub: redis.NewPublisher(rdb), Events: repo, Sampler: states, Clock: clock{}, Log: log}
 	wctx, stopTrail := context.WithCancel(ctx)
 	trailDone := make(chan struct{})
@@ -294,5 +305,66 @@ func TestGetSnapshotRPC(t *testing.T) {
 		if _, err := c.GetSnapshot(ctx, r); connect.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Errorf("%s: %v, want InvalidArgument", name, err)
 		}
+	}
+}
+
+// ctxStates records the received time each state write carries (every
+// ingest that reaches a delivery writes its state).
+type ctxStates struct {
+	app.StateStore
+	mu  sync.Mutex
+	got []recvd
+}
+
+type recvd struct {
+	at  time.Time
+	src string
+	ok  bool
+}
+
+func (p *ctxStates) Put(ctx context.Context, st domain.State, prev int64) (bool, error) {
+	at, src, ok := app.FixReceived(ctx)
+	p.mu.Lock()
+	p.got = append(p.got, recvd{at, src, ok})
+	p.mu.Unlock()
+	return p.StateStore.Put(ctx, st, prev)
+}
+
+func (p *ctxStates) last() (recvd, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.got) == 0 {
+		return recvd{}, false
+	}
+	return p.got[len(p.got)-1], true
+}
+
+func TestIngestLocationsUsesGatewayTime(t *testing.T) {
+	var cp *ctxStates
+	c, _ := serveWith(t, func(p app.StateStore) app.StateStore { cp = &ctxStates{StateStore: p}; return cp })
+	ctx := context.Background()
+
+	gw := time.Now().Add(-2 * time.Second).Truncate(time.Millisecond)
+	r := req("ten_a", courierA, 1)
+	r.ReceivedAtUnixMs = gw.UnixMilli()
+	if _, err := c.IngestLocations(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := cp.last()
+	if !ok || !got.ok || !got.at.Equal(gw) || got.src != "relay" {
+		t.Fatalf("state written with %+v (written=%v), want %v from relay", got, ok, gw)
+	}
+
+	// 0 means unknown: tracking's own clock stands in.
+	before := time.Now()
+	r = req("ten_a", courierA, 1)
+	r.Fixes[0].Lat += 0.0005
+	if _, err := c.IngestLocations(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now()
+	got, _ = cp.last()
+	if !got.ok || got.at.Before(before.Truncate(time.Millisecond)) || got.at.After(after) {
+		t.Fatalf("state written with %+v, want a time in [%v, %v]", got, before, after)
 	}
 }
