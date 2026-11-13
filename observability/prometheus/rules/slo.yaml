@@ -1,0 +1,177 @@
+# SLO recording rules and alerts (spec §5.2, §9). Series names are what
+# Prometheus's native OTLP receiver makes of the instruments (UnderscoreEscaping
+# WithSuffixes): dots become underscores, seconds histograms gain _seconds and
+# _bucket/_count/_sum, counters gain _total, and service.name is promoted to the
+# service_name label. Thresholds are starting values to tune after a week of
+# staging data.
+#
+# Burn rates: a window's burn is (bad share) / (budget). The page conditions are
+# the usual multi-window pairs: 1 h and 5 m above 14.4x the budget, or 6 h and
+# 30 m above 6x. Budgets: 5 % slow requests, 5 % slow fixes, 0.5 % 5xx.
+groups:
+  - name: slo-recording
+    interval: 15s
+    rules:
+      - record: dt:api_requests:rate5m
+        expr: sum(rate(http_server_request_duration_seconds_count{service_name="gateway"}[5m]))
+      # Share of gateway requests over 0.2 s. Routes that call OSRM are left out:
+      # the gateway relays courier locations to tracking, which routes and map-matches
+      # through OSRM before answering, so those are slow by design. They are the
+      # three routes in the gateway route table that reach tracking's ingest:
+      #   POST /v1/couriers/{id}/locations    (partner relay, routes.go)
+      #   POST /v1/courier/locations          (courier session, courier.go)
+      #   POST /v1/test/deliveries/{id}/simulate (sandbox simulator, routes.go)
+      # The optional "(.* )?" tolerates an http.route that still has its method.
+      - record: dt:api_slow_ratio:rate5m
+        expr: >-
+          1 - (
+            sum(rate(http_server_request_duration_seconds_bucket{service_name="gateway", le="0.2", http_route!~"(.* )?(.*/v1/couriers/.+/locations|.*/v1/courier/locations|.*/v1/test/deliveries/.+/simulate)"}[5m]))
+            / sum(rate(http_server_request_duration_seconds_count{service_name="gateway", http_route!~"(.* )?(.*/v1/couriers/.+/locations|.*/v1/courier/locations|.*/v1/test/deliveries/.+/simulate)"}[5m]))
+          )
+      - record: dt:api_slow_ratio:rate30m
+        expr: >-
+          1 - (
+            sum(rate(http_server_request_duration_seconds_bucket{service_name="gateway", le="0.2", http_route!~"(.* )?(.*/v1/couriers/.+/locations|.*/v1/courier/locations|.*/v1/test/deliveries/.+/simulate)"}[30m]))
+            / sum(rate(http_server_request_duration_seconds_count{service_name="gateway", http_route!~"(.* )?(.*/v1/couriers/.+/locations|.*/v1/courier/locations|.*/v1/test/deliveries/.+/simulate)"}[30m]))
+          )
+      - record: dt:api_slow_ratio:rate1h
+        expr: >-
+          1 - (
+            sum(rate(http_server_request_duration_seconds_bucket{service_name="gateway", le="0.2", http_route!~"(.* )?(.*/v1/couriers/.+/locations|.*/v1/courier/locations|.*/v1/test/deliveries/.+/simulate)"}[1h]))
+            / sum(rate(http_server_request_duration_seconds_count{service_name="gateway", http_route!~"(.* )?(.*/v1/couriers/.+/locations|.*/v1/courier/locations|.*/v1/test/deliveries/.+/simulate)"}[1h]))
+          )
+      - record: dt:api_slow_ratio:rate6h
+        expr: >-
+          1 - (
+            sum(rate(http_server_request_duration_seconds_bucket{service_name="gateway", le="0.2", http_route!~"(.* )?(.*/v1/couriers/.+/locations|.*/v1/courier/locations|.*/v1/test/deliveries/.+/simulate)"}[6h]))
+            / sum(rate(http_server_request_duration_seconds_count{service_name="gateway", http_route!~"(.* )?(.*/v1/couriers/.+/locations|.*/v1/courier/locations|.*/v1/test/deliveries/.+/simulate)"}[6h]))
+          )
+      - record: dt:api_errors_ratio:rate5m
+        expr: >-
+          (sum(rate(http_server_request_duration_seconds_count{service_name="gateway", http_response_status_code=~"5.."}[5m])) or vector(0))
+          / sum(rate(http_server_request_duration_seconds_count{service_name="gateway"}[5m]))
+      - record: dt:api_errors_ratio:rate30m
+        expr: >-
+          (sum(rate(http_server_request_duration_seconds_count{service_name="gateway", http_response_status_code=~"5.."}[30m])) or vector(0))
+          / sum(rate(http_server_request_duration_seconds_count{service_name="gateway"}[30m]))
+      - record: dt:api_errors_ratio:rate1h
+        expr: >-
+          (sum(rate(http_server_request_duration_seconds_count{service_name="gateway", http_response_status_code=~"5.."}[1h])) or vector(0))
+          / sum(rate(http_server_request_duration_seconds_count{service_name="gateway"}[1h]))
+      - record: dt:api_errors_ratio:rate6h
+        expr: >-
+          (sum(rate(http_server_request_duration_seconds_count{service_name="gateway", http_response_status_code=~"5.."}[6h])) or vector(0))
+          / sum(rate(http_server_request_duration_seconds_count{service_name="gateway"}[6h]))
+      - record: dt:fix_to_viewer_slow_ratio:rate5m
+        expr: >-
+          1 - (
+            sum(rate(dt_tracking_fix_to_viewer_duration_seconds_bucket{le="1", source!="simulator"}[5m]))
+            / sum(rate(dt_tracking_fix_to_viewer_duration_seconds_count{source!="simulator"}[5m]))
+          )
+      - record: dt:fix_to_viewer_slow_ratio:rate30m
+        expr: >-
+          1 - (
+            sum(rate(dt_tracking_fix_to_viewer_duration_seconds_bucket{le="1", source!="simulator"}[30m]))
+            / sum(rate(dt_tracking_fix_to_viewer_duration_seconds_count{source!="simulator"}[30m]))
+          )
+      - record: dt:fix_to_viewer_slow_ratio:rate1h
+        expr: >-
+          1 - (
+            sum(rate(dt_tracking_fix_to_viewer_duration_seconds_bucket{le="1", source!="simulator"}[1h]))
+            / sum(rate(dt_tracking_fix_to_viewer_duration_seconds_count{source!="simulator"}[1h]))
+          )
+      - record: dt:fix_to_viewer_slow_ratio:rate6h
+        expr: >-
+          1 - (
+            sum(rate(dt_tracking_fix_to_viewer_duration_seconds_bucket{le="1", source!="simulator"}[6h]))
+            / sum(rate(dt_tracking_fix_to_viewer_duration_seconds_count{source!="simulator"}[6h]))
+          )
+      - record: dt:fix_to_viewer_p95:5m
+        expr: histogram_quantile(0.95, sum by (le) (rate(dt_tracking_fix_to_viewer_duration_seconds_bucket{source!="simulator"}[5m])))
+
+  - name: slo-alerts
+    interval: 15s
+    rules:
+      # OutboxStuck: dt_outbox_pending is the number of rows the relay selected
+      # and failed to publish in its last tick (0 after a good tick), so a
+      # constant failing batch never grows; any value above 0 for 10 m is stuck.
+      - alert: ApiLatencyBudgetBurn
+        expr: >-
+          (dt:api_slow_ratio:rate1h > 0.72 and dt:api_slow_ratio:rate5m > 0.72)
+            or (dt:api_slow_ratio:rate6h > 0.3 and dt:api_slow_ratio:rate30m > 0.3)
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "More than 5% of API requests are over 200 ms, burning the latency budget fast."
+      - alert: FixToViewerBudgetBurn
+        expr: >-
+          (dt:fix_to_viewer_slow_ratio:rate1h > 0.72 and dt:fix_to_viewer_slow_ratio:rate5m > 0.72)
+            or (dt:fix_to_viewer_slow_ratio:rate6h > 0.3 and dt:fix_to_viewer_slow_ratio:rate30m > 0.3)
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "More than 5% of viewed fixes reach the viewer after more than 1 s, burning the latency budget fast."
+      - alert: AvailabilityBudgetBurn
+        expr: >-
+          (dt:api_errors_ratio:rate1h > 0.072 and dt:api_errors_ratio:rate5m > 0.072)
+            or (dt:api_errors_ratio:rate6h > 0.03 and dt:api_errors_ratio:rate30m > 0.03)
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "5xx responses are burning the 99.5% availability budget fast."
+      - alert: WebhookFirstAttemptSlow
+        expr: >-
+          histogram_quantile(0.95, sum by (le) (rate(dt_webhook_first_attempt_delay_seconds_bucket[5m]))) > 5
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "The p95 delay before a webhook's first delivery attempt is over 5 s."
+      - alert: ConsumerLagging
+        expr: >-
+          dt_consumer_pending_messages > 100
+        for: 30s
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Consumer {{ $labels.consumer }} on stream {{ $labels.stream }} has more than 100 messages pending."
+      - alert: OutboxStuck
+        expr: >-
+          dt_outbox_pending > 0
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "The outbox relay keeps failing to publish rows; the backlog is not draining."
+      - alert: RoutingDegraded
+        expr: >-
+          (
+            sum(rate(dt_routing_errors_total[5m])) / sum(rate(dt_routing_duration_seconds_count[5m])) > 0.1
+          )
+          or (
+            histogram_quantile(0.95, sum by (le) (rate(dt_routing_duration_seconds_bucket[5m]))) > 0.8
+          )
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "More than 10% of OSRM calls fail, or their p95 is over 800 ms."
+      - alert: ServiceNotReady
+        expr: >-
+          httpcheck_status{http_status_class="2xx"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "A service's /readyz has not answered 2xx for 2 minutes."
+      - alert: TelemetryExportFailing
+        expr: >-
+          sum by (exporter) (rate({__name__=~"otelcol_exporter_send_failed_.+"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "A collector exporter has been failing to send telemetry for 10 minutes."

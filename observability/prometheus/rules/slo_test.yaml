@@ -1,0 +1,401 @@
+# promtool test rules fixtures for slo.yaml: one firing and one quiet case per
+# alert, plus checks that the recording rules leave out OSRM routes and the
+# simulator. Series step every 15 s (the rule interval); 400 steps is 100 min.
+rule_files:
+  - slo.yaml
+evaluation_interval: 15s
+tests:
+  # ---- ApiLatencyBudgetBurn -------------------------------------------------
+  - name: ApiLatencyBudgetBurn fires when 80% of requests are over 200 ms
+    interval: 15s
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="200"}'
+        values: "0+25x400"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="200",le="0.2"}'
+        values: "0+5x400"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="200",le="+Inf"}'
+        values: "0+25x400"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: ApiLatencyBudgetBurn
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              summary: "More than 5% of API requests are over 200 ms, burning the latency budget fast."
+    promql_expr_test:
+      - expr: dt:api_slow_ratio:rate5m
+        eval_time: 30m
+        exp_samples:
+          - labels: 'dt:api_slow_ratio:rate5m'
+            value: 0.8
+      - expr: round(dt:api_requests:rate5m, 0.001)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{}'
+            value: 1.667
+
+  - name: ApiLatencyBudgetBurn is quiet when 99% are fast
+    interval: 15s
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="200"}'
+        values: "0+100x400"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="200",le="0.2"}'
+        values: "0+99x400"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="200",le="+Inf"}'
+        values: "0+100x400"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: ApiLatencyBudgetBurn
+        exp_alerts: []
+
+  - name: slow OSRM routes and other services stay out of the API latency ratio
+    interval: 15s
+    input_series:
+      # The three gateway routes that call OSRM, all slow.
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="POST /v1/courier/locations"}'
+        values: "0+100x400"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="POST /v1/courier/locations",le="0.2"}'
+        values: "0+0x400"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="POST /v1/courier/locations",le="+Inf"}'
+        values: "0+100x400"
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="POST /v1/couriers/{id}/locations"}'
+        values: "0+100x400"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="POST /v1/couriers/{id}/locations",le="0.2"}'
+        values: "0+0x400"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="POST /v1/couriers/{id}/locations",le="+Inf"}'
+        values: "0+100x400"
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="POST /v1/test/deliveries/{id}/simulate"}'
+        values: "0+100x400"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="POST /v1/test/deliveries/{id}/simulate",le="0.2"}'
+        values: "0+0x400"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="POST /v1/test/deliveries/{id}/simulate",le="+Inf"}'
+        values: "0+100x400"
+      # A fast ordinary route, and a slow route of another service.
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="GET /v1/deliveries/{id}"}'
+        values: "0+100x400"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="GET /v1/deliveries/{id}",le="0.2"}'
+        values: "0+100x400"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="GET /v1/deliveries/{id}",le="+Inf"}'
+        values: "0+100x400"
+      - series: 'http_server_request_duration_seconds_count{service_name="tracking",http_route="GET /v1/tracking/stream"}'
+        values: "0+100x400"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="tracking",http_route="GET /v1/tracking/stream",le="0.2"}'
+        values: "0+0x400"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="tracking",http_route="GET /v1/tracking/stream",le="+Inf"}'
+        values: "0+100x400"
+    promql_expr_test:
+      - expr: dt:api_slow_ratio:rate5m
+        eval_time: 30m
+        exp_samples:
+          - labels: 'dt:api_slow_ratio:rate5m'
+            value: 0
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: ApiLatencyBudgetBurn
+        exp_alerts: []
+
+  # ---- FixToViewerBudgetBurn ------------------------------------------------
+  - name: FixToViewerBudgetBurn fires when 80% of relay fixes take over 1 s
+    interval: 15s
+    input_series:
+      - series: 'dt_tracking_fix_to_viewer_duration_seconds_count{service_name="tracking",source="relay"}'
+        values: "0+25x400"
+      - series: 'dt_tracking_fix_to_viewer_duration_seconds_bucket{service_name="tracking",source="relay",le="1"}'
+        values: "0+5x400"
+      - series: 'dt_tracking_fix_to_viewer_duration_seconds_bucket{service_name="tracking",source="relay",le="+Inf"}'
+        values: "0+25x400"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FixToViewerBudgetBurn
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              summary: "More than 5% of viewed fixes reach the viewer after more than 1 s, burning the latency budget fast."
+
+  - name: FixToViewerBudgetBurn ignores slow simulator fixes
+    interval: 15s
+    input_series:
+      - series: 'dt_tracking_fix_to_viewer_duration_seconds_count{service_name="tracking",source="relay"}'
+        values: "0+100x400"
+      - series: 'dt_tracking_fix_to_viewer_duration_seconds_bucket{service_name="tracking",source="relay",le="1"}'
+        values: "0+100x400"
+      - series: 'dt_tracking_fix_to_viewer_duration_seconds_bucket{service_name="tracking",source="relay",le="+Inf"}'
+        values: "0+100x400"
+      - series: 'dt_tracking_fix_to_viewer_duration_seconds_count{service_name="tracking",source="simulator"}'
+        values: "0+100x400"
+      - series: 'dt_tracking_fix_to_viewer_duration_seconds_bucket{service_name="tracking",source="simulator",le="1"}'
+        values: "0+0x400"
+      - series: 'dt_tracking_fix_to_viewer_duration_seconds_bucket{service_name="tracking",source="simulator",le="+Inf"}'
+        values: "0+100x400"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FixToViewerBudgetBurn
+        exp_alerts: []
+    promql_expr_test:
+      - expr: dt:fix_to_viewer_slow_ratio:rate5m
+        eval_time: 30m
+        exp_samples:
+          - labels: 'dt:fix_to_viewer_slow_ratio:rate5m'
+            value: 0
+      # All relay fixes are in the first bucket (le=1, lower bound 0), so the
+      # p95 interpolates to 0.95 * 1.
+      - expr: dt:fix_to_viewer_p95:5m
+        eval_time: 30m
+        exp_samples:
+          - labels: 'dt:fix_to_viewer_p95:5m'
+            value: 0.95
+
+  # ---- AvailabilityBudgetBurn -----------------------------------------------
+  - name: AvailabilityBudgetBurn fires when 40% of requests are 5xx
+    interval: 15s
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="200"}'
+        values: "0+15x400"
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="503"}'
+        values: "0+10x400"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: AvailabilityBudgetBurn
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              summary: "5xx responses are burning the 99.5% availability budget fast."
+    promql_expr_test:
+      - expr: dt:api_errors_ratio:rate5m
+        eval_time: 30m
+        exp_samples:
+          - labels: 'dt:api_errors_ratio:rate5m'
+            value: 0.4
+
+  - name: AvailabilityBudgetBurn is quiet with only 4xx and 2xx
+    interval: 15s
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="200"}'
+        values: "0+15x400"
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="404"}'
+        values: "0+10x400"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: AvailabilityBudgetBurn
+        exp_alerts: []
+    promql_expr_test:
+      - expr: dt:api_errors_ratio:rate5m
+        eval_time: 30m
+        exp_samples:
+          - labels: 'dt:api_errors_ratio:rate5m'
+            value: 0
+
+  # ---- WebhookFirstAttemptSlow ----------------------------------------------
+  - name: WebhookFirstAttemptSlow fires when the p95 delay is over 5 s
+    interval: 15s
+    input_series:
+      - series: 'dt_webhook_first_attempt_delay_seconds_bucket{tenant_id="t1",outcome="ok",le="5"}'
+        values: "0+0x200"
+      - series: 'dt_webhook_first_attempt_delay_seconds_bucket{tenant_id="t1",outcome="ok",le="10"}'
+        values: "0+10x200"
+      - series: 'dt_webhook_first_attempt_delay_seconds_bucket{tenant_id="t1",outcome="ok",le="+Inf"}'
+        values: "0+10x200"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: WebhookFirstAttemptSlow
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+            exp_annotations:
+              summary: "The p95 delay before a webhook's first delivery attempt is over 5 s."
+
+  - name: WebhookFirstAttemptSlow is quiet when fast, and with no data
+    interval: 15s
+    input_series:
+      - series: 'dt_webhook_first_attempt_delay_seconds_bucket{tenant_id="t1",outcome="ok",le="1"}'
+        values: "0+10x200"
+      - series: 'dt_webhook_first_attempt_delay_seconds_bucket{tenant_id="t1",outcome="ok",le="+Inf"}'
+        values: "0+10x200"
+      # No observations at all for t2: its buckets stay flat.
+      - series: 'dt_webhook_first_attempt_delay_seconds_bucket{tenant_id="t2",outcome="ok",le="+Inf"}'
+        values: "0+0x200"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: WebhookFirstAttemptSlow
+        exp_alerts: []
+
+  # ---- ConsumerLagging ------------------------------------------------------
+  - name: ConsumerLagging fires after 30 s over 100 pending
+    interval: 15s
+    input_series:
+      - series: 'dt_consumer_pending_messages{service_name="gateway",stream="ACCOUNTS",consumer="gateway-apikeys"}'
+        values: "500x20"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ConsumerLagging
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              service_name: gateway
+              stream: ACCOUNTS
+              consumer: gateway-apikeys
+            exp_annotations:
+              summary: "Consumer gateway-apikeys on stream ACCOUNTS has more than 100 messages pending."
+
+  - name: ConsumerLagging is quiet at 100 pending, and after the lag clears
+    interval: 15s
+    input_series:
+      - series: 'dt_consumer_pending_messages{service_name="gateway",stream="ACCOUNTS",consumer="gateway-apikeys"}'
+        values: "100x20"
+      - series: 'dt_consumer_pending_messages{service_name="deliveries",stream="TRACKING",consumer="deliveries-tracking"}'
+        values: "500x1 0x18"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ConsumerLagging
+        exp_alerts: []
+
+  # ---- OutboxStuck ----------------------------------------------------------
+  - name: OutboxStuck fires when rows stay pending for 10 minutes
+    interval: 15s
+    input_series:
+      - series: 'dt_outbox_pending{service_name="deliveries"}'
+        values: "5x100"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: OutboxStuck
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              service_name: deliveries
+            exp_annotations:
+              summary: "The outbox relay keeps failing to publish rows; the backlog is not draining."
+
+  - name: OutboxStuck is quiet when the backlog is empty or clears
+    interval: 15s
+    input_series:
+      - series: 'dt_outbox_pending{service_name="deliveries"}'
+        values: "0x100"
+      - series: 'dt_outbox_pending{service_name="tracking"}'
+        values: "5x20 0x80"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: OutboxStuck
+        exp_alerts: []
+
+  # ---- RoutingDegraded ------------------------------------------------------
+  - name: RoutingDegraded fires on a 25% error ratio
+    interval: 15s
+    input_series:
+      - series: 'dt_routing_duration_seconds_count{service_name="tracking",operation="route",outcome="ok"}'
+        values: "0+15x100"
+      - series: 'dt_routing_duration_seconds_count{service_name="tracking",operation="route",outcome="error"}'
+        values: "0+5x100"
+      - series: 'dt_routing_errors_total{service_name="tracking",operation="route",outcome="error"}'
+        values: "0+5x100"
+      - series: 'dt_routing_duration_seconds_bucket{service_name="tracking",operation="route",outcome="ok",le="0.1"}'
+        values: "0+20x100"
+      - series: 'dt_routing_duration_seconds_bucket{service_name="tracking",operation="route",outcome="ok",le="+Inf"}'
+        values: "0+20x100"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: RoutingDegraded
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+            exp_annotations:
+              summary: "More than 10% of OSRM calls fail, or their p95 is over 800 ms."
+
+  - name: RoutingDegraded fires on a slow p95 without errors
+    interval: 15s
+    input_series:
+      - series: 'dt_routing_duration_seconds_count{service_name="tracking",operation="match",outcome="ok"}'
+        values: "0+20x100"
+      - series: 'dt_routing_duration_seconds_bucket{service_name="tracking",operation="match",outcome="ok",le="0.5"}'
+        values: "0+0x100"
+      - series: 'dt_routing_duration_seconds_bucket{service_name="tracking",operation="match",outcome="ok",le="1"}'
+        values: "0+20x100"
+      - series: 'dt_routing_duration_seconds_bucket{service_name="tracking",operation="match",outcome="ok",le="+Inf"}'
+        values: "0+20x100"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: RoutingDegraded
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+            exp_annotations:
+              summary: "More than 10% of OSRM calls fail, or their p95 is over 800 ms."
+
+  - name: RoutingDegraded is quiet with few errors, and with no routing data
+    interval: 15s
+    input_series:
+      - series: 'dt_routing_duration_seconds_count{service_name="tracking",operation="route",outcome="ok"}'
+        values: "0+19x100"
+      - series: 'dt_routing_duration_seconds_count{service_name="tracking",operation="route",outcome="error"}'
+        values: "0+1x100"
+      - series: 'dt_routing_errors_total{service_name="tracking",operation="route",outcome="error"}'
+        values: "0+1x100"
+      - series: 'dt_routing_duration_seconds_bucket{service_name="tracking",operation="route",outcome="ok",le="0.1"}'
+        values: "0+20x100"
+      - series: 'dt_routing_duration_seconds_bucket{service_name="tracking",operation="route",outcome="ok",le="+Inf"}'
+        values: "0+20x100"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: RoutingDegraded
+        exp_alerts: []
+
+  # ---- ServiceNotReady ------------------------------------------------------
+  - name: ServiceNotReady fires after 2 minutes without a 2xx readiness answer
+    interval: 15s
+    input_series:
+      - series: 'httpcheck_status{http_status_class="2xx",http_url="http://tracking:8082/readyz"}'
+        values: "0x40"
+      - series: 'httpcheck_status{http_status_class="5xx",http_url="http://tracking:8082/readyz"}'
+        values: "1x40"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ServiceNotReady
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              http_status_class: 2xx
+              http_url: http://tracking:8082/readyz
+            exp_annotations:
+              summary: "A service's /readyz has not answered 2xx for 2 minutes."
+
+  - name: ServiceNotReady is quiet when ready, and for a blip under 2 minutes
+    interval: 15s
+    input_series:
+      - series: 'httpcheck_status{http_status_class="2xx",http_url="http://gateway:8080/readyz"}'
+        values: "1x40"
+      - series: 'httpcheck_status{http_status_class="2xx",http_url="http://tracking:8082/readyz"}'
+        values: "1x10 0x4 1x26"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ServiceNotReady
+        exp_alerts: []
+
+  # ---- TelemetryExportFailing -----------------------------------------------
+  - name: TelemetryExportFailing fires when an exporter keeps failing
+    interval: 15s
+    input_series:
+      - series: 'otelcol_exporter_send_failed_metric_points_total{exporter="otlphttp/prometheus"}'
+        values: "0+3x200"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: TelemetryExportFailing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              exporter: otlphttp/prometheus
+            exp_annotations:
+              summary: "A collector exporter has been failing to send telemetry for 10 minutes."
+
+  - name: TelemetryExportFailing is quiet when sends succeed
+    interval: 15s
+    input_series:
+      - series: 'otelcol_exporter_send_failed_metric_points_total{exporter="otlphttp/prometheus"}'
+        values: "0+0x200"
+      - series: 'otelcol_exporter_sent_metric_points_total{exporter="otlphttp/prometheus"}'
+        values: "0+50x200"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: TelemetryExportFailing
+        exp_alerts: []

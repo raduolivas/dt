@@ -1,0 +1,113 @@
+# Mission Control wire series (spec §5.5). The `wire` label is made here, not in
+# the services: each rule maps the §5.2 labels onto one topology wire id
+# (observability/mission-control/backend/internal/topology/topology.go) with a
+# static `wire` label. A Go test in Mission Control fails if a rule names a wire
+# the topology lacks. Wires the labels cannot identify (NATS, Redis, SQL, OSRM)
+# have no rule; Mission Control keeps its builtin source for them.
+#
+# Attribution notes:
+#  - gateway routes: courier routes are /v1/courier/..., viewer routes are
+#    /v1/tracking/..., /t/{token}, /logos/... and the JWKS path, every other
+#    /v1/... route is the partner API. The optional "(.* )?" prefix tolerates an
+#    http.route that still carries the method ("GET /v1/..."), which depends on
+#    the otelhttp version.
+#  - rpc.client.duration cannot tell the partner API from the courier API, so
+#    gateway RPCs are attributed to the partner API wires (the courier RPC
+#    wires keep the builtin source).
+#  - an RPC counts as an error for server-side Connect codes only (internal,
+#    unknown, unavailable, deadline_exceeded, data_loss); not_found,
+#    invalid_argument and the like are caller mistakes.
+groups:
+  - name: mc-wires
+    interval: 15s
+    rules:
+      # partner>gateway.partner_api
+      - record: mc:wire_requests:rate1m
+        expr: sum(rate(http_server_request_duration_seconds_count{service_name="gateway", http_route=~"(.* )?/v1/.*", http_route!~"(.* )?/v1/courier/.*|(.* )?/v1/tracking/.*"}[1m]))
+        labels:
+          wire: "partner>gateway.partner_api"
+      - record: mc:wire_errors:ratio1m
+        expr: >-
+          sum(rate(http_server_request_duration_seconds_count{service_name="gateway", http_route=~"(.* )?/v1/.*", http_route!~"(.* )?/v1/courier/.*|(.* )?/v1/tracking/.*", http_response_status_code=~"5.."}[1m]))
+          / sum(rate(http_server_request_duration_seconds_count{service_name="gateway", http_route=~"(.* )?/v1/.*", http_route!~"(.* )?/v1/courier/.*|(.* )?/v1/tracking/.*"}[1m]))
+        labels:
+          wire: "partner>gateway.partner_api"
+      - record: mc:wire_latency_p95_ms:1m
+        expr: 1000 * histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{service_name="gateway", http_route=~"(.* )?/v1/.*", http_route!~"(.* )?/v1/courier/.*|(.* )?/v1/tracking/.*"}[1m])))
+        labels:
+          wire: "partner>gateway.partner_api"
+      # courier>gateway.courier_api
+      - record: mc:wire_requests:rate1m
+        expr: sum(rate(http_server_request_duration_seconds_count{service_name="gateway", http_route=~"(.* )?/v1/courier/.*"}[1m]))
+        labels:
+          wire: "courier>gateway.courier_api"
+      - record: mc:wire_errors:ratio1m
+        expr: >-
+          sum(rate(http_server_request_duration_seconds_count{service_name="gateway", http_route=~"(.* )?/v1/courier/.*", http_response_status_code=~"5.."}[1m]))
+          / sum(rate(http_server_request_duration_seconds_count{service_name="gateway", http_route=~"(.* )?/v1/courier/.*"}[1m]))
+        labels:
+          wire: "courier>gateway.courier_api"
+      - record: mc:wire_latency_p95_ms:1m
+        expr: 1000 * histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{service_name="gateway", http_route=~"(.* )?/v1/courier/.*"}[1m])))
+        labels:
+          wire: "courier>gateway.courier_api"
+      # viewer>gateway.viewer_api
+      - record: mc:wire_requests:rate1m
+        expr: sum(rate(http_server_request_duration_seconds_count{service_name="gateway", http_route=~"(.* )?(/v1/tracking/.*|/t/.*|/logos/.*|/.well-known/.*)"}[1m]))
+        labels:
+          wire: "viewer>gateway.viewer_api"
+      - record: mc:wire_errors:ratio1m
+        expr: >-
+          sum(rate(http_server_request_duration_seconds_count{service_name="gateway", http_route=~"(.* )?(/v1/tracking/.*|/t/.*|/logos/.*|/.well-known/.*)", http_response_status_code=~"5.."}[1m]))
+          / sum(rate(http_server_request_duration_seconds_count{service_name="gateway", http_route=~"(.* )?(/v1/tracking/.*|/t/.*|/logos/.*|/.well-known/.*)"}[1m]))
+        labels:
+          wire: "viewer>gateway.viewer_api"
+      - record: mc:wire_latency_p95_ms:1m
+        expr: 1000 * histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{service_name="gateway", http_route=~"(.* )?(/v1/tracking/.*|/t/.*|/logos/.*|/.well-known/.*)"}[1m])))
+        labels:
+          wire: "viewer>gateway.viewer_api"
+      # gateway.partner_api>deliveries.rpc
+      - record: mc:wire_requests:rate1m
+        expr: sum(rate(rpc_client_duration_seconds_count{service_name="gateway", rpc_service="dt.deliveries.v1.DeliveriesService"}[1m]))
+        labels:
+          wire: "gateway.partner_api>deliveries.rpc"
+      - record: mc:wire_errors:ratio1m
+        expr: >-
+          sum(rate(rpc_client_duration_seconds_count{service_name="gateway", rpc_service="dt.deliveries.v1.DeliveriesService", rpc_connect_rpc_error_code=~"internal|unknown|unavailable|deadline_exceeded|data_loss"}[1m]))
+          / sum(rate(rpc_client_duration_seconds_count{service_name="gateway", rpc_service="dt.deliveries.v1.DeliveriesService"}[1m]))
+        labels:
+          wire: "gateway.partner_api>deliveries.rpc"
+      - record: mc:wire_latency_p95_ms:1m
+        expr: 1000 * histogram_quantile(0.95, sum by (le) (rate(rpc_client_duration_seconds_bucket{service_name="gateway", rpc_service="dt.deliveries.v1.DeliveriesService"}[1m])))
+        labels:
+          wire: "gateway.partner_api>deliveries.rpc"
+      # gateway.partner_api>tracking.ingest
+      - record: mc:wire_requests:rate1m
+        expr: sum(rate(rpc_client_duration_seconds_count{service_name="gateway", rpc_service="dt.tracking.v1.TrackingService"}[1m]))
+        labels:
+          wire: "gateway.partner_api>tracking.ingest"
+      - record: mc:wire_errors:ratio1m
+        expr: >-
+          sum(rate(rpc_client_duration_seconds_count{service_name="gateway", rpc_service="dt.tracking.v1.TrackingService", rpc_connect_rpc_error_code=~"internal|unknown|unavailable|deadline_exceeded|data_loss"}[1m]))
+          / sum(rate(rpc_client_duration_seconds_count{service_name="gateway", rpc_service="dt.tracking.v1.TrackingService"}[1m]))
+        labels:
+          wire: "gateway.partner_api>tracking.ingest"
+      - record: mc:wire_latency_p95_ms:1m
+        expr: 1000 * histogram_quantile(0.95, sum by (le) (rate(rpc_client_duration_seconds_bucket{service_name="gateway", rpc_service="dt.tracking.v1.TrackingService"}[1m])))
+        labels:
+          wire: "gateway.partner_api>tracking.ingest"
+      # tracking.simulator>deliveries.rpc
+      - record: mc:wire_requests:rate1m
+        expr: sum(rate(rpc_client_duration_seconds_count{service_name="tracking", rpc_service="dt.deliveries.v1.DeliveriesService"}[1m]))
+        labels:
+          wire: "tracking.simulator>deliveries.rpc"
+      - record: mc:wire_errors:ratio1m
+        expr: >-
+          sum(rate(rpc_client_duration_seconds_count{service_name="tracking", rpc_service="dt.deliveries.v1.DeliveriesService", rpc_connect_rpc_error_code=~"internal|unknown|unavailable|deadline_exceeded|data_loss"}[1m]))
+          / sum(rate(rpc_client_duration_seconds_count{service_name="tracking", rpc_service="dt.deliveries.v1.DeliveriesService"}[1m]))
+        labels:
+          wire: "tracking.simulator>deliveries.rpc"
+      - record: mc:wire_latency_p95_ms:1m
+        expr: 1000 * histogram_quantile(0.95, sum by (le) (rate(rpc_client_duration_seconds_bucket{service_name="tracking", rpc_service="dt.deliveries.v1.DeliveriesService"}[1m])))
+        labels:
+          wire: "tracking.simulator>deliveries.rpc"

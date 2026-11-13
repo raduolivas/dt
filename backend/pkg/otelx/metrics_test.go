@@ -21,6 +21,7 @@ func TestViewsApplyBuckets(t *testing.T) {
 		"http.server.request.duration":       otelx.HTTPBuckets,
 		"rpc.server.duration":                otelx.HTTPBuckets,
 		"rpc.client.duration":                otelx.HTTPBuckets,
+		"dt.routing.duration":                otelx.HTTPBuckets,
 		"dt.tracking.fix_to_viewer.duration": otelx.FixToViewerBuckets,
 	}
 	for name := range want {

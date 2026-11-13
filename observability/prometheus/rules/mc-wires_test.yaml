@@ -1,0 +1,191 @@
+# promtool test rules fixtures for mc-wires.yaml: one per mapped wire (the
+# `wire` label value is asserted), then one test for error ratio and p95 across
+# all wires. Series step every 15 s to match the rule group's interval.
+rule_files:
+  - mc-wires.yaml
+evaluation_interval: 15s
+tests:
+  - name: requests partner>gateway.partner_api
+    interval: 15s
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="200"}'
+        values: "0+15x20"
+      - series: 'http_server_request_duration_seconds_count{service_name="other",http_route="GET /v1/deliveries/{id}",http_response_status_code="200"}'
+        values: "0+30x20"
+    promql_expr_test:
+      - expr: round(mc:wire_requests:rate1m, 0.001)
+        eval_time: 4m
+        exp_samples:
+          - labels: '{wire="partner>gateway.partner_api"}'
+            value: 1
+  - name: requests courier>gateway.courier_api
+    interval: 15s
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="POST /v1/courier/locations",http_response_status_code="200"}'
+        values: "0+15x20"
+      - series: 'http_server_request_duration_seconds_count{service_name="other",http_route="POST /v1/courier/locations",http_response_status_code="200"}'
+        values: "0+30x20"
+    promql_expr_test:
+      - expr: round(mc:wire_requests:rate1m, 0.001)
+        eval_time: 4m
+        exp_samples:
+          - labels: '{wire="courier>gateway.courier_api"}'
+            value: 1
+  - name: requests viewer>gateway.viewer_api
+    interval: 15s
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="GET /t/{token}",http_response_status_code="200"}'
+        values: "0+15x20"
+      - series: 'http_server_request_duration_seconds_count{service_name="other",http_route="GET /t/{token}",http_response_status_code="200"}'
+        values: "0+30x20"
+    promql_expr_test:
+      - expr: round(mc:wire_requests:rate1m, 0.001)
+        eval_time: 4m
+        exp_samples:
+          - labels: '{wire="viewer>gateway.viewer_api"}'
+            value: 1
+  - name: requests gateway.partner_api>deliveries.rpc
+    interval: 15s
+    input_series:
+      - series: 'rpc_client_duration_seconds_count{service_name="gateway",rpc_service="dt.deliveries.v1.DeliveriesService"}'
+        values: "0+15x20"
+      - series: 'rpc_client_duration_seconds_count{service_name="other",rpc_service="dt.deliveries.v1.DeliveriesService"}'
+        values: "0+30x20"
+    promql_expr_test:
+      - expr: round(mc:wire_requests:rate1m, 0.001)
+        eval_time: 4m
+        exp_samples:
+          - labels: '{wire="gateway.partner_api>deliveries.rpc"}'
+            value: 1
+  - name: requests gateway.partner_api>tracking.ingest
+    interval: 15s
+    input_series:
+      - series: 'rpc_client_duration_seconds_count{service_name="gateway",rpc_service="dt.tracking.v1.TrackingService"}'
+        values: "0+15x20"
+      - series: 'rpc_client_duration_seconds_count{service_name="other",rpc_service="dt.tracking.v1.TrackingService"}'
+        values: "0+30x20"
+    promql_expr_test:
+      - expr: round(mc:wire_requests:rate1m, 0.001)
+        eval_time: 4m
+        exp_samples:
+          - labels: '{wire="gateway.partner_api>tracking.ingest"}'
+            value: 1
+  - name: requests tracking.simulator>deliveries.rpc
+    interval: 15s
+    input_series:
+      - series: 'rpc_client_duration_seconds_count{service_name="tracking",rpc_service="dt.deliveries.v1.DeliveriesService"}'
+        values: "0+15x20"
+      - series: 'rpc_client_duration_seconds_count{service_name="other",rpc_service="dt.deliveries.v1.DeliveriesService"}'
+        values: "0+30x20"
+    promql_expr_test:
+      - expr: round(mc:wire_requests:rate1m, 0.001)
+        eval_time: 4m
+        exp_samples:
+          - labels: '{wire="tracking.simulator>deliveries.rpc"}'
+            value: 1
+  - name: error ratio and p95 on every wire
+    interval: 15s
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="200"}'
+        values: "0+15x20"
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="500"}'
+        values: "0+5x20"
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="404"}'
+        values: "0+0x20"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="200",le="0.05"}'
+        values: "0+0x20"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="200",le="0.1"}'
+        values: "0+20x20"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="200",le="+Inf"}'
+        values: "0+20x20"
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="POST /v1/courier/locations",http_response_status_code="200"}'
+        values: "0+15x20"
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="POST /v1/courier/locations",http_response_status_code="500"}'
+        values: "0+5x20"
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="POST /v1/courier/locations",http_response_status_code="404"}'
+        values: "0+0x20"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="POST /v1/courier/locations",http_response_status_code="200",le="0.05"}'
+        values: "0+0x20"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="POST /v1/courier/locations",http_response_status_code="200",le="0.1"}'
+        values: "0+20x20"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="POST /v1/courier/locations",http_response_status_code="200",le="+Inf"}'
+        values: "0+20x20"
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="GET /t/{token}",http_response_status_code="200"}'
+        values: "0+15x20"
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="GET /t/{token}",http_response_status_code="500"}'
+        values: "0+5x20"
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="GET /t/{token}",http_response_status_code="404"}'
+        values: "0+0x20"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="GET /t/{token}",http_response_status_code="200",le="0.05"}'
+        values: "0+0x20"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="GET /t/{token}",http_response_status_code="200",le="0.1"}'
+        values: "0+20x20"
+      - series: 'http_server_request_duration_seconds_bucket{service_name="gateway",http_route="GET /t/{token}",http_response_status_code="200",le="+Inf"}'
+        values: "0+20x20"
+      - series: 'rpc_client_duration_seconds_count{service_name="gateway",rpc_service="dt.deliveries.v1.DeliveriesService"}'
+        values: "0+15x20"
+      - series: 'rpc_client_duration_seconds_count{service_name="gateway",rpc_service="dt.deliveries.v1.DeliveriesService",rpc_connect_rpc_error_code="unavailable"}'
+        values: "0+5x20"
+      - series: 'rpc_client_duration_seconds_count{service_name="gateway",rpc_service="dt.deliveries.v1.DeliveriesService",rpc_connect_rpc_error_code="not_found"}'
+        values: "0+0x20"
+      - series: 'rpc_client_duration_seconds_bucket{service_name="gateway",rpc_service="dt.deliveries.v1.DeliveriesService",le="0.05"}'
+        values: "0+0x20"
+      - series: 'rpc_client_duration_seconds_bucket{service_name="gateway",rpc_service="dt.deliveries.v1.DeliveriesService",le="0.1"}'
+        values: "0+20x20"
+      - series: 'rpc_client_duration_seconds_bucket{service_name="gateway",rpc_service="dt.deliveries.v1.DeliveriesService",le="+Inf"}'
+        values: "0+20x20"
+      - series: 'rpc_client_duration_seconds_count{service_name="gateway",rpc_service="dt.tracking.v1.TrackingService"}'
+        values: "0+15x20"
+      - series: 'rpc_client_duration_seconds_count{service_name="gateway",rpc_service="dt.tracking.v1.TrackingService",rpc_connect_rpc_error_code="unavailable"}'
+        values: "0+5x20"
+      - series: 'rpc_client_duration_seconds_count{service_name="gateway",rpc_service="dt.tracking.v1.TrackingService",rpc_connect_rpc_error_code="not_found"}'
+        values: "0+0x20"
+      - series: 'rpc_client_duration_seconds_bucket{service_name="gateway",rpc_service="dt.tracking.v1.TrackingService",le="0.05"}'
+        values: "0+0x20"
+      - series: 'rpc_client_duration_seconds_bucket{service_name="gateway",rpc_service="dt.tracking.v1.TrackingService",le="0.1"}'
+        values: "0+20x20"
+      - series: 'rpc_client_duration_seconds_bucket{service_name="gateway",rpc_service="dt.tracking.v1.TrackingService",le="+Inf"}'
+        values: "0+20x20"
+      - series: 'rpc_client_duration_seconds_count{service_name="tracking",rpc_service="dt.deliveries.v1.DeliveriesService"}'
+        values: "0+15x20"
+      - series: 'rpc_client_duration_seconds_count{service_name="tracking",rpc_service="dt.deliveries.v1.DeliveriesService",rpc_connect_rpc_error_code="unavailable"}'
+        values: "0+5x20"
+      - series: 'rpc_client_duration_seconds_count{service_name="tracking",rpc_service="dt.deliveries.v1.DeliveriesService",rpc_connect_rpc_error_code="not_found"}'
+        values: "0+0x20"
+      - series: 'rpc_client_duration_seconds_bucket{service_name="tracking",rpc_service="dt.deliveries.v1.DeliveriesService",le="0.05"}'
+        values: "0+0x20"
+      - series: 'rpc_client_duration_seconds_bucket{service_name="tracking",rpc_service="dt.deliveries.v1.DeliveriesService",le="0.1"}'
+        values: "0+20x20"
+      - series: 'rpc_client_duration_seconds_bucket{service_name="tracking",rpc_service="dt.deliveries.v1.DeliveriesService",le="+Inf"}'
+        values: "0+20x20"
+    promql_expr_test:
+      - expr: mc:wire_errors:ratio1m
+        eval_time: 4m
+        exp_samples:
+          - labels: 'mc:wire_errors:ratio1m{wire="partner>gateway.partner_api"}'
+            value: 0.25
+          - labels: 'mc:wire_errors:ratio1m{wire="courier>gateway.courier_api"}'
+            value: 0.25
+          - labels: 'mc:wire_errors:ratio1m{wire="viewer>gateway.viewer_api"}'
+            value: 0.25
+          - labels: 'mc:wire_errors:ratio1m{wire="gateway.partner_api>deliveries.rpc"}'
+            value: 0.25
+          - labels: 'mc:wire_errors:ratio1m{wire="gateway.partner_api>tracking.ingest"}'
+            value: 0.25
+          - labels: 'mc:wire_errors:ratio1m{wire="tracking.simulator>deliveries.rpc"}'
+            value: 0.25
+      - expr: mc:wire_latency_p95_ms:1m
+        eval_time: 4m
+        exp_samples:
+          - labels: 'mc:wire_latency_p95_ms:1m{wire="partner>gateway.partner_api"}'
+            value: 97.5
+          - labels: 'mc:wire_latency_p95_ms:1m{wire="courier>gateway.courier_api"}'
+            value: 97.5
+          - labels: 'mc:wire_latency_p95_ms:1m{wire="viewer>gateway.viewer_api"}'
+            value: 97.5
+          - labels: 'mc:wire_latency_p95_ms:1m{wire="gateway.partner_api>deliveries.rpc"}'
+            value: 97.5
+          - labels: 'mc:wire_latency_p95_ms:1m{wire="gateway.partner_api>tracking.ingest"}'
+            value: 97.5
+          - labels: 'mc:wire_latency_p95_ms:1m{wire="tracking.simulator>deliveries.rpc"}'
+            value: 97.5

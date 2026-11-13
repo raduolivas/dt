@@ -1,6 +1,7 @@
 # Local Prometheus (spec §6). No scrape jobs: the collector pushes OTLP to
-# /api/v1/otlp (--web.enable-otlp-receiver). Alert and recording rules arrive
-# in rules/ (mounted read-only).
+# /api/v1/otlp (--web.enable-otlp-receiver). Alert and recording rules are the
+# two files below (not a glob: rules/ also holds the *_test.yaml fixtures, which
+# promtool reads and Prometheus must not).
 global:
   evaluation_interval: 15s
 otlp:
@@ -11,4 +12,5 @@ otlp:
   # counters gain _total. Rules and Mission Control rely on these names.
   translation_strategy: UnderscoreEscapingWithSuffixes
 rule_files:
-  - /etc/prometheus/rules/*.yaml
+  - /etc/prometheus/rules/slo.yaml
+  - /etc/prometheus/rules/mc-wires.yaml

@@ -33,12 +33,20 @@ docker run --rm "${mounts[@]}" --entrypoint /otelcol-contrib "$image" validate "
 docker run --rm "${mounts[@]}" --entrypoint /otelcol-contrib "$image" validate "${args[@]}" \
   --config /etc/otelcol/exporters.debug.yaml
 
-echo "obs-check: validating the Prometheus, Tempo and Loki configs"
+echo "obs-check: validating the Prometheus, Tempo and Loki configs, and the Prometheus rules"
 obs="$root/observability"
 docker run --rm --entrypoint promtool \
   -v "$obs/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro" \
   -v "$obs/prometheus/rules:/etc/prometheus/rules:ro" \
   "$prom_image" check config /etc/prometheus/prometheus.yaml
+# The rule and test files are separate mounts; `rule_files` names only the rule
+# files, so the *_test.yaml fixtures never reach Prometheus.
+docker run --rm --entrypoint promtool \
+  -v "$obs/prometheus/rules:/etc/prometheus/rules:ro" \
+  "$prom_image" check rules /etc/prometheus/rules/slo.yaml /etc/prometheus/rules/mc-wires.yaml
+docker run --rm --entrypoint promtool \
+  -v "$obs/prometheus/rules:/etc/prometheus/rules:ro" \
+  "$prom_image" test rules /etc/prometheus/rules/slo_test.yaml /etc/prometheus/rules/mc-wires_test.yaml
 docker run --rm --entrypoint /tempo -v "$obs/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro" \
   "$tempo_image" -config.file=/etc/tempo/tempo.yaml -config.verify=true
 docker run --rm --entrypoint /usr/bin/loki -v "$obs/loki/loki.yaml:/etc/loki/loki.yaml:ro" \

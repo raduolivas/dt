@@ -39,6 +39,8 @@ func Views() []sdkmetric.View {
 		hist("http.server.request.duration", HTTPBuckets),
 		hist("rpc.server.duration", HTTPBuckets),
 		hist("rpc.client.duration", HTTPBuckets),
+		// RoutingDegraded reads the p95 against 0.8 s, which the SDK default bounds (0, 5, 10 ...) cannot resolve.
+		hist("dt.routing.duration", HTTPBuckets),
 		hist("dt.tracking.fix_to_viewer.duration", FixToViewerBuckets),
 	}
 }
