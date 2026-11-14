@@ -10,7 +10,7 @@ RUN pnpm install --frozen-lockfile
 COPY observability/mission-control/web/ ./
 RUN pnpm build
 
-FROM golang:1.27.3-trixie AS build
+FROM golang:1.27.4-trixie AS build
 WORKDIR /src
 COPY backend/pkg ./backend/pkg
 COPY backend/gen ./backend/gen
