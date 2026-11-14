@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -85,5 +88,44 @@ func TestClockResult(t *testing.T) {
 	}
 	if (outcome{}).LossRate() != 0 {
 		t.Fatal("no answers is no loss")
+	}
+}
+
+// A viewer session right after creating a delivery can race tracking's copy
+// of it (outbox -> NATS -> tracking): the gateway answers 503
+// tracking_unavailable and asks the client to retry shortly.
+func TestSessionRetriesTrackingUnavailable(t *testing.T) {
+	sessionRetryEvery = time.Millisecond
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":503,"code":"tracking_unavailable"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"viewer_token":"vt"}`))
+	}))
+	defer srv.Close()
+	c := &client{api: srv.URL, http: srv.Client()}
+
+	got, err := c.session(context.Background(), "lnk")
+	if err != nil || got != "vt" || calls != 3 {
+		t.Fatalf("got %q, %v after %d calls; want vt after 3", got, err, calls)
+	}
+}
+
+func TestSessionDoesNotRetryOtherErrors(t *testing.T) {
+	sessionRetryEvery = time.Millisecond
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	c := &client{api: srv.URL, http: srv.Client()}
+
+	if _, err := c.session(context.Background(), "lnk"); err == nil || calls != 1 {
+		t.Fatalf("err %v after %d calls; want an error after 1", err, calls)
 	}
 }

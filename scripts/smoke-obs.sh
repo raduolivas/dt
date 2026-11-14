@@ -100,7 +100,8 @@ relay_before="$(q "$PROM" /api/v1/query "query=${RELAY_Q}" | scalar)"
 start_ns="$(date +%s)000000000"
 echo "==> obs: driving fixes for 20 s (2 deliveries, 1 viewer each)" >&2
 # The tool opens a viewer right after assigning the courier; tracking learns of the delivery over NATS, so under load
-# that first session can answer 503 tracking_unavailable. A failed start is retried (twice); the run window starts anew.
+# that first session can answer 503 tracking_unavailable. The tool retries that answer for up to 30 s; any other failed
+# start is retried here (twice), and the run window starts anew.
 attempt=0
 until (cd backend/tools/latency && DT_API_KEY="$key" go run . -api "$GATEWAY" -deliveries 2 -viewers 1 -duration 20s) >"$work/latency.out" 2>&1; do
   attempt=$((attempt + 1))
