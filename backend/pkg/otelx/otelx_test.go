@@ -301,3 +301,27 @@ func TestHTTPRouteUnmatchedHasNoRawPath(t *testing.T) {
 		}
 	}
 }
+
+// server.address / server.port come from the client's Host header; they must
+// not become labels, or a caller could mint series at will.
+func TestHTTPHostHeaderDoesNotSplitSeries(t *testing.T) {
+	reader := installMetrics(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/things/{id}", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	h := otelx.HTTP(mux, "test")
+	for _, host := range []string{"a.example:8080", "b.example:9090", "c.example"} {
+		req := httptest.NewRequest(http.MethodGet, "/v1/things/abc", nil)
+		req.Host = host
+		h.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	rm, sets := collectAttrs(t, reader, "http.server.request.duration")
+	otelxtest.AssertAllowed(t, rm)
+	if len(sets) != 1 {
+		t.Fatalf("got %d series for 3 Host headers, want 1", len(sets))
+	}
+	for _, k := range []attribute.Key{"server.address", "server.port"} {
+		if _, ok := sets[0].Value(k); ok {
+			t.Errorf("label %s is present", k)
+		}
+	}
+}

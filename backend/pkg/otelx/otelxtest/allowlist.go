@@ -12,11 +12,12 @@ import (
 )
 
 // httpServerKeys are the otelhttp-standard attributes plus the spec's three.
-// server.address must be the configured host, never the client's.
+// server.address and server.port are deliberately absent: they come from the
+// client's Host header and are dropped by a view.
 var httpServerKeys = []string{
 	"http.route", "http.request.method", "http.response.status_code",
 	"network.protocol.name", "network.protocol.version",
-	"url.scheme", "server.address", "server.port",
+	"url.scheme",
 }
 
 var rpcKeys = []string{"rpc.system", "rpc.service", "rpc.method", "rpc.connect_rpc.error_code"}

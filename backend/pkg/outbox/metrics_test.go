@@ -160,3 +160,77 @@ func TestRelayRecordsPublishMetrics(t *testing.T) {
 		t.Fatalf("pending = %v, want one point with 0 (everything published)", dp)
 	}
 }
+
+func pendingValue(t *testing.T, reader *sdkmetric.ManualReader) (int64, bool) {
+	t.Helper()
+	p := findMetric(collect(t, reader), "dt.outbox.pending")
+	if p == nil {
+		return 0, false
+	}
+	dp := p.Data.(metricdata.Gauge[int64]).DataPoints
+	if len(dp) != 1 {
+		return 0, false
+	}
+	return dp[0].Value, true
+}
+
+// A batch whose publishes succeed but whose commit fails marks nothing
+// published, so the gauge must show the whole batch (OutboxStuck depends on
+// it). When another replica then holds the advisory lock this relay must not
+// keep that stale positive value.
+func TestRelayPendingOnCommitFailureAndLostLock(t *testing.T) {
+	reader := testMeter(t)
+	e := setup(t)
+	ctx := context.Background()
+	// A deferred constraint trigger makes the UPDATE succeed and the COMMIT fail.
+	mig, err := pgx.Connect(ctx, e.mig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = mig.Close(ctx) }()
+	if _, err := mig.Exec(ctx, `CREATE FUNCTION fail_commit() RETURNS trigger LANGUAGE plpgsql AS
+		$$ BEGIN RAISE EXCEPTION 'commit refused'; END $$;
+		CREATE CONSTRAINT TRIGGER fail_commit AFTER UPDATE ON outbox
+		DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION fail_commit()`); err != nil {
+		t.Fatal(err)
+	}
+	e.enqueue(t, ctx, newEnvelope(t), true)
+
+	relayCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- e.relay(e.js).Run(relayCtx) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	})
+
+	waitFor(t, 5*time.Second, "pending to read 1 after the failed commit", func() bool {
+		v, ok := pendingValue(t, reader)
+		return ok && v == 1
+	})
+
+	// Another "replica" takes the advisory lock between the relay's batches.
+	var lockTx pgx.Tx
+	waitFor(t, 5*time.Second, "the advisory lock", func() bool {
+		tx, err := e.pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got bool
+		if err := tx.QueryRow(ctx, relayLock).Scan(&got); err != nil || !got {
+			_ = tx.Rollback(ctx)
+			return false
+		}
+		lockTx = tx
+		return true
+	})
+	defer func() { _ = lockTx.Rollback(ctx) }()
+	waitFor(t, 5*time.Second, "pending to reset to 0 while the lock is held elsewhere", func() bool {
+		v, ok := pendingValue(t, reader)
+		return ok && v == 0
+	})
+}
+
+const relayLock = `SELECT pg_try_advisory_xact_lock(hashtext(current_schema() || '.outbox'))`

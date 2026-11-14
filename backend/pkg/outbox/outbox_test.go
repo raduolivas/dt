@@ -40,6 +40,7 @@ type env struct {
 	pool *pgxpool.Pool
 	js   jetstream.JetStream
 	log  *slog.Logger
+	mig  string // migrator URL, for DDL the service role may not run
 }
 
 // setup starts Postgres and NATS, creates the outbox and inbox tables (and
@@ -80,7 +81,7 @@ func setup(t *testing.T) *env {
 	if err := outbox.EnsureStream(ctx, js, outbox.StreamAccounts); err != nil {
 		t.Fatal(err)
 	}
-	return &env{pool: pool, js: js, log: slog.New(slog.DiscardHandler)}
+	return &env{pool: pool, js: js, log: slog.New(slog.DiscardHandler), mig: pg.MigratorURL("gateway")}
 }
 
 func newEnvelope(t *testing.T) *eventsv1.Envelope {

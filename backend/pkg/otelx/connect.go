@@ -59,7 +59,7 @@ func ConnectClientInterceptor() connect.ClientInterceptor {
 				rec.record(ctx, err)
 				return nil, err
 			}
-			return &tracedStream{ClientStream: stream, span: span, rec: rec}, nil
+			return &tracedStream{ClientStream: stream, span: span, rec: rec, ctx: ctx}, nil
 		}
 	}
 }
@@ -100,13 +100,14 @@ type tracedStream struct {
 	connect.ClientStream
 	span trace.Span
 	rec  *durationRecorder
+	ctx  context.Context // carries the client span, so the histogram gets an exemplar
 	once sync.Once
 }
 
 func (s *tracedStream) finish(err error) {
 	s.once.Do(func() {
 		endSpan(s.span, err)
-		s.rec.record(context.Background(), err)
+		s.rec.record(s.ctx, err)
 	})
 }
 

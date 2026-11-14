@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 )
@@ -36,7 +37,17 @@ func Views() []sdkmetric.View {
 	return []sdkmetric.View{
 		drop("http.server.request.body.size"),
 		drop("http.server.response.body.size"),
-		hist("http.server.request.duration", HTTPBuckets),
+		// otelhttp derives server.address/server.port from the request's Host
+		// header, which a public caller controls: a few thousand Host values
+		// would fill the SDK's series limit. Drop both keys. (Same view as the
+		// buckets: two matching views would create two streams.)
+		sdkmetric.NewView(
+			sdkmetric.Instrument{Name: "http.server.request.duration", Kind: sdkmetric.InstrumentKindHistogram},
+			sdkmetric.Stream{
+				Aggregation:     sdkmetric.AggregationExplicitBucketHistogram{Boundaries: HTTPBuckets},
+				AttributeFilter: attribute.NewDenyKeysFilter("server.address", "server.port"),
+			},
+		),
 		hist("rpc.server.duration", HTTPBuckets),
 		hist("rpc.client.duration", HTTPBuckets),
 		// RoutingDegraded reads the p95 against 0.8 s, which the SDK default bounds (0, 5, 10 ...) cannot resolve.
