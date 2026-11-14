@@ -178,7 +178,7 @@ mc-test: mc-test-go mc-test-web ## Run every Mission Control test
 mc-lint: mc-lint-go mc-lint-web ## Run every Mission Control linter
 
 # ---- local stack ------------------------------------------------------------
-.PHONY: obs-check dev down logs dtctl seed smoke latency osrm-data region lan-https courier-link
+.PHONY: obs-check obs dev down logs dtctl seed smoke latency osrm-data region lan-https courier-link
 
 # COMPOSE_OVERRIDE optionally names an extra Compose file (for example one that sets
 # build.network: host on machines whose Docker build containers have no network). Empty by default.
@@ -198,6 +198,12 @@ export OTELCOL_EXTRA_CONFIG := /etc/otelcol/exporters.debug.yaml
 endif
 endif
 COMPOSE := docker compose $$([ -f $(LAN_ENV) ] && echo --env-file $(LAN_ENV)) $$([ -f $(REGION_ENV) ] && echo --env-file $(REGION_ENV)) -f infra/compose/compose.yaml $(OBS_COMPOSE) $(if $(COMPOSE_OVERRIDE),-f $(COMPOSE_OVERRIDE))
+
+# Build id stamped into service.version (compose passes it to each service).
+ifeq ($(origin DT_BUILD_COMMIT),undefined)
+DT_BUILD_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+endif
+export DT_BUILD_COMMIT
 
 # dtctl talks to the local accounts service with the dev-only token from
 # infra/compose/compose.yaml.
@@ -228,7 +234,13 @@ dev: osrm-data ## Build and start the local stack, then wait until every service
 	scripts/wait-ready.sh
 
 down: ## Stop the local stack and delete its volumes
-	$(COMPOSE) down -v --remove-orphans
+	@# observability/compose.yaml is always included so the obs-* volumes go even after OBS=0 make dev
+	$(COMPOSE) $(if $(OBS_COMPOSE),,-f observability/compose.yaml) down -v --remove-orphans
+
+obs: ## Start the stack if needed and print Grafana's URL
+	@[ "$(OBS)" != 0 ] || { echo "make obs: OBS=0 turns the OBS stack off" >&2; exit 2; }
+	@[ -n "$$($(COMPOSE) ps -q --status running grafana)" ] || $(MAKE) dev
+	@echo "Grafana: http://127.0.0.1:3000 (anonymous Viewer; admin password: $${GF_SECURITY_ADMIN_PASSWORD:-dt-local-admin})"
 
 logs: ## Follow the local stack logs
 	$(COMPOSE) logs -f
@@ -243,11 +255,13 @@ seed: dtctl ## Create the tenant "Dev Tenant" and a test key in the running stac
 	echo "Call the API with:" >&2; \
 	echo "curl -sS -H 'Authorization: Bearer $$secret' http://127.0.0.1:8080/v1/me"
 
-smoke: dtctl ## Run the M1, M2, M3 and M5 end-to-end smoke tests against the running stack (after make dev)
+smoke: dtctl ## Run the M1, M2, M3, M5 and OBS end-to-end smoke tests against the running stack (after make dev)
 	DTCTL=$(DTCTL) scripts/smoke-m1.sh
 	DTCTL=$(DTCTL) scripts/smoke-m2.sh
 	DTCTL=$(DTCTL) scripts/smoke-m3.sh
 	DTCTL=$(DTCTL) scripts/smoke-m5.sh
+	@# OBS=0 is exported to the script, which then skips with a message
+	DTCTL=$(DTCTL) scripts/smoke-obs.sh
 
 lan-https: ## Serve the courier page and courier API over HTTPS on the LAN for a phone (after make dev); see docs/runbooks/courier-phone-test.md
 	COMPOSE_OVERRIDE=$(COMPOSE_OVERRIDE) scripts/lan-https.sh

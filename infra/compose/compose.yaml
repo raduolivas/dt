@@ -81,6 +81,7 @@ services:
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "${DT_OTLP_ENDPOINT-http://otel-collector:4318}"
       DT_ENVIRONMENT: local
+      DT_BUILD_COMMIT: "${DT_BUILD_COMMIT:-dev}"
       PORT: "8080"
       LOG_LEVEL: info
       DATABASE_URL: "postgres://svc_gateway:svc_gateway@postgres:5432/dt?sslmode=disable"
@@ -242,6 +243,7 @@ services:
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "${DT_OTLP_ENDPOINT-http://otel-collector:4318}"
       DT_ENVIRONMENT: local
+      DT_BUILD_COMMIT: "${DT_BUILD_COMMIT:-dev}"
       PORT: "8081"
       LOG_LEVEL: info
       DATABASE_URL: "postgres://svc_deliveries:svc_deliveries@postgres:5432/dt?sslmode=disable"
@@ -279,6 +281,7 @@ services:
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "${DT_OTLP_ENDPOINT-http://otel-collector:4318}"
       DT_ENVIRONMENT: local
+      DT_BUILD_COMMIT: "${DT_BUILD_COMMIT:-dev}"
       # PORT serves health and the public viewer endpoints (snapshot,
       # WebSocket and SSE streams): plain HTTP. The internal RPC API has its
       # own mTLS port, INTERNAL_RPC_PORT; viewer routes are never on it.
@@ -349,6 +352,7 @@ services:
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "${DT_OTLP_ENDPOINT-http://otel-collector:4318}"
       DT_ENVIRONMENT: local
+      DT_BUILD_COMMIT: "${DT_BUILD_COMMIT:-dev}"
       PORT: "8083"
       LOG_LEVEL: info
       DATABASE_URL: "postgres://svc_webhooks:svc_webhooks@postgres:5432/dt?sslmode=disable"
@@ -370,6 +374,7 @@ services:
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: "${DT_OTLP_ENDPOINT-http://otel-collector:4318}"
       DT_ENVIRONMENT: local
+      DT_BUILD_COMMIT: "${DT_BUILD_COMMIT:-dev}"
       PORT: "8084"
       LOG_LEVEL: info
       DATABASE_URL: "postgres://svc_accounts:svc_accounts@postgres:5432/dt?sslmode=disable"

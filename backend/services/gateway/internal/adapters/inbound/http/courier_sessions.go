@@ -104,6 +104,7 @@ func (a *courierSessionsAPI) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	SetAuditTarget(r, res.Session.ID)
+	countSessionStarted(r.Context(), string(res.Session.Mode))
 	out := courierSessionCreatedJSON{Session: toCourierSessionJSON(res.Session)}
 	if res.Session.Mode == domain.ModeSDK {
 		out.AccessToken, out.AccessExpiresAt, out.RefreshToken = res.Tokens.AccessToken, &res.Tokens.AccessExpiresAt, res.Tokens.RefreshToken

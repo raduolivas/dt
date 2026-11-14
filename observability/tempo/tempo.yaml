@@ -1,0 +1,22 @@
+# Local Tempo (spec §6): OTLP HTTP in from the collector, local disk, 72 h.
+server:
+  http_listen_port: 3200
+  log_level: warn
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: 0.0.0.0:4318
+compactor:
+  compaction:
+    block_retention: 72h
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
+usage_report:
+  reporting_enabled: false

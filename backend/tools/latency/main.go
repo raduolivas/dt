@@ -342,24 +342,49 @@ func (c *client) watch(ctx context.Context, stream string, t target, k *clock, r
 	}
 }
 
-// session exchanges a tracking link token for a viewer token.
+// sessionRetryEvery and sessionRetryFor bound how long session waits for
+// tracking to learn about a just-created delivery.
+var (
+	sessionRetryEvery = 500 * time.Millisecond
+	sessionRetryFor   = 30 * time.Second
+)
+
+// session exchanges a tracking link token for a viewer token. A delivery
+// created a moment ago reaches tracking through the outbox and NATS, so until
+// it lands the gateway answers 503 tracking_unavailable ("Retry shortly"):
+// session retries that answer, and only that one, for up to sessionRetryFor.
 func (c *client) session(ctx context.Context, link string) (string, error) {
+	deadline := time.Now().Add(sessionRetryFor)
+	for {
+		token, status, err := c.sessionOnce(ctx, link)
+		if status != http.StatusServiceUnavailable || time.Now().After(deadline) {
+			return token, err
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(sessionRetryEvery):
+		}
+	}
+}
+
+func (c *client) sessionOnce(ctx context.Context, link string) (string, int, error) {
 	b, _ := json.Marshal(map[string]string{"token": link})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.api+"/v1/tracking/session", bytes.NewReader(b))
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	var out struct {
 		ViewerToken string `json:"viewer_token"`
 	}
 	err = decodeOK(resp, &out)
-	return out.ViewerToken, err
+	return out.ViewerToken, resp.StatusCode, err
 }
 
 func decodeOK(resp *http.Response, out any) error {

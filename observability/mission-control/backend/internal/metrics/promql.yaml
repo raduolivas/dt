@@ -1,10 +1,10 @@
-# PromQL templates for the prometheus adapter (spec §4.6). {{window}} becomes
-# a Prometheus duration such as 60s. Each query must return one series per wire
-# with a `wire` label ("<source>><target>", the topology wire id).
-# Metric names follow OBS §5.2 (http.server.request.duration ->
-# http_server_request_duration_seconds). OBS ships no per-wire label yet, so
-# until it does these return no series, the adapter reports ErrNoData and
+# Queries for the prometheus adapter (spec §4.6, §5.5). Each names a recording
+# rule from observability/prometheus/rules/mc-wires.yaml, which returns one
+# series per wire with a `wire` label ("<source>><target>", the topology wire
+# id) over a fixed 1m window. The rules, not this file, hold the mapping from
+# OBS labels to wires; the adapter's window argument does not apply to them.
+# Until OBS runs, these return no series, the adapter reports ErrNoData and
 # WithFallback uses the builtin source.
-rate: sum by (wire) (rate(http_server_request_duration_seconds_count[{{window}}]))
-error_rate: sum by (wire) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[{{window}}])) / sum by (wire) (rate(http_server_request_duration_seconds_count[{{window}}]))
-p95_ms: 1000 * histogram_quantile(0.95, sum by (wire, le) (rate(http_server_request_duration_seconds_bucket[{{window}}])))
+rate: mc:wire_requests:rate1m
+error_rate: mc:wire_errors:ratio1m
+p95_ms: mc:wire_latency_p95_ms:1m

@@ -40,6 +40,8 @@ type outMsg struct {
 // messages without blocking; its transport goroutine drains them.
 type stream struct {
 	claims viewerjwt.Claims // fixed after authentication
+	// transport is "ws" or "sse", set by the handler before join.
+	transport string
 
 	// Guarded by the hub's mutex.
 	joined bool

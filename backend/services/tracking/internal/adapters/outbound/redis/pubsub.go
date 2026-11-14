@@ -19,6 +19,11 @@ import (
 type snapEnvelope struct {
 	TP string          `json:"tp"`
 	S  json.RawMessage `json:"s"`
+	// RT is when the gateway received the fix behind this snapshot (unix ms)
+	// and Src the fix's source; both are absent for a snapshot no fix caused.
+	// Viewers never see them: the hub decodes only S.
+	RT  int64  `json:"rt,omitempty"`
+	Src string `json:"src,omitempty"`
 }
 
 func traceparent(ctx context.Context) string {
@@ -48,7 +53,11 @@ func (p *Publisher) Snapshot(ctx context.Context, deliveryID string, s domain.Tr
 	if err != nil {
 		return fmt.Errorf("encode snapshot: %w", err)
 	}
-	env, err := json.Marshal(snapEnvelope{TP: traceparent(ctx), S: b})
+	e := snapEnvelope{TP: traceparent(ctx), S: b}
+	if at, src, ok := app.FixReceived(ctx); ok {
+		e.RT, e.Src = at.UnixMilli(), src
+	}
+	env, err := json.Marshal(e)
 	if err != nil {
 		return fmt.Errorf("encode snapshot envelope: %w", err)
 	}

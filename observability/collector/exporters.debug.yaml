@@ -5,6 +5,8 @@ exporters:
 service:
   pipelines:
     traces:
-      exporters: [otlphttp/mission-control, debug]
+      exporters: [otlphttp/mission-control, otlphttp/tempo, debug]
     logs:
-      exporters: [otlphttp/mission-control, debug]
+      exporters: [otlphttp/mission-control, otlphttp/loki, debug]
+    metrics:
+      exporters: [otlphttp/prometheus, debug]

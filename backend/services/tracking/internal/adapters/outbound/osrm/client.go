@@ -81,7 +81,7 @@ func (c *Client) Route(ctx context.Context, profile string, pts ...domain.LatLng
 	}
 	var r response
 	q := url.Values{"overview": {"full"}, "geometries": {"geojson"}, "steps": {"false"}}
-	if err := c.get(ctx, profile, "route", strings.Join(coords, ";"), q, &r); err != nil {
+	if err := c.get(ctx, profile, opRoute, strings.Join(coords, ";"), q, &r); err != nil {
 		return nil, 0, err
 	}
 	if len(r.Routes) == 0 || len(r.Routes[0].Geometry.Coordinates) < 2 {
@@ -111,7 +111,7 @@ func (c *Client) Match(ctx context.Context, profile string, fixes []domain.Fix) 
 	// is built by hand rather than escaped.
 	extra := "geometries=geojson&overview=full&timestamps=" + strings.Join(ts, ";") + "&radiuses=" + strings.Join(rad, ";")
 	var r response
-	if err := c.getRaw(ctx, profile, "match", strings.Join(coords, ";"), extra, &r); err != nil {
+	if err := c.getRaw(ctx, profile, opMatch, strings.Join(coords, ";"), extra, &r); err != nil {
 		return nil, err
 	}
 	var out []domain.LatLng
@@ -127,7 +127,7 @@ func (c *Client) Match(ctx context.Context, profile string, fixes []domain.Fix) 
 // Nearest implements app.RoadSnapper: the closest point on the road network.
 func (c *Client) Nearest(ctx context.Context, profile string, p domain.LatLng) (domain.LatLng, error) {
 	var r response
-	if err := c.get(ctx, profile, "nearest", coord(p), url.Values{"number": {"1"}}, &r); err != nil {
+	if err := c.get(ctx, profile, opNearest, coord(p), url.Values{"number": {"1"}}, &r); err != nil {
 		return domain.LatLng{}, err
 	}
 	if len(r.Waypoints) == 0 {
@@ -141,7 +141,9 @@ func (c *Client) get(ctx context.Context, profile, service, coords string, q url
 	return c.getRaw(ctx, profile, service, coords, q.Encode(), out)
 }
 
-func (c *Client) getRaw(ctx context.Context, profile, service, coords, rawQuery string, out *response) error {
+func (c *Client) getRaw(ctx context.Context, profile, service, coords, rawQuery string, out *response) (err error) {
+	ctx, done := observe(ctx, service, profile)
+	defer func() { done(err) }()
 	base, ok := c.urls[profile]
 	if !ok || base == "" {
 		return fmt.Errorf("osrm: no server for profile %q", profile)
@@ -149,11 +151,11 @@ func (c *Client) getRaw(ctx context.Context, profile, service, coords, rawQuery 
 	u := fmt.Sprintf("%s/%s/v1/%s/%s?%s", base, service, osrmProfile[profile], coords, rawQuery)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return fmt.Errorf("osrm: %s: %w", service, err)
+		return fmt.Errorf("osrm: %s: %w", service, stripURL(err))
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("osrm: %s: %w", service, err)
+		return fmt.Errorf("osrm: %s: %w", service, stripURL(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
@@ -171,6 +173,17 @@ func (c *Client) getRaw(ctx context.Context, profile, service, coords, rawQuery 
 		return fmt.Errorf("osrm: %s: %s %s", service, out.Code, out.Message)
 	}
 	return nil
+}
+
+// stripURL drops the request URL from a transport error: a *url.Error
+// prints the full URL, and OSRM URLs hold coordinates. The wrapped cause
+// stays, so errors.Is and net.Error timeout checks still work.
+func stripURL(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return ue.Err
+	}
+	return err
 }
 
 // coord is a point as OSRM wants it: lng,lat.

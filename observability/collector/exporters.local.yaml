@@ -1,8 +1,26 @@
-# Where the collector sends telemetry in the local stack. Mission Control may be
-# absent: export errors are dropped, never retried, and never reach DT.
+# Where the collector sends telemetry in the local stack (pipelines: base.yaml).
+# Any backend may be absent: export errors are dropped, never retried, and never reach DT.
 exporters:
   otlphttp/mission-control:
     endpoint: ${env:MC_OTLP_ENDPOINT:-http://mc-backend:4318}
+    retry_on_failure:
+      enabled: false
+    sending_queue:
+      queue_size: 1000
+  otlphttp/tempo:
+    endpoint: http://tempo:4318
+    retry_on_failure:
+      enabled: false
+    sending_queue:
+      queue_size: 1000
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    retry_on_failure:
+      enabled: false
+    sending_queue:
+      queue_size: 1000
+  otlphttp/prometheus:
+    endpoint: http://prometheus:9090/api/v1/otlp
     retry_on_failure:
       enabled: false
     sending_queue:

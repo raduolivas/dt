@@ -53,6 +53,7 @@ message IngestRequest {
   string courier_id = 2; // a cou_ id
   repeated Fix fixes = 3; // at most 50
   string source = 4; // "relay" | "simulator" | "sdk" | "link"
+  int64 received_at_unix_ms = 5; // set by the gateway when the request arrived; 0 = unknown
 }
 
 message IngestResponse {

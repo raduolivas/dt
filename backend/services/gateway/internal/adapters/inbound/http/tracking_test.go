@@ -158,7 +158,7 @@ func newTrackGW(t *testing.T, lim app.Limiter, scopes ...domain.Scope) *trackGW 
 	k := mint(t, apikey.Test, actor, scopes...)
 	ft, fd, au := newFakeTracking(), newFake(), &memAudit{}
 	e := newEdge(t, []testKey{k},
-		withRoutes(httpapi.Routes(httpapi.Deps{Deliveries: fd, Tracking: ft})...),
+		withRoutes(httpapi.Routes(httpapi.Deps{Deliveries: fd, Tracking: ft, Clock: fixedClock{}})...),
 		withMiddleware(func(m *httpapi.Middleware) {
 			if lim != nil {
 				m.RateLimit = httpapi.PartnerRateLimit(lim, m.Log)

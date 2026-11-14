@@ -67,6 +67,7 @@ func (h *Hub) sse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := newStream(claims)
+	s.transport = "sse"
 	defer h.leave(s)
 	if err := h.join(ctx, s); err != nil {
 		switch {

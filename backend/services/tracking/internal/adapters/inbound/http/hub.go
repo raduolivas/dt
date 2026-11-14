@@ -71,6 +71,8 @@ type Deps struct {
 	Feed      app.ViewerFeed
 	// Log receives failures; never a token. Nil discards.
 	Log *slog.Logger
+	// Clock is "now" for the fix-to-viewer latency; nil means time.Now.
+	Clock func() time.Time
 	// Zero values take the defaults above.
 	MaxPerLink, MaxStreams                               int
 	PingInterval, PongTimeout, AuthTimeout, SwapInterval time.Duration
@@ -111,6 +113,9 @@ func NewHub(d Deps) *Hub {
 	}
 	if d.SwapInterval <= 0 {
 		d.SwapInterval = DefaultSwapInterval
+	}
+	if d.Clock == nil {
+		d.Clock = time.Now
 	}
 	log := d.Log
 	if log == nil {
@@ -220,6 +225,7 @@ func (h *Hub) join(ctx context.Context, s *stream) error {
 	add(h.byDelivery, c.DeliveryID, s)
 	s.joined = true
 	h.mu.Unlock()
+	countViewer(ctx, s.transport, 1)
 	if err := h.d.Feed.Subscribe(ctx, c.DeliveryID); err != nil {
 		return err
 	}
@@ -233,12 +239,16 @@ func (h *Hub) leave(s *stream) {
 	s.end(endGone) // no-op when already ended; later expiries arm nothing
 	s.stopTimers()
 	h.mu.Lock()
-	if s.joined {
+	wasJoined := s.joined
+	if wasJoined {
 		s.joined = false
 		remove(h.byLink, s.claims.LinkID, s)
 		remove(h.byDelivery, s.claims.DeliveryID, s)
 	}
 	h.mu.Unlock()
+	if wasJoined { // joined is cleared under the lock: one decrement per join
+		countViewer(context.Background(), s.transport, -1)
+	}
 	if s.subscribed {
 		s.subscribed = false
 		h.d.Feed.Unsubscribe(context.Background(), s.claims.DeliveryID)
@@ -355,6 +365,10 @@ func (h *Hub) Snapshot(ctx context.Context, deliveryID string, data []byte) {
 	}
 	for _, s := range streams {
 		s.offer(m)
+	}
+	// One observation per published snapshot, not per viewer.
+	if at, src, ok := app.FixReceived(ctx); ok {
+		observeFixToViewer(ctx, src, h.d.Clock().Sub(at))
 	}
 }
 
