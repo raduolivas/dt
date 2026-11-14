@@ -255,11 +255,13 @@ seed: dtctl ## Create the tenant "Dev Tenant" and a test key in the running stac
 	echo "Call the API with:" >&2; \
 	echo "curl -sS -H 'Authorization: Bearer $$secret' http://127.0.0.1:8080/v1/me"
 
-smoke: dtctl ## Run the M1, M2, M3 and M5 end-to-end smoke tests against the running stack (after make dev)
+smoke: dtctl ## Run the M1, M2, M3, M5 and OBS end-to-end smoke tests against the running stack (after make dev)
 	DTCTL=$(DTCTL) scripts/smoke-m1.sh
 	DTCTL=$(DTCTL) scripts/smoke-m2.sh
 	DTCTL=$(DTCTL) scripts/smoke-m3.sh
 	DTCTL=$(DTCTL) scripts/smoke-m5.sh
+	@# OBS=0 is exported to the script, which then skips with a message
+	DTCTL=$(DTCTL) scripts/smoke-obs.sh
 
 lan-https: ## Serve the courier page and courier API over HTTPS on the LAN for a phone (after make dev); see docs/runbooks/courier-phone-test.md
 	COMPOSE_OVERRIDE=$(COMPOSE_OVERRIDE) scripts/lan-https.sh
