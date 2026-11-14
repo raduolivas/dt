@@ -18,10 +18,17 @@ receivers:
     collection_interval: 15s
     targets:
       - endpoint: http://gateway:8080/readyz
-      - endpoint: http://deliveries:8081/readyz
+      # deliveries and accounts serve their listener over mTLS (dev certs from
+      # scripts/dev-certs.sh, mounted read-only into the collector by Compose).
+      - endpoint: https://deliveries:8081/readyz
+        tls: &readyz_tls
+          ca_file: /certs/ca.pem
+          cert_file: /certs/dtctl.pem
+          key_file: /certs/dtctl.key
       - endpoint: http://tracking:8082/readyz
       - endpoint: http://webhooks:8083/readyz
-      - endpoint: http://accounts:8084/readyz
+      - endpoint: https://accounts:8084/readyz
+        tls: *readyz_tls
 
 processors:
   memory_limiter:

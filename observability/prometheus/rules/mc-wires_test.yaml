@@ -189,3 +189,17 @@ tests:
             value: 97.5
           - labels: 'mc:wire_latency_p95_ms:1m{wire="tracking.simulator>deliveries.rpc"}'
             value: 97.5
+  - name: error ratio is 0 with traffic and no errors, and absent without traffic
+    interval: 15s
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="GET /v1/deliveries/{id}",http_response_status_code="200"}'
+        values: "0+15x20"
+      # The courier wire exists but sees no requests: flat counter.
+      - series: 'http_server_request_duration_seconds_count{service_name="gateway",http_route="POST /v1/courier/locations",http_response_status_code="200"}'
+        values: "0+0x20"
+    promql_expr_test:
+      - expr: mc:wire_errors:ratio1m
+        eval_time: 4m
+        exp_samples:
+          - labels: 'mc:wire_errors:ratio1m{wire="partner>gateway.partner_api"}'
+            value: 0

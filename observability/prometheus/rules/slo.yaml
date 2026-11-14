@@ -159,9 +159,16 @@ groups:
           severity: ticket
         annotations:
           summary: "More than 10% of OSRM calls fail, or their p95 is over 800 ms."
+      # ServiceNotReady: the httpcheck receiver emits, per target, a 2xx series
+      # with no http_status_code whose value is always 0, and a second 2xx series
+      # (http_status_code="200") that is 1 only while the check passes and stops
+      # being reported when it fails. Taking the max over the last minute per
+      # target is 1 while the check passes and falls to the always-0 series once
+      # the passing series stops or drops to 0; a plain `== 0` would match the
+      # always-0 series on healthy services.
       - alert: ServiceNotReady
         expr: >-
-          httpcheck_status{http_status_class="2xx"} == 0
+          max by (http_url) (max_over_time(httpcheck_status{http_status_class="2xx"}[1m])) == 0
         for: 2m
         labels:
           severity: page

@@ -342,33 +342,66 @@ tests:
         exp_alerts: []
 
   # ---- ServiceNotReady ------------------------------------------------------
-  - name: ServiceNotReady fires after 2 minutes without a 2xx readiness answer
+  # The httpcheck receiver's real shape: per target an always-0 2xx series with
+  # no http_status_code, and a 2xx series with http_status_code="200" that is 1
+  # while the check passes and is not reported when it fails.
+  - name: ServiceNotReady fires when the passing series stops being reported
     interval: 15s
     input_series:
       - series: 'httpcheck_status{http_status_class="2xx",http_url="http://tracking:8082/readyz"}'
-        values: "0x40"
-      - series: 'httpcheck_status{http_status_class="5xx",http_url="http://tracking:8082/readyz"}'
-        values: "1x40"
+        values: "0x120"
+      - series: 'httpcheck_status{http_status_class="2xx",http_status_code="200",http_url="http://tracking:8082/readyz"}'
+        values: "1x20 _x100"
+      - series: 'httpcheck_status{http_status_class="2xx",http_url="http://gateway:8080/readyz"}'
+        values: "0x120"
+      - series: 'httpcheck_status{http_status_class="2xx",http_status_code="200",http_url="http://gateway:8080/readyz"}'
+        values: "1x120"
     alert_rule_test:
-      - eval_time: 5m
+      - eval_time: 10m
         alertname: ServiceNotReady
         exp_alerts:
           - exp_labels:
               severity: page
-              http_status_class: 2xx
               http_url: http://tracking:8082/readyz
             exp_annotations:
               summary: "A service's /readyz has not answered 2xx for 2 minutes."
 
-  - name: ServiceNotReady is quiet when ready, and for a blip under 2 minutes
+  - name: ServiceNotReady fires when the passing series drops to 0
+    interval: 15s
+    input_series:
+      - series: 'httpcheck_status{http_status_class="2xx",http_url="http://tracking:8082/readyz"}'
+        values: "0x120"
+      - series: 'httpcheck_status{http_status_class="2xx",http_status_code="200",http_url="http://tracking:8082/readyz"}'
+        values: "1x20 0x100"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ServiceNotReady
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              http_url: http://tracking:8082/readyz
+            exp_annotations:
+              summary: "A service's /readyz has not answered 2xx for 2 minutes."
+
+  - name: ServiceNotReady is quiet when healthy, and for a blip under 2 minutes
     interval: 15s
     input_series:
       - series: 'httpcheck_status{http_status_class="2xx",http_url="http://gateway:8080/readyz"}'
-        values: "1x40"
+        values: "0x120"
+      - series: 'httpcheck_status{http_status_class="2xx",http_status_code="200",http_url="http://gateway:8080/readyz"}'
+        values: "1x120"
       - series: 'httpcheck_status{http_status_class="2xx",http_url="http://tracking:8082/readyz"}'
-        values: "1x10 0x4 1x26"
+        values: "0x120"
+      - series: 'httpcheck_status{http_status_class="2xx",http_status_code="200",http_url="http://tracking:8082/readyz"}'
+        values: "1x40 _x4 1x76"
     alert_rule_test:
       - eval_time: 5m
+        alertname: ServiceNotReady
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: ServiceNotReady
+        exp_alerts: []
+      - eval_time: 25m
         alertname: ServiceNotReady
         exp_alerts: []
 

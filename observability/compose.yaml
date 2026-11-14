@@ -22,6 +22,10 @@ services:
       - ../../observability/collector/redact-keys.yaml:/etc/otelcol/redact-keys.yaml:ro
       - ../../observability/collector/exporters.local.yaml:/etc/otelcol/exporters.local.yaml:ro
       - ../../observability/collector/exporters.debug.yaml:/etc/otelcol/exporters.debug.yaml:ro
+      # Dev CA and the dtctl client certificate, for the mTLS readiness checks.
+      - ./certs/ca.pem:/certs/ca.pem:ro
+      - ./certs/dtctl.pem:/certs/dtctl.pem:ro
+      - ./certs/dtctl.key:/certs/dtctl.key:ro
     # No healthcheck: the image is distroless (no shell, curl or wget), so Compose
     # cannot probe the health_check extension (13133) from inside it.
 

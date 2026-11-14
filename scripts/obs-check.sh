@@ -21,11 +21,15 @@ cname="dt-obs-check-$$"
 cleanup() { docker rm -f "$cname" >/dev/null 2>&1 || true; rm -rf "$work"; }
 trap cleanup EXIT
 chmod 777 "$work" # the collector runs as an unprivileged user
+# The httpcheck receiver loads the dev mTLS client certificate at start, so the
+# collector needs one: write a throwaway set (dev-certs.sh world-readable keys).
+"$root/scripts/dev-certs.sh" "$work/certs"
 
 mounts=(-v "$cfg/base.yaml:/etc/otelcol/base.yaml:ro"
         -v "$cfg/redact-keys.yaml:/etc/otelcol/redact-keys.yaml:ro"
         -v "$cfg/exporters.local.yaml:/etc/otelcol/exporters.local.yaml:ro"
-        -v "$cfg/exporters.debug.yaml:/etc/otelcol/exporters.debug.yaml:ro")
+        -v "$cfg/exporters.debug.yaml:/etc/otelcol/exporters.debug.yaml:ro"
+        -v "$work/certs:/certs:ro")
 args=(--config /etc/otelcol/base.yaml --config /etc/otelcol/exporters.local.yaml)
 
 echo "obs-check: validating the merged config"
