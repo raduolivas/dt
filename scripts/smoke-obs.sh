@@ -124,13 +124,15 @@ poll fix-to-viewer "$WAIT" relay_count
 ok "fix-to-viewer relay count rose from ${relay_before} by at least 10 during the run"
 
 # ---- 2. recording rules ----------------------------------------------------------------------------------------
-# The courier wire is the one the tool drives with fixes: a positive rate within the run window (not just a series).
+# The tool pushes fixes with an API key to POST /v1/couriers/{id}/locations: that is the partner API wire, not the
+# courier API (/v1/courier/..., the courier app), which this load never calls. A positive rate within the run window
+# (not just a series).
 wire_positive() {
   local w=$(($(date +%s) - start_ns / 1000000000 + 1))
-  [[ "$(q "$PROM" /api/v1/query "query=count(max_over_time(mc:wire_requests:rate1m{wire=\"courier>gateway.courier_api\"}[${w}s]) > 0)" | scalar)" -ge 1 ]]
+  [[ "$(q "$PROM" /api/v1/query "query=count(max_over_time(mc:wire_requests:rate1m{wire=\"partner>gateway.partner_api\"}[${w}s]) > 0)" | scalar)" -ge 1 ]]
 }
 poll wire-requests "$WAIT" wire_positive
-ok "mc:wire_requests:rate1m{courier>gateway.courier_api} > 0 within the run window"
+ok "mc:wire_requests:rate1m{partner>gateway.partner_api} > 0 within the run window"
 
 # ---- 3. traces -------------------------------------------------------------------------------------------------
 # Candidates: traces with spans from both services (Tempo's search drops leading zeros of the id: pad to 32 digits).
