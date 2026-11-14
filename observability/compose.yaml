@@ -98,6 +98,7 @@ services:
     volumes:
       - ../../observability/grafana/grafana.ini:/etc/grafana/grafana.ini:ro
       - ../../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../observability/grafana/dashboards:/etc/grafana/dashboards:ro
 
 volumes:
   obs-prom:

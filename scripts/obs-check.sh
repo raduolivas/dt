@@ -56,6 +56,31 @@ docker run --rm --entrypoint /tempo -v "$obs/tempo/tempo.yaml:/etc/tempo/tempo.y
 docker run --rm --entrypoint /usr/bin/loki -v "$obs/loki/loki.yaml:/etc/loki/loki.yaml:ro" \
   "$loki_image" -config.file=/etc/loki/loki.yaml -verify-config
 
+echo "obs-check: linting the Grafana dashboards"
+dash="$obs/grafana/dashboards"
+for f in dt-overview dt-api dt-live-tracking dt-events; do
+  [ -f "$dash/$f.json" ] || { echo "FAIL: dashboard $f.json is missing" >&2; exit 1; }
+done
+for f in "$dash"/*.json; do
+  jq -e . "$f" >/dev/null || { echo "FAIL: $f is not valid JSON" >&2; exit 1; }
+done
+dups="$(jq -r '.uid' "$dash"/*.json | sort | uniq -d)"
+[ -z "$dups" ] || { echo "FAIL: duplicate dashboard uid: $dups" >&2; exit 1; }
+[ "$(jq -r '.uid // empty' "$dash"/*.json | wc -l)" = "$(ls "$dash"/*.json | wc -l)" ] || { echo "FAIL: a dashboard has no uid" >&2; exit 1; }
+# Every Prometheus target expression must parse: wrap each in a recording rule
+# for promtool, after replacing Grafana's $variables with literals.
+{
+  echo "groups:"; echo "  - name: dashboards"; echo "    rules:"
+  for f in "$dash"/*.json; do
+    base="$(basename "$f" .json | tr -c 'a-zA-Z0-9\n' '_')"
+    jq -r '[.. | objects | select(.datasource.uid? == "prometheus") | .targets[]?.expr // empty] | .[] | @json' "$f" \
+      | sed -E 's/\$__rate_interval|\$\{__rate_interval\}/5m/g; s/\$__interval/1m/g; s/\$__range/1h/g; s/\$\{?[A-Za-z_]+\}?/x/g' \
+      | awk -v b="$base" '{ printf "      - record: dash:%s_%d\n        expr: %s\n", b, NR, $0 }'
+  done
+} >"$work/dashboards-rules.yaml"
+grep -q 'record:' "$work/dashboards-rules.yaml" || { echo "FAIL: no Prometheus target found in the dashboards" >&2; exit 1; }
+docker run --rm --entrypoint promtool -v "$work/dashboards-rules.yaml:/r.yaml:ro" "$prom_image" check rules /r.yaml
+
 echo "obs-check: redaction test"
 # Test-only override: write traces to a file instead of Mission Control.
 cat >"$work/file.yaml" <<'YAML'
