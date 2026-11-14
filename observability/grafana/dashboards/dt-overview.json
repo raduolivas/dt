@@ -1,7 +1,7 @@
 {
   "uid": "dt-overview",
   "title": "DT overview",
-  "description": "Is DT healthy? The four SLOs with 30-day error budget left, service readiness and alerts.",
+  "description": "Is DT healthy? The four SLOs with error budget left since data start (queries use a 30-day window, Prometheus keeps 7 days locally), service readiness and alerts.",
   "tags": [
     "dt",
     "overview"
@@ -38,7 +38,7 @@
     {
       "id": 1,
       "type": "row",
-      "title": "SLOs: 30-day error budget left (1 = full budget, below 0 = overspent)",
+      "title": "SLOs: error budget left since data start, 30 d window, at most 7 d of data locally (1 = full budget, below 0 = overspent)",
       "collapsed": false,
       "gridPos": {
         "x": 0,

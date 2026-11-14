@@ -163,7 +163,7 @@ ok "trace ${trace_id} spans gateway and tracking"
 ok "Loki has a log line with trace_id ${trace_id}"
 
 # ---- 5. leak check ---------------------------------------------------------------------------------------------
-loki_leaks="$(q "$LOKI" /loki/api/v1/query_range 'query={service_name=~".+"} |~ "dt_sk_|dt_pk_|Latency (pickup|dropoff|[0-9])|52[.]3731|4[.]8922|4[.]8852"' \
+loki_leaks="$(q "$LOKI" /loki/api/v1/query_range 'query={service_name=~".+"} |~ "dt_sk_|dt_pk_|dt_lnk_|eyJ|Latency (pickup|dropoff|[0-9])|52[.]3731|4[.]8922|4[.]8852"' \
   "start=$((start_ns - 60000000000))" "end=$((end_ns + 60000000000))" limit=5 \
   | jq -r '[.data.result[].values[]] | length')" || fail leak "the Loki leak query failed"
 [[ "$loki_leaks" == 0 ]] || fail leak "${loki_leaks} Loki line(s) in the run window contain a key prefix, a latency-tool name or a coordinate"
@@ -174,7 +174,7 @@ for t in $(grep -vx "$trace_id" "$candidates" | head -n 10); do
   i=$((i + 1))
   get "${TEMPO}/api/traces/${t}" >"$work/t-${i}.json" || fail leak "could not fetch trace ${t}"
 done
-if grep -Elq 'dt_sk_|dt_pk_' "$work"/t-*.json; then fail leak "a trace contains an API key prefix"; fi
+if grep -Elq 'dt_sk_|dt_pk_|dt_lnk_|eyJ[A-Za-z0-9_-]+[.]eyJ' "$work"/t-*.json; then fail leak "a trace contains an API key, link token or JWT"; fi
 if grep -Eq "$pii_re" "$work"/t-*.json; then fail leak "a trace contains a latency-tool name ($(grep -Eho "$pii_re" "$work"/t-*.json | sort -u | head -3 | tr '\n' ' '))"; fi
 if grep -Elq "$coord_re" "$work"/t-*.json; then
   fail leak "a trace contains a coordinate string ($(grep -Eho "$coord_re" "$work"/t-*.json | sort -u | head -3 | tr '\n' ' '))"

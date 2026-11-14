@@ -18,7 +18,7 @@ Written at the end of the OBS work so the plan decisions, the controller's rulin
 
 | # | Ruling | Cost if wrong |
 |---|---|---|
-| R1 | The label allow-list follows the plan: spec §5.2 plus `rpc.system` and the otelhttp-standard keys (`network.protocol.*`, `url.scheme`, `server.address`, `server.port`); `dt.courier.sessions.started{mode}` per P3. OTel semconv emits them anyway and none is an id. | A few extra low-cardinality labels in Prometheus. |
+| R1 | The label allow-list follows the plan: spec §5.2 plus `rpc.system` and the otelhttp-standard keys (`network.protocol.*`, `url.scheme`; `server.address` and `server.port` are dropped by a view, see the final-review fixes); `dt.courier.sessions.started{mode}` per P3. OTel semconv emits them anyway and none is an id. | A few extra low-cardinality labels in Prometheus. |
 | R2 | Prometheus ingests OTLP natively (P1). | Swap the exporter to `prometheusremotewrite`. |
 | R3 | otelpgx spans landed in Task 3 with arguments off and a Go test; the exact-key collector deletes for `db.query.parameters` (MC1 F1) landed in Task 8, on the same branch and before any export to a backend existed. | A window of commits where the collector would not delete a key nothing emits. |
 | R4 | `dt.outbox.pending` is the number of rows the relay selected but failed to publish in its last tick (no extra query). `OutboxStuck` is therefore `dt_outbox_pending > 0 for 10m`, not "derivative > 0": a constant failing batch never grows. | A backlog deeper than one batch that publishes slowly stays invisible; fix with a periodic `count(*)` on the partial index. |
@@ -47,7 +47,7 @@ Features not built:
 - **Step 4, staging**: CloudWatch (EMF) and X-Ray exporters (`exporters.staging.yaml`, ADOT), after the AWS resume (D28) and OQ30. Staging needs its own https httpcheck targets; the local ones are compose names.
 - **Webhook metrics arrive in M6.** `dt.webhook.*` is in the allow-list and in the dashboards, but there is no instrument yet, so those panels and `WebhookFirstAttemptSlow` have no data.
 - **MC Health tab shows no source name (R9).**
-- **`dt.outbox.pending` semantics (R4):** a periodic `count(*)` would show a deep slow backlog. A failed select, UPDATE or commit in `publishBatch` leaves the gauge stale (it can read 0 while rows are unpublished).
+- **`dt.outbox.pending` semantics (R4):** a periodic `count(*)` would show a deep slow backlog. A failed begin, lock or select in `publishBatch` still leaves the last value (UPDATE or commit failure and a lost advisory lock are fixed, see below).
 
 Smoke and flakes:
 - **Latency tool 503 `tracking_unavailable` start race** (about 4 of 12 runs, NATS not ready when the tool starts). The OBS smoke step masks it with 3 retries; fix the cause in tracking's readiness or the tool.
@@ -63,6 +63,22 @@ Deferred minors, grouped:
 - **Collector and stack:** no F1 coverage for cookie, log and event attributes (only span and metric keys); the `[REDACTED]` count in the mask test is a floor (at least 6); retention shows deleted data for a short delay; `TelemetryExportFailing` fires locally for `otlphttp/mission-control` when Mission Control is not running.
 - **Dashboards and rules:** Overview "API p95 now" uses all gateway routes while the SLO excludes the ingest routes; the dashboard lint skips template-variable queries, is syntax-only, and checks uids indirectly; "OSRM routes" means gateway routes reaching tracking ingest (the gateway never calls OSRM).
 - **Smoke:** a stray blank line in `smoke-obs.sh`.
+
+## Final whole-branch review: fixed (single fix wave)
+
+- **Client-controlled `server.address` / `server.port`** on every HTTP metric (otelhttp derives them from the Host header, so a public caller could fill the SDK's series limit): both keys are now denied by an attribute filter on the `http.server.request.duration` view (the same view as the buckets) and removed from the allow-list. Test: three Host headers give one series.
+- **`dt.outbox.pending`** read 0 when publishes succeeded but the UPDATE or commit failed, and kept a stale value after losing the advisory lock: it now reads the whole batch on UPDATE/commit failure and 0 on a lost lock. Test with a deferred constraint trigger that fails the commit, then a held advisory lock.
+- **Grafana anonymous Viewer could not open Explore** (Mission Control deep links, exemplar links): `viewers_can_edit = true` in `grafana.ini`; local only, provisioned dashboards stay non-saveable.
+- Client RPC histograms now record with the call context (exemplars); the dashboards provider sets `folder: DT`; the Overview budget stats say "since data start, at most 7 d locally"; the smoke leak checks add `dt_lnk_` and `eyJ` (traces match the JWT shape `eyJ...\.eyJ`).
+
+## Follow-ups from the final review (not fixed)
+
+- Hot-path package mutexes in `instruments()`: use `sync.Once` or `atomic.Pointer`.
+- `lag.go` should reuse the consumer handle instead of fetching it each poll.
+- The collector fails to start when `infra/compose/certs/*` is missing (only when compose is run by hand, not through `make dev`).
+- A Prometheus label-value leak scan in the smoke (only Loki and Tempo are scanned).
+- Gateway `TestAuthorizationMatrix` takes about 4 min (about 580 s under `make ci` parallel load; the same on main, 226 s vs 221 s): give `make ci` an explicit `-timeout` or slim the fixture.
+- GO-2026-6859 (go1.27.4): separate PR.
 
 ## Closed by OBS
 

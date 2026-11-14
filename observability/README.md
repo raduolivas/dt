@@ -10,7 +10,7 @@ What runs locally with `make dev` (all pinned by tag and digest in `compose.yaml
 | `loki` | logs (trace id as structured metadata) | 72 h, 256 MB |
 | `grafana` | dashboards and Explore, provisioned from files | 192 MB |
 
-Only Grafana publishes a host port: `127.0.0.1:3000` (anonymous Viewer; admin password `dt-local-admin`, or `GF_SECURITY_ADMIN_PASSWORD`). Containers are `read_only`, `cap_drop: [ALL]`, `no-new-privileges`. Loki runs as uid 0 (its image owns `/loki` as root); local only. Data lives in the named volumes `obs-prom`, `obs-tempo`, `obs-loki`; `make down` removes them, also after `OBS=0`.
+Only Grafana publishes a host port: `127.0.0.1:3000` (anonymous Viewer, who may open Explore because `viewers_can_edit = true` in `grafana.ini`; local only, provisioned dashboards stay read-only; admin password `dt-local-admin`, or `GF_SECURITY_ADMIN_PASSWORD`). Containers are `read_only`, `cap_drop: [ALL]`, `no-new-privileges`. Loki runs as uid 0 (its image owns `/loki` as root); local only. Data lives in the named volumes `obs-prom`, `obs-tempo`, `obs-loki`; `make down` removes them, also after `OBS=0`.
 
 The services send traces, logs and metrics to the collector over OTLP/HTTP (metrics every 15 s). The collector forwards traces and logs to Mission Control (`MC_OTLP_ENDPOINT`, default `http://mc-backend:4318`) and all three signals to Tempo, Loki and Prometheus. If a backend is down its exports are dropped; DT requests and `/readyz` are not affected. With no endpoint set (`OBS=0`) nothing is exported.
 
@@ -32,7 +32,7 @@ Provisioned from `grafana/dashboards/` (folder DT). Traces link from metric exem
 
 | Dashboard (uid) | Question it answers |
 |---|---|
-| DT overview (`dt-overview`) | Are we inside the SLOs? 30-day error budget left for API latency, fix-to-viewer, webhook first attempt and availability; current p95s, request rate, 5xx ratio, firing alerts, service readiness. |
+| DT overview (`dt-overview`) | Are we inside the SLOs? error budget left (30 d window, at most 7 d of local data) for API latency, fix-to-viewer, webhook first attempt and availability; current p95s, request rate, 5xx ratio, firing alerts, service readiness. |
 | DT API (`dt-api`) | Which service or route is slow or failing? RED per service and per route, top routes by p95 and 5xx, gateway rate-limit rejections, internal RPC client rate and p95. |
 | DT live tracking (`dt-live-tracking`) | Is the map live? Fix-to-viewer p50/p95/p99 by source, fixes by outcome and source, viewer connections, routing latency and errors, tracking consumer lag, courier sessions started and token refresh. |
 | DT events and webhooks (`dt-events`) | Are events flowing? Outbox pending and publish time, consumer lag, messages by outcome, handling time per stream; webhook success and first-attempt delay (no data until M6). |
