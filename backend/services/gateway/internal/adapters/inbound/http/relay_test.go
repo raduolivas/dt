@@ -84,6 +84,9 @@ func TestRelayForwardsFixesToTracking(t *testing.T) {
 	if in.GetCourierId() != couID || in.GetSource() != "relay" || len(in.GetFixes()) != 2 {
 		t.Fatalf("request = %v", in)
 	}
+	if want := (fixedClock{}).Now().UnixMilli(); in.GetReceivedAtUnixMs() != want {
+		t.Fatalf("received_at_unix_ms = %d, want the gateway clock %d", in.GetReceivedAtUnixMs(), want)
+	}
 	f0, f1 := in.GetFixes()[0], in.GetFixes()[1]
 	if !f0.GetT().AsTime().Equal(time.Date(2026, 10, 22, 14, 15, 3, 0, time.UTC)) || f0.GetLat() != -23.5612 ||
 		f0.GetLng() != -46.6557 || f0.GetAccuracyM() != 6.5 || f0.GetSpeedMps() != 4.8 || f0.GetHeadingDeg() != 84 {

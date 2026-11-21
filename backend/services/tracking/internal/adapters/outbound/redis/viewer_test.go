@@ -3,6 +3,7 @@ package redis_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -381,5 +382,37 @@ func TestFeedExtractsContext(t *testing.T) {
 	sc := trace.SpanContextFromContext(ev.ctxs[0])
 	if !sc.IsRemote() || sc.TraceID() != span.SpanContext().TraceID() {
 		t.Fatalf("ctx span context = %v, want remote with trace %s", sc, span.SpanContext().TraceID())
+	}
+}
+
+func TestEnvelopeCarriesReceivedTime(t *testing.T) {
+	rdb := client(t)
+	ev := runFeed(t, rdb)
+	at := time.UnixMilli(1_700_000_000_123)
+	ctx := app.WithFixReceived(context.Background(), at, "relay")
+	if err := redis.NewPublisher(rdb).Snapshot(ctx, "del_1", domain.TrackingSnapshot{DeliveryID: "del_1", Version: 5}); err != nil {
+		t.Fatal(err)
+	}
+	ev.waitFor(t, "enveloped snapshot", func() bool { return len(ev.snaps["del_1"]) == 1 })
+	got, src, ok := app.FixReceived(ev.ctxs[0])
+	if !ok || !got.Equal(at) || src != "relay" {
+		t.Fatalf("FixReceived = %v %q %v", got, src, ok)
+	}
+	// The viewer-facing part is untouched: no rt or src inside the snapshot.
+	if s := ev.snaps["del_1"][0]; strings.Contains(s, `"rt"`) || strings.Contains(s, `"src"`) {
+		t.Fatalf("snapshot leaks envelope fields: %s", s)
+	}
+
+	// Without a received time in ctx the envelope omits rt and src.
+	if err := redis.NewPublisher(rdb).Snapshot(context.Background(), "del_1", domain.TrackingSnapshot{DeliveryID: "del_1", Version: 6}); err != nil {
+		t.Fatal(err)
+	}
+	// A legacy bare snapshot has none either.
+	rdb.Publish(context.Background(), redis.SnapChannel("del_1"), `{"delivery_id":"del_1","version":7}`)
+	ev.waitFor(t, "two more snapshots", func() bool { return len(ev.snaps["del_1"]) == 3 })
+	for _, c := range ev.ctxs[1:] {
+		if _, _, ok := app.FixReceived(c); ok {
+			t.Fatal("snapshot without a received time reports one")
+		}
 	}
 }

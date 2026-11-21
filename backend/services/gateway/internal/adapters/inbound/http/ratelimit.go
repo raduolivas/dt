@@ -25,6 +25,7 @@ func ceilSeconds(d time.Duration) int {
 }
 
 func rateLimited(w http.ResponseWriter, r *http.Request, d app.Decision) {
+	countRejection(r.Context(), r.URL.Path)
 	w.Header().Set("Retry-After", strconv.Itoa(max(ceilSeconds(d.RetryAfter), 1)))
 	httpx.WriteProblem(w, r, httpx.Problem{
 		Status: http.StatusTooManyRequests, Code: "rate_limited",

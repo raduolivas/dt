@@ -267,7 +267,8 @@ func (f *Feed) dispatch(ctx context.Context, m *goredis.Message, h app.FeedHandl
 }
 
 // unwrapSnapshot splits a snapshot payload into the snapshot and a context
-// carrying the publisher's remote span context. A JSON object without an "s"
+// carrying the publisher's remote span context and, when the snapshot
+// was caused by a fix, the fix's received time and source. A JSON object without an "s"
 // key is the legacy bare snapshot: it is returned unchanged, with ctx as is.
 func unwrapSnapshot(ctx context.Context, payload string) (context.Context, []byte) {
 	var env snapEnvelope
@@ -276,6 +277,9 @@ func unwrapSnapshot(ctx context.Context, payload string) (context.Context, []byt
 	}
 	if env.TP != "" {
 		ctx = otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier{"traceparent": env.TP})
+	}
+	if env.RT > 0 {
+		ctx = app.WithFixReceived(ctx, time.UnixMilli(env.RT), env.Src)
 	}
 	return ctx, env.S
 }

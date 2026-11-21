@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -19,6 +20,7 @@ import (
 	accountsv1 "github.com/raduolivas/dt/backend/gen/dt/accounts/v1"
 	"github.com/raduolivas/dt/backend/gen/dt/accounts/v1/accountsv1connect"
 	"github.com/raduolivas/dt/backend/pkg/otelx"
+	"github.com/raduolivas/dt/backend/pkg/otelx/otelxtest"
 )
 
 const procedure = "/dt.accounts.v1.AccountsService/CreateTenant"
@@ -140,4 +142,89 @@ func TestClientSpanErrorStatus(t *testing.T) {
 	if code != "not_found" {
 		t.Errorf("rpc.connect_rpc.error_code = %q, want not_found", code)
 	}
+}
+
+// callMetered serves the stub with the handler interceptor, calls it through
+// the client interceptor and returns both metrics' attribute sets plus the
+// number of spans named after the procedure.
+func callMetered(t *testing.T, stubErr error) (reader *sdkmetric.ManualReader, procSpans int, err error) {
+	t.Helper()
+	reader = installMetrics(t)
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	prevTP := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() { otel.SetTracerProvider(prevTP); _ = tp.Shutdown(context.Background()) })
+
+	srv := connect.NewServer(otelx.ConnectHandlerInterceptor())
+	accountsv1connect.RegisterAccountsServiceHandler(srv, connectStub{err: stubErr})
+	mux := http.NewServeMux()
+	connecthttp.Mount(mux, srv)
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	c := accountsv1connect.NewAccountsServiceClient(
+		connect.NewClient(connecthttp.NewTransport(ts.Client(), ts.URL), otelx.ConnectClientInterceptor()))
+	_, err = c.CreateTenant(context.Background(), &accountsv1.CreateTenantRequest{Name: "Acme"})
+	for _, s := range rec.Ended() {
+		if s.Name() == procedure {
+			procSpans++
+		}
+	}
+	return reader, procSpans, err
+}
+
+func checkRPCMetric(t *testing.T, reader *sdkmetric.ManualReader, name, wantCode string) {
+	t.Helper()
+	rm, sets := collectAttrs(t, reader, name)
+	otelxtest.AssertAllowed(t, rm)
+	if len(sets) != 1 {
+		t.Fatalf("%s: got %d points, want 1", name, len(sets))
+	}
+	want := map[string]string{
+		"rpc.system":  "connect_rpc",
+		"rpc.service": "dt.accounts.v1.AccountsService",
+		"rpc.method":  "CreateTenant",
+	}
+	if wantCode != "" {
+		want["rpc.connect_rpc.error_code"] = wantCode
+	}
+	if sets[0].Len() != len(want) {
+		t.Errorf("%s: attributes = %v, want exactly %v", name, sets[0].ToSlice(), want)
+	}
+	for k, v := range want {
+		if got, _ := sets[0].Value(attribute.Key(k)); got.AsString() != v {
+			t.Errorf("%s: %s = %q, want %q", name, k, got.AsString(), v)
+		}
+	}
+}
+
+func TestConnectHandlerInterceptorRecordsServerDuration(t *testing.T) {
+	reader, procSpans, err := callMetered(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkRPCMetric(t, reader, "rpc.server.duration", "")
+	if procSpans != 1 {
+		t.Errorf("%d spans named %s, want 1 (the client span only)", procSpans, procedure)
+	}
+
+	reader, _, err = callMetered(t, connect.NewError(connect.CodeNotFound, "no such tenant"))
+	if connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("err = %v", err)
+	}
+	checkRPCMetric(t, reader, "rpc.server.duration", "not_found")
+}
+
+func TestConnectClientInterceptorRecordsClientDuration(t *testing.T) {
+	reader, _, err := callMetered(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkRPCMetric(t, reader, "rpc.client.duration", "")
+
+	reader, _, err = callMetered(t, connect.NewError(connect.CodeNotFound, "no such tenant"))
+	if connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("err = %v", err)
+	}
+	checkRPCMetric(t, reader, "rpc.client.duration", "not_found")
 }

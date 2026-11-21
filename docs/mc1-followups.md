@@ -18,8 +18,8 @@ These are the decisions Claude made while running the plan, and the items left o
 
 ## Follow-ups (parked, none blocks merge)
 
-- **F1 (redaction hardening):** because of MC1-R5, `http.request.header.authorization`/`cookie`, `url.query`/`url.full` and `db.statement` are caught by no collector rule. Nothing emits them today: otelhttp captures no headers, `url.path` goes through `httpx.RedactPath`, and redisotel runs with `WithDBStatement(false)`. Before any header or query capture is turned on, add exact-key deletes for those names after `merge_maps`.
-- **F2:** tracer and logger providers shut down one after the other inside the 5 s bound, so a hung trace export uses up the log flush's time. Shut them down in parallel.
+- **F1 (redaction hardening), closed by OBS (2026-11, `obs-stack`; see `obs-followups.md`):** because of MC1-R5, `http.request.header.authorization`/`cookie`, `url.query`/`url.full` and `db.statement` are caught by no collector rule. Nothing emits them today: otelhttp captures no headers, `url.path` goes through `httpx.RedactPath`, and redisotel runs with `WithDBStatement(false)`. Before any header or query capture is turned on, add exact-key deletes for those names after `merge_maps`.
+- **F2, closed by OBS (`otelx.shutdownAll` runs the providers in parallel):** tracer and logger providers shut down one after the other inside the 5 s bound, so a hung trace export uses up the log flush's time. Shut them down in parallel.
 - **F3:** `scripts/lan-https.sh` and the CI "logs" step use only the infra Compose file, so they leave the collector out.
 - **F4:** partner-supplied baggage now reaches internal RPCs. Nothing reads it; consider stripping it at the gateway.
 - **F5:** every ingest batch that drops a fix logs one WARN, as the plan says. That may be noisy for routine reasons such as `stale`.

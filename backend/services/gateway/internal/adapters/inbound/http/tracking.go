@@ -15,6 +15,7 @@ import (
 	"github.com/raduolivas/dt/backend/gen/dt/tracking/v1/trackingv1connect"
 	"github.com/raduolivas/dt/backend/pkg/httpx"
 	"github.com/raduolivas/dt/backend/services/gateway/api"
+	"github.com/raduolivas/dt/backend/services/gateway/internal/app"
 	"github.com/raduolivas/dt/backend/services/gateway/internal/domain"
 )
 
@@ -23,8 +24,9 @@ import (
 // call comes from the authenticated principal, never from the request, and
 // tracking answers NotFound for anything outside it.
 type trackingAPI struct {
-	c   trackingv1connect.TrackingServiceClient // nil: tracking_unavailable
-	log *slog.Logger
+	c     trackingv1connect.TrackingServiceClient // nil: tracking_unavailable
+	clock app.Clock
+	log   *slog.Logger
 }
 
 func (a *trackingAPI) scope(w http.ResponseWriter, r *http.Request) (*trackingv1.Scope, bool) {

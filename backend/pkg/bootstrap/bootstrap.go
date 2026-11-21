@@ -18,11 +18,13 @@ import (
 	"time"
 
 	"github.com/caarlos0/env/v11"
+	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/metric/noop"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/raduolivas/dt/backend/pkg/httpx"
@@ -205,7 +207,7 @@ func Run(ctx context.Context, opts Options) (err error) {
 	}
 
 	// pgxpool.New does not connect; the first query or /readyz does.
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	pool, err := newPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("%s: database: invalid DATABASE_URL", opts.Name)
 	}
@@ -303,4 +305,17 @@ func drainNATS(nc *nats.Conn) {
 		time.Sleep(25 * time.Millisecond)
 	}
 	nc.Close()
+}
+
+// newPool builds the pgx pool with query spans. otelpgx omits query
+// parameters by default; its db.client.* metrics are off (not in the spec's
+// metric set); never enable WithIncludeQueryParameters, arguments
+// can carry secrets.
+func newPool(ctx context.Context, url string) (*pgxpool.Pool, error) {
+	pcfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		return nil, err
+	}
+	pcfg.ConnConfig.Tracer = otelpgx.NewTracer(otelpgx.WithMeterProvider(noop.NewMeterProvider()))
+	return pgxpool.NewWithConfig(ctx, pcfg)
 }

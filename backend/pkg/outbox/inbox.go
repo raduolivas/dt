@@ -81,7 +81,22 @@ func Consume(ctx context.Context, js jetstream.JetStream, pool *pgxpool.Pool, lo
 	}
 	defer it.Stop()
 
-	c := &consumer{name: name, pool: pool, log: log, h: h, tracer: otel.Tracer(tracerName)}
+	meter := newMeter()
+	cm, err := newConsumerMetrics(meter)
+	if err != nil {
+		log.WarnContext(ctx, "outbox_metrics_failed", slog.String("consumer", name), slog.Any("error", err))
+	}
+	// Lag polling is best effort: it never fails or delays Consume, and stops
+	// with ctx.
+	if lag, err := NewLagMonitor(meter, log, stream, name); err != nil {
+		log.WarnContext(ctx, "outbox_metrics_failed", slog.String("consumer", name), slog.Any("error", err))
+	} else {
+		lagCtx, stopLag := context.WithCancel(ctx)
+		defer stopLag()
+		go func() { _ = lag.Run(lagCtx, js) }()
+	}
+
+	c := &consumer{name: name, stream: stream, pool: pool, log: log, h: h, tracer: otel.Tracer(tracerName), metrics: cm}
 	for {
 		msg, err := it.Next(jetstream.NextContext(ctx))
 		if ctx.Err() != nil {
@@ -99,11 +114,13 @@ func Consume(ctx context.Context, js jetstream.JetStream, pool *pgxpool.Pool, lo
 }
 
 type consumer struct {
-	name   string
-	pool   *pgxpool.Pool
-	log    *slog.Logger
-	h      Handler
-	tracer trace.Tracer
+	name    string
+	stream  string
+	pool    *pgxpool.Pool
+	log     *slog.Logger
+	h       Handler
+	tracer  trace.Tracer
+	metrics *consumerMetrics // nil if the instruments could not be created
 }
 
 func (c *consumer) handle(ctx context.Context, msg jetstream.Msg) {
@@ -113,6 +130,7 @@ func (c *consumer) handle(ctx context.Context, msg jetstream.Msg) {
 	env := &eventsv1.Envelope{}
 	if err := decode(msg.Data(), env); err != nil {
 		c.log.ErrorContext(ctx, "outbox_invalid_event", append(attrs, slog.Any("error", err))...)
+		c.metrics.count(ctx, c.stream, c.name, outcomeDead)
 		if err := msg.Term(); err != nil {
 			c.log.WarnContext(ctx, "outbox_term_failed", append(attrs, slog.Any("error", err))...)
 		}
@@ -131,7 +149,17 @@ func (c *consumer) handle(ctx context.Context, msg jetstream.Msg) {
 		))
 	defer span.End()
 
-	if err := c.apply(ctx, env); errors.Is(err, ErrPermanent) {
+	start := time.Now()
+	err := c.apply(ctx, env)
+	switch {
+	case err == nil:
+		c.metrics.record(ctx, c.stream, c.name, outcomeOK, time.Since(start))
+	case errors.Is(err, ErrPermanent):
+		c.metrics.record(ctx, c.stream, c.name, outcomeDead, time.Since(start))
+	default:
+		c.metrics.record(ctx, c.stream, c.name, outcomeRetry, time.Since(start))
+	}
+	if errors.Is(err, ErrPermanent) {
 		span.SetStatus(codes.Error, "permanent handler error")
 		// Only the subject and event id: the error may quote the payload.
 		c.log.ErrorContext(ctx, "outbox_event_rejected", slog.String("consumer", c.name),

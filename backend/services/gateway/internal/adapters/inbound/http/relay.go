@@ -16,6 +16,7 @@ import (
 // answers how many fixes it accepted and dropped. The size (16 KB), the shape
 // and the rate limit were checked before this point.
 func (a *trackingAPI) reportLocations(w http.ResponseWriter, r *http.Request) {
+	receivedAt := a.clock.Now()
 	sc, ok := a.scope(w, r)
 	if !ok {
 		return
@@ -40,7 +41,7 @@ func (a *trackingAPI) reportLocations(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := callRPC(r.Context(), func(ctx context.Context) (*trackingv1.IngestResponse, error) {
 		return a.c.IngestLocations(ctx, &trackingv1.IngestRequest{Scope: sc, CourierId: r.PathValue("id"),
-			Fixes: fixes, Source: "relay"})
+			Fixes: fixes, Source: "relay", ReceivedAtUnixMs: receivedAt.UnixMilli()})
 	})
 	if err != nil {
 		writeRPCError(w, r, a.log, err)

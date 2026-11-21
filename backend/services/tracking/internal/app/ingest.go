@@ -43,6 +43,7 @@ func (s *Service) Ingest(ctx context.Context, sc Scope, courierID string, fixes 
 	}
 	if len(ids) == 0 {
 		s.reportDropped(ctx, "", map[string]int{ReasonNoActiveDelivery: len(fixes)})
+		countFixes(ctx, source, ReasonNoActiveDelivery, len(fixes))
 		return 0, len(fixes), nil
 	}
 	sorted := slices.Clone(fixes)
@@ -130,6 +131,7 @@ func (s *Service) Ingest(ctx context.Context, sc Scope, courierID string, fixes 
 			accepted++
 		}
 	}
+	s.countOutcomes(ctx, source, ids, kept, dropReasons)
 	for _, id := range ids {
 		counts := map[string]int{}
 		for i, r := range dropReasons[id] {
@@ -172,6 +174,30 @@ func staleReason(st *domain.State, courierID string) string {
 		return ReasonDeliveryReassign
 	}
 	return ""
+}
+
+// countOutcomes counts each fix once: accepted when some delivery kept it,
+// else with the first reason a delivery gave for dropping it.
+func (s *Service) countOutcomes(ctx context.Context, source string, ids []string, kept []bool, dropReasons map[string][]string) {
+	counts := map[string]int{}
+	for i, k := range kept {
+		outcome := OutcomeAccepted
+		if !k {
+			outcome = ""
+			for _, id := range ids {
+				if r := dropReasons[id][i]; r != "" {
+					outcome = r
+					break
+				}
+			}
+		}
+		if outcome != "" {
+			counts[outcome]++
+		}
+	}
+	for outcome, n := range counts {
+		countFixes(ctx, source, outcome, n)
+	}
 }
 
 // reportDropped records, per reason, how many fixes a delivery dropped: a

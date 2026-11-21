@@ -178,13 +178,14 @@ func (x *Fix) GetSource() string {
 }
 
 type IngestRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Scope         *Scope                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
-	CourierId     string                 `protobuf:"bytes,2,opt,name=courier_id,json=courierId,proto3" json:"courier_id,omitempty"` // a cou_ id
-	Fixes         []*Fix                 `protobuf:"bytes,3,rep,name=fixes,proto3" json:"fixes,omitempty"`                          // at most 50
-	Source        string                 `protobuf:"bytes,4,opt,name=source,proto3" json:"source,omitempty"`                        // "relay" | "simulator" | "sdk" | "link"
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Scope            *Scope                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	CourierId        string                 `protobuf:"bytes,2,opt,name=courier_id,json=courierId,proto3" json:"courier_id,omitempty"`                           // a cou_ id
+	Fixes            []*Fix                 `protobuf:"bytes,3,rep,name=fixes,proto3" json:"fixes,omitempty"`                                                    // at most 50
+	Source           string                 `protobuf:"bytes,4,opt,name=source,proto3" json:"source,omitempty"`                                                  // "relay" | "simulator" | "sdk" | "link"
+	ReceivedAtUnixMs int64                  `protobuf:"varint,5,opt,name=received_at_unix_ms,json=receivedAtUnixMs,proto3" json:"received_at_unix_ms,omitempty"` // set by the gateway when the request arrived; 0 = unknown
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *IngestRequest) Reset() {
@@ -243,6 +244,13 @@ func (x *IngestRequest) GetSource() string {
 		return x.Source
 	}
 	return ""
+}
+
+func (x *IngestRequest) GetReceivedAtUnixMs() int64 {
+	if x != nil {
+		return x.ReceivedAtUnixMs
+	}
+	return 0
 }
 
 type IngestResponse struct {
@@ -1417,13 +1425,14 @@ const file_dt_tracking_v1_tracking_proto_rawDesc = "" +
 	"\x06source\x18\a \x01(\tR\x06sourceB\f\n" +
 	"\n" +
 	"_speed_mpsB\x0e\n" +
-	"\f_heading_deg\"\x9e\x01\n" +
+	"\f_heading_deg\"\xcd\x01\n" +
 	"\rIngestRequest\x12+\n" +
 	"\x05scope\x18\x01 \x01(\v2\x15.dt.tracking.v1.ScopeR\x05scope\x12\x1d\n" +
 	"\n" +
 	"courier_id\x18\x02 \x01(\tR\tcourierId\x12)\n" +
 	"\x05fixes\x18\x03 \x03(\v2\x13.dt.tracking.v1.FixR\x05fixes\x12\x16\n" +
-	"\x06source\x18\x04 \x01(\tR\x06source\"F\n" +
+	"\x06source\x18\x04 \x01(\tR\x06source\x12-\n" +
+	"\x13received_at_unix_ms\x18\x05 \x01(\x03R\x10receivedAtUnixMs\"F\n" +
 	"\x0eIngestResponse\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\x05R\baccepted\x12\x18\n" +
 	"\adropped\x18\x02 \x01(\x05R\adropped\"e\n" +

@@ -259,6 +259,7 @@ func (a *courierAPI) token(w http.ResponseWriter, r *http.Request) {
 	}
 	var tokens app.Tokens
 	var err error
+	refreshing := false
 	switch {
 	case in.GrantType == "link_code" && in.Code != nil && in.RefreshToken == nil:
 		ip, key := courierIPKey(r)
@@ -267,6 +268,7 @@ func (a *courierAPI) token(w http.ResponseWriter, r *http.Request) {
 		}
 		tokens, err = a.svc.Exchange(r.Context(), *in.Code, ip)
 	case in.GrantType == "refresh_token" && in.RefreshToken != nil && in.Code == nil:
+		refreshing = true
 		var sid string
 		if sid, err = a.svc.RefreshSession(r.Context(), *in.RefreshToken); err == nil {
 			if !a.charge(w, r, "rl:courier:tok:"+sid, app.CourierRefresh) {
@@ -286,6 +288,9 @@ func (a *courierAPI) token(w http.ResponseWriter, r *http.Request) {
 	default:
 		grantInvalid(w, r, "refresh_token", "is required with grant_type refresh_token, and code must be absent")
 		return
+	}
+	if refreshing {
+		countRefreshOutcome(r.Context(), err)
 	}
 	switch {
 	case err == nil:
@@ -469,6 +474,7 @@ func (a *courierAPI) reportEvent(w http.ResponseWriter, r *http.Request) {
 // reportLocations serves POST /v1/courier/locations: the relay's rules, for
 // the token's courier, with the token's source (sdk or link).
 func (a *courierAPI) reportLocations(w http.ResponseWriter, r *http.Request) {
+	receivedAt := a.clock.Now()
 	claims, ok := courierClaims(r.Context())
 	if !ok {
 		internalError(w, r) // authenticate always runs first
@@ -503,7 +509,7 @@ func (a *courierAPI) reportLocations(w http.ResponseWriter, r *http.Request) {
 	sc := &trackingv1.Scope{TenantId: claims.TenantID, Environment: env, ActorId: claims.SessionID}
 	res, err := callRPC(r.Context(), func(ctx context.Context) (*trackingv1.IngestResponse, error) {
 		return a.tracking.IngestLocations(ctx, &trackingv1.IngestRequest{Scope: sc, CourierId: claims.CourierID,
-			Fixes: fixes, Source: claims.Source})
+			Fixes: fixes, Source: claims.Source, ReceivedAtUnixMs: receivedAt.UnixMilli()})
 	})
 	if err != nil {
 		writeRPCError(w, r, a.log, err)
@@ -541,4 +547,20 @@ func (a *courierAPI) endSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// countRefreshOutcome records how a refresh_token grant ended. A rate-limited
+// attempt returns before this runs (dt.ratelimit.rejections counts it), and
+// an internal error fits no outcome, so neither is counted here.
+func countRefreshOutcome(ctx context.Context, err error) {
+	switch {
+	case err == nil:
+		countRefresh(ctx, refreshOK)
+	case errors.Is(err, app.ErrRefreshReuse):
+		countRefresh(ctx, refreshReuse)
+	case errors.Is(err, app.ErrSessionEnded):
+		countRefresh(ctx, refreshExpired)
+	case errors.Is(err, app.ErrRefreshInvalid):
+		countRefresh(ctx, refreshInvalid)
+	}
 }

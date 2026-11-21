@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -22,6 +23,7 @@ import (
 	trackingv1 "github.com/raduolivas/dt/backend/gen/dt/tracking/v1"
 	"github.com/raduolivas/dt/backend/gen/dt/tracking/v1/trackingv1connect"
 	"github.com/raduolivas/dt/backend/pkg/ids"
+	"github.com/raduolivas/dt/backend/pkg/otelx"
 	"github.com/raduolivas/dt/backend/pkg/rpcauth"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/app"
 	"github.com/raduolivas/dt/backend/services/tracking/internal/domain"
@@ -48,7 +50,7 @@ func Mount(mux *http.ServeMux, svc *app.Service, sim Simulator, token string, lo
 	if err != nil {
 		return err
 	}
-	srv := connect.NewServer(auth)
+	srv := connect.NewServer(otelx.ConnectHandlerInterceptor(), auth)
 	trackingv1connect.RegisterTrackingServiceHandler(srv, &Server{svc: svc, sim: sim, log: log})
 	connecthttp.Mount(mux, srv, connecthttp.WithReadMaxBytes(readMaxBytes))
 	return nil
@@ -119,6 +121,13 @@ func (s *Server) IngestLocations(ctx context.Context, req *trackingv1.IngestRequ
 		}
 		fixes = append(fixes, fx)
 	}
+	// The gateway stamped the request on arrival; 0 means unknown, and
+	// tracking's own clock stands in.
+	received := s.svc.Clock.Now()
+	if ms := req.GetReceivedAtUnixMs(); ms > 0 {
+		received = time.UnixMilli(ms)
+	}
+	ctx = app.WithFixReceived(ctx, received, req.GetSource())
 	acc, drop, err := s.svc.Ingest(ctx, sc, req.GetCourierId(), fixes, req.GetSource())
 	switch {
 	case errors.Is(err, app.ErrCourierNotFound):

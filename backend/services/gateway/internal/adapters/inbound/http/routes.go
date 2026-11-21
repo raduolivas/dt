@@ -92,6 +92,8 @@ type Deps struct {
 	CourierURLBase string
 	// Log receives failures of the deliveries calls. Nil means slog.Default().
 	Log *slog.Logger
+	// Clock stamps the arrival of location fixes. Nil means the wall clock.
+	Clock app.Clock
 }
 
 // TrackingLinkIssuer issues and rotates tracking links; it is satisfied by
@@ -117,7 +119,11 @@ func Routes(deps Deps) []Route {
 	}
 	d := &deliveriesAPI{c: deps.Deliveries, purger: deps.Idempotency, log: log,
 		links: deps.Links, trackingBase: strings.TrimRight(deps.TrackingURLBase, "/")}
-	t := &trackingAPI{c: deps.Tracking, log: log}
+	clock := deps.Clock
+	if clock == nil {
+		clock = wallClock{}
+	}
+	t := &trackingAPI{c: deps.Tracking, clock: clock, log: log}
 	cs := &courierSessionsAPI{svc: deps.CourierSessions, urlBase: strings.TrimRight(deps.CourierURLBase, "/"), log: log}
 	secret := []domain.CredentialType{domain.CredentialSecretKey}
 	route := func(name, method, pattern string, scope domain.Scope, status int, h http.HandlerFunc) Route {
