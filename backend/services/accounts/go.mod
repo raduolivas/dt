@@ -4,11 +4,11 @@ go 1.27.4
 
 require (
 	connectrpc.com/connect/v2 v2.0.2
-	github.com/jackc/pgx/v5 v5.12.0
-	github.com/nats-io/nats.go v1.55.0
+	github.com/jackc/pgx/v5 v5.13.0
+	github.com/nats-io/nats.go v1.56.0
 	github.com/raduolivas/dt/backend/gen v0.0.0
 	github.com/raduolivas/dt/backend/pkg v0.0.0
-	golang.org/x/image v0.47.0
+	golang.org/x/image v0.48.0
 	google.golang.org/protobuf v1.36.12
 )
 
@@ -93,8 +93,8 @@ require (
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260928230214-8a89bd6388cc // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260928230214-8a89bd6388cc // indirect
 	google.golang.org/grpc v1.84.0 // indirect

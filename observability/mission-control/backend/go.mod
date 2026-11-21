@@ -3,8 +3,8 @@ module github.com/raduolivas/dt/observability/mission-control/backend
 go 1.27.4
 
 require (
-	github.com/jackc/pgx/v5 v5.12.0
-	github.com/nats-io/nats.go v1.55.0
+	github.com/jackc/pgx/v5 v5.13.0
+	github.com/nats-io/nats.go v1.56.0
 	github.com/raduolivas/dt/backend/gen v0.0.0
 	github.com/raduolivas/dt/backend/pkg v0.0.0
 	github.com/stretchr/testify v1.12.1

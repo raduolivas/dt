@@ -4,8 +4,8 @@ go 1.27.4
 
 require (
 	connectrpc.com/connect/v2 v2.0.2
-	github.com/jackc/pgx/v5 v5.12.0
-	github.com/nats-io/nats.go v1.55.0
+	github.com/jackc/pgx/v5 v5.13.0
+	github.com/nats-io/nats.go v1.56.0
 	github.com/raduolivas/dt/backend/gen v0.0.0
 	github.com/raduolivas/dt/backend/pkg v0.0.0
 	go.opentelemetry.io/otel v1.47.0
