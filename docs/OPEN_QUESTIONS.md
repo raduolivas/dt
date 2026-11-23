@@ -1,7 +1,7 @@
 # DT: Open Questions
 
 > Standalone file for sharing with another AI or a person. It's self-contained, so it can be read without the other files.
-> **Last updated:** 2026-11-14 (OQ30–OQ32 answered as R27–R29, OBS steps 1–3 built) · 2026-11-01 (M5 final review added OQ29) · 2026-10-27 (M3 close-out added OQ25-OQ27; dispatch-lite scheduled, see R26; pricing decided, see R25; product name decided, see R24; OQ16–OQ24 answered 2026-10-23, see R22; cloud provider chosen, see R23; OQ14 tech part and OQ15 answered 2026-10-20) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+> **Last updated:** 2026-11-21 (OBS steps 1–3 merged via PR #42; OQ30–OQ32 answers unchanged, see R27–R29) · 2026-11-14 (OQ30–OQ32 answered as R27–R29, OBS steps 1–3 built) · 2026-11-01 (M5 final review added OQ29) · 2026-10-27 (M3 close-out added OQ25-OQ27; dispatch-lite scheduled, see R26; pricing decided, see R25; product name decided, see R24; OQ16–OQ24 answered 2026-10-23, see R22; cloud provider chosen, see R23; OQ14 tech part and OQ15 answered 2026-10-20) · Full context: [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
 ## Context in 30 seconds
 
