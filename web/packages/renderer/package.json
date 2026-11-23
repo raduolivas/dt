@@ -13,7 +13,7 @@
   "dependencies": {
     "@dt/contract": "workspace:*",
     "@mapbox/vector-tile": "3.0.0",
-    "pbf": "5.1.2",
+    "pbf": "5.2.0",
     "pmtiles": "4.5.0",
     "three": "^0.187.0"
   },
@@ -21,7 +21,7 @@
     "@types/node": "26.6.6",
     "@types/three": "^0.187.0",
     "vite": "^8.3.8",
-    "vitest": "5.1.0"
+    "vitest": "5.1.1"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",
