@@ -27,10 +27,14 @@ const reducedParam = query.get('reduced');
 const themeParam = query.get('theme') as 'light' | 'dark' | 'auto' | null;
 // ?mode=2d starts in the top-down view.
 let mode: '3d' | '2d' = query.get('mode') === '2d' ? '2d' : '3d';
+// ?pixel=2|3 turns on the pixel-art finish with that many CSS px per art pixel (spike A1; absent = smooth).
+const pixelParam = Number(query.get('pixel'));
+const pixelScale = pixelParam === 2 || pixelParam === 3 ? pixelParam : undefined;
 const fpsEl = $('fps');
 const scene = createRenderer(sceneEl, {
   tiles,
   mode,
+  pixelScale,
   theme: themeParam ?? undefined,
   reducedMotion: reducedParam === null ? undefined : reducedParam !== '0',
   onTiles: (t) => {

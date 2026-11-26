@@ -83,6 +83,8 @@ interface SiteInfo {
 
 export interface CitySceneOptions {
   accent?: string;
+  /** Pixel-art finish (spike, A1): one art pixel = this many CSS px. Absent or < 2 = off (smooth rendering). */
+  pixelScale?: number;
   /** Absent = the procedural grid city (dev only). */
   tiles?: TileSourceSpec;
   theme?: TileTheme;
@@ -105,6 +107,8 @@ export interface CitySceneOptions {
 
 export class CityScene {
   private readonly renderer: THREE.WebGLRenderer;
+  /** Art-pixel size in CSS px when the pixel-art finish is on (spike A1); null = smooth rendering. */
+  private readonly artPixel: number | null;
   private readonly scene = new THREE.Scene();
   /** Camera, orbit controls, framing moves, the intro and the 2D/3D view. */
   private readonly rig: CameraRig;
@@ -221,8 +225,13 @@ export class CityScene {
       this.ribbonY = ROAD_TOP_Y + 0.15;
     }
 
+    this.artPixel = opts.pixelScale !== undefined && opts.pixelScale >= 2 ? opts.pixelScale : null;
     this.renderer = opts.webgl ? opts.webgl() : new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Pixel finish: the buffer is 1/k of the CSS size, so each art pixel covers k CSS px; the browser upscales it with
+    // nearest-neighbour sampling (no smoothing). Antialiasing stays on: at low resolution it averages thin roads and
+    // the window texture before upscaling; without it they alias into speckle (spike, 2026-11-26).
+    this.renderer.setPixelRatio(this.artPixel ? 1 / this.artPixel : Math.min(window.devicePixelRatio, 2));
+    if (this.artPixel) this.renderer.domElement.style.imageRendering = 'pixelated';
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -375,7 +384,12 @@ export class CityScene {
 
   /** Pixel ratio cap and shadow map size (adaptive quality on slow phones). */
   setQuality(q: Quality): void {
-    this.renderer.setPixelRatio(Math.min(typeof devicePixelRatio === 'number' ? devicePixelRatio : 1, q.maxPixelRatio));
+    // The pixel finish fixes the ratio at 1/k; adaptive quality only lowers the shadow map then.
+    this.renderer.setPixelRatio(
+      this.artPixel
+        ? 1 / this.artPixel
+        : Math.min(typeof devicePixelRatio === 'number' ? devicePixelRatio : 1, q.maxPixelRatio),
+    );
     this.renderer.setSize(this.width, this.height, false);
     const shadow = this.sun.shadow;
     if (shadow.mapSize.x === q.shadowMapSize) return;
