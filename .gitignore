@@ -31,3 +31,6 @@ web/e2e/playwright-report/
 
 # go build ./... inside the module writes this binary next to the source
 backend/tools/latency/latency
+
+# Local demo recording
+DT_example.mp4

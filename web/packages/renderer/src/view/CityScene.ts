@@ -83,7 +83,7 @@ interface SiteInfo {
 
 export interface CitySceneOptions {
   accent?: string;
-  /** Pixel-art finish (spike, A1): one art pixel = this many CSS px. Absent or < 2 = off (smooth rendering). */
+  /** Pixel-art finish (spike, A1): one art pixel = this many CSS px. Absent or < 1.5 = off (smooth rendering); fractional values allowed. */
   pixelScale?: number;
   /** Absent = the procedural grid city (dev only). */
   tiles?: TileSourceSpec;
@@ -225,7 +225,7 @@ export class CityScene {
       this.ribbonY = ROAD_TOP_Y + 0.15;
     }
 
-    this.artPixel = opts.pixelScale !== undefined && opts.pixelScale >= 2 ? opts.pixelScale : null;
+    this.artPixel = opts.pixelScale !== undefined && opts.pixelScale >= 1.5 ? opts.pixelScale : null;
     this.renderer = opts.webgl ? opts.webgl() : new THREE.WebGLRenderer({ antialias: true, alpha: false });
     // Pixel finish: the buffer is 1/k of the CSS size, so each art pixel covers k CSS px; the browser upscales it with
     // nearest-neighbour sampling (no smoothing). Antialiasing stays on: at low resolution it averages thin roads and

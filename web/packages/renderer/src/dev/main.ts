@@ -17,7 +17,8 @@ const tiles: TileSourceSpec | undefined = query.get('pmtiles')
     ? { kind: 'zxy', tilejson: 'https://tiles.openfreemap.org/planet' }
     : tilesParam === 'grid'
       ? undefined
-      : { kind: 'pmtiles', url: new URL('amsterdam-z14.pmtiles', location.href).href };
+      : // publicDir (fixtures/) is served at the dev server root, whatever page path opened it (/ or /dev/)
+        { kind: 'pmtiles', url: new URL('/amsterdam-z14.pmtiles', location.origin).href };
 
 const sim = new DeliverySimulator(tiles ? amsterdamWorld() : GRID_WORLD);
 const sceneEl = $('scene');
@@ -27,9 +28,9 @@ const reducedParam = query.get('reduced');
 const themeParam = query.get('theme') as 'light' | 'dark' | 'auto' | null;
 // ?mode=2d starts in the top-down view.
 let mode: '3d' | '2d' = query.get('mode') === '2d' ? '2d' : '3d';
-// ?pixel=2|3 turns on the pixel-art finish with that many CSS px per art pixel (spike A1; absent = smooth).
+// ?pixel=1.5..3 turns on the pixel-art finish with that many CSS px per art pixel (spike A1; absent = smooth).
 const pixelParam = Number(query.get('pixel'));
-const pixelScale = pixelParam === 2 || pixelParam === 3 ? pixelParam : undefined;
+const pixelScale = pixelParam >= 1.5 && pixelParam <= 3 ? pixelParam : undefined;
 const fpsEl = $('fps');
 const scene = createRenderer(sceneEl, {
   tiles,

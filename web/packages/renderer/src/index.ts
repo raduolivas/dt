@@ -32,7 +32,7 @@ export interface RendererOptions {
   reducedMotion?: boolean;
   /** Absent = the procedural grid city (dev only). */
   tiles?: TileSourceSpec;
-  /** Pixel-art finish (spike, A1): one art pixel = this many CSS px (2 or 3). Absent = off. */
+  /** Pixel-art finish (spike, A1): one art pixel = this many CSS px (1.5 to 3, fractions allowed). Absent = off. */
   pixelScale?: number;
   /** Partner primary color for the ribbon and pins. */
   accent?: string;
