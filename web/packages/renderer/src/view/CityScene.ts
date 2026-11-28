@@ -62,6 +62,8 @@ const NEXT_RIBBON_MIN_PX = 5;
 const XRAY_LAYER = 1;
 /** The route's see-through copies (own colors, so the next leg stays light and the active one accent). */
 const XRAY_ROUTE_LAYER = 2;
+/** Pixel finish only: the route is drawn on its own sharp canvas above the pixel-art map (spike A1). */
+const ROUTE_OVERLAY_LAYER = 3;
 
 /** A stale or lost courier is drawn faded and still; the customer sees no alarm. */
 const FADED_OPACITY = 0.4;
@@ -83,6 +85,8 @@ interface SiteInfo {
 
 export interface CitySceneOptions {
   accent?: string;
+  /** Pixel-art finish (spike, A1): one art pixel = this many CSS px. Absent or < 1.5 = off (smooth rendering); fractional values allowed. */
+  pixelScale?: number;
   /** Absent = the procedural grid city (dev only). */
   tiles?: TileSourceSpec;
   theme?: TileTheme;
@@ -105,6 +109,10 @@ export interface CitySceneOptions {
 
 export class CityScene {
   private readonly renderer: THREE.WebGLRenderer;
+  /** The sharp route canvas above the pixel map; null when the pixel finish is off. */
+  private overlay: THREE.WebGLRenderer | null = null;
+  /** Art-pixel size in CSS px when the pixel-art finish is on (spike A1); null = smooth rendering. */
+  private readonly artPixel: number | null;
   private readonly scene = new THREE.Scene();
   /** Camera, orbit controls, framing moves, the intro and the 2D/3D view. */
   private readonly rig: CameraRig;
@@ -221,8 +229,13 @@ export class CityScene {
       this.ribbonY = ROAD_TOP_Y + 0.15;
     }
 
+    this.artPixel = opts.pixelScale !== undefined && opts.pixelScale >= 1.5 ? opts.pixelScale : null;
     this.renderer = opts.webgl ? opts.webgl() : new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Pixel finish: the buffer is 1/k of the CSS size, so each art pixel covers k CSS px; the browser upscales it with
+    // nearest-neighbour sampling (no smoothing). Antialiasing stays on: at low resolution it averages thin roads and
+    // the window texture before upscaling; without it they alias into speckle (spike, 2026-11-26).
+    this.renderer.setPixelRatio(this.artPixel ? 1 / this.artPixel : Math.min(window.devicePixelRatio, 2));
+    if (this.artPixel) this.renderer.domElement.style.imageRendering = 'pixelated';
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -231,6 +244,18 @@ export class CityScene {
     // three.js re-creates its GL state on restore; the scene marks its buffers and textures for upload again
     this.renderer.domElement.addEventListener('webglcontextlost', this.onContextLost);
     this.renderer.domElement.addEventListener('webglcontextrestored', this.onContextRestored);
+    if (this.artPixel) {
+      // The map stays pixel art; the route draws here at full resolution with the same camera (see renderOverlay).
+      const o = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      o.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      o.setClearColor(0x000000, 0);
+      o.shadowMap.enabled = false;
+      o.outputColorSpace = THREE.SRGBColorSpace;
+      o.domElement.className = 'scene-canvas route-overlay';
+      o.domElement.style.pointerEvents = 'none'; // the map canvas keeps the pointer (drag, pinch)
+      container.appendChild(o.domElement);
+      this.overlay = o;
+    }
 
     this.scene.background = new THREE.Color(DAY.sky);
 
@@ -297,6 +322,10 @@ export class CityScene {
     this.routeNext.renderOrder = 1;
     this.routeActive.renderOrder = 2;
     this.scene.add(this.routeNext, this.routeActive);
+    if (this.artPixel) {
+      this.routeNext.layers.set(ROUTE_OVERLAY_LAYER);
+      this.routeActive.layers.set(ROUTE_OVERLAY_LAYER);
+    }
     // the ribbons' buffers are refilled in place (the bounding sphere would go stale)
     this.routeNext.frustumCulled = false;
     this.routeActive.frustumCulled = false;
@@ -308,6 +337,8 @@ export class CityScene {
       m.depthFunc = THREE.GreaterDepth;
       const copy = new THREE.Mesh(src.geometry, m);
       copy.layers.set(XRAY_ROUTE_LAYER);
+      // The overlay has no buildings to hide the route behind, so the see-through copies are not needed there.
+      if (this.artPixel) copy.visible = false;
       copy.frustumCulled = false;
       copy.renderOrder = src.renderOrder;
       this.scene.add(copy);
@@ -375,8 +406,14 @@ export class CityScene {
 
   /** Pixel ratio cap and shadow map size (adaptive quality on slow phones). */
   setQuality(q: Quality): void {
-    this.renderer.setPixelRatio(Math.min(typeof devicePixelRatio === 'number' ? devicePixelRatio : 1, q.maxPixelRatio));
+    // The pixel finish fixes the ratio at 1/k; adaptive quality only lowers the shadow map then.
+    this.renderer.setPixelRatio(
+      this.artPixel
+        ? 1 / this.artPixel
+        : Math.min(typeof devicePixelRatio === 'number' ? devicePixelRatio : 1, q.maxPixelRatio),
+    );
     this.renderer.setSize(this.width, this.height, false);
+    this.overlay?.setSize(this.width, this.height, false);
     const shadow = this.sun.shadow;
     if (shadow.mapSize.x === q.shadowMapSize) return;
     shadow.mapSize.set(q.shadowMapSize, q.shadowMapSize);
@@ -585,10 +622,21 @@ export class CityScene {
     if (!this.contextLost) this.render();
   }
 
+  /** The route on the sharp canvas: the same scene and camera, only the route layer, transparent everywhere else. */
+  private renderOverlay(o: THREE.WebGLRenderer) {
+    const bg = this.scene.background;
+    this.scene.background = null;
+    this.camera.layers.set(ROUTE_OVERLAY_LAYER);
+    o.render(this.scene, this.camera);
+    this.camera.layers.set(0);
+    this.scene.background = bg;
+  }
+
   private render() {
     const r = this.renderer;
     r.info.reset();
     r.render(this.scene, this.camera);
+    if (this.overlay) this.renderOverlay(this.overlay);
     if (!this.tileSpec) return; // the grid city's streets are wide open
     // Second pass: only the x-ray layer, only where it is behind something already drawn.
     const bg = this.scene.background;
@@ -679,6 +727,9 @@ export class CityScene {
     this.renderer.forceContextLoss();
     this.renderer.dispose();
     this.renderer.domElement.remove();
+    this.overlay?.forceContextLoss();
+    this.overlay?.dispose();
+    this.overlay?.domElement.remove();
     Object.values(this.labels).forEach((l) => l.remove());
   }
 
@@ -758,6 +809,7 @@ export class CityScene {
     this.width = w;
     this.height = h;
     this.renderer.setSize(w, h, false);
+    this.overlay?.setSize(w, h, false);
     setFrustum(this.camera, w, h);
     this.camera.updateProjectionMatrix();
   }

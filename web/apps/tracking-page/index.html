@@ -7,6 +7,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="referrer" content="no-referrer" />
     <title>Track your delivery</title>
+    <!-- Render-blocking, as in the gateway shell: without it Vite injects the CSS from JavaScript after first paint,
+         and the page flashes unstyled. main.ts also imports it, so the production bundle is unchanged. -->
+    <link rel="stylesheet" href="/src/page.css" />
   </head>
   <body>
     <div id="root"></div>
